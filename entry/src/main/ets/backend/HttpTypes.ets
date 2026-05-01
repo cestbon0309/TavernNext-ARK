@@ -23,10 +23,35 @@ export class HttpRequest {
   query: Record<string, string> = {};
   headers: HeaderMap = {};
   bodyText: string = '';
+  bodyBytes: Uint8Array = new Uint8Array();
   body: Object | null = null;
+  files: HttpUploadedFile[] = [];
 
   header(name: string): string {
     return this.headers[name.toLowerCase()] ?? '';
+  }
+
+  file(name: string): HttpUploadedFile | null {
+    for (const file of this.files) {
+      if (file.fieldName === name) {
+        return file;
+      }
+    }
+    return null;
+  }
+}
+
+export class HttpUploadedFile {
+  fieldName: string;
+  fileName: string;
+  contentType: string;
+  bytes: Uint8Array;
+
+  constructor(fieldName: string, fileName: string, contentType: string, bytes: Uint8Array) {
+    this.fieldName = fieldName;
+    this.fileName = fileName;
+    this.contentType = contentType;
+    this.bytes = bytes;
   }
 }
 
@@ -48,6 +73,15 @@ export class HttpResponse {
     response.statusCode = statusCode;
     response.statusText = statusTextFor(statusCode);
     response.body = JSON.stringify(value);
+    response.headers['content-type'] = 'application/json; charset=utf-8';
+    return response;
+  }
+
+  static jsonText(value: string, statusCode: number = 200): HttpResponse {
+    const response = new HttpResponse();
+    response.statusCode = statusCode;
+    response.statusText = statusTextFor(statusCode);
+    response.body = value;
     response.headers['content-type'] = 'application/json; charset=utf-8';
     return response;
   }

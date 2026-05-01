@@ -44,6 +44,10 @@ export class PngCardStore {
     if (bytes === null) {
       return null;
     }
+    return this.readCardFromBytes(bytes);
+  }
+
+  readCardFromBytes(bytes: Uint8Array): JsonRecord | null {
     try {
       const jsonText = this.readCardText(bytes);
       return JSON.parse(jsonText) as JsonRecord;
@@ -61,6 +65,23 @@ export class PngCardStore {
       return true;
     } catch (_err) {
       return false;
+    }
+  }
+
+  writeCardWithBase(path: string, baseImage: Uint8Array, card: JsonRecord): boolean {
+    const output = this.writeCardToBytes(baseImage, card);
+    if (output === null) {
+      return false;
+    }
+    this.store.writeBytes(path, output);
+    return true;
+  }
+
+  writeCardToBytes(baseImage: Uint8Array, card: JsonRecord): Uint8Array | null {
+    try {
+      return this.writeCardText(baseImage, JSON.stringify(card));
+    } catch (_err) {
+      return null;
     }
   }
 

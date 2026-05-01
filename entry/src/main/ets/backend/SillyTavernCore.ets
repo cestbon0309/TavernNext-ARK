@@ -1,3 +1,4 @@
+import { util } from '@kit.ArkTS';
 import { DataDirectories, UserDirectories } from './DataDirectories';
 import { FileEntry, FileStore } from './FileStore';
 import { emptyJsonRecord, HttpRequest, HttpResponse, JsonArray, JsonRecord, jsonMessage } from './HttpTypes';
@@ -10,6 +11,7 @@ import {
   withoutExtension,
 } from './PathUtils';
 import { PngCardStore } from './PngCardStore';
+import { ShareExportService } from './ShareExportService';
 
 type JsonValue = Object | string | number | boolean | null | JsonArray;
 
@@ -210,12 +212,16 @@ export class SillyTavernCore {
   private dirs: DataDirectories;
   private userDirs: UserDirectories;
   private cardStore: PngCardStore;
+  private shareExports: ShareExportService;
+  private encoder: util.TextEncoder = new util.TextEncoder('utf-8');
+  private decoder: util.TextDecoder = new util.TextDecoder('utf-8');
 
-  constructor(store: FileStore, dirs: DataDirectories) {
+  constructor(store: FileStore, dirs: DataDirectories, shareExports: ShareExportService) {
     this.store = store;
     this.dirs = dirs;
     this.userDirs = dirs.defaultUser;
     this.cardStore = new PngCardStore(store);
+    this.shareExports = shareExports;
   }
 
   health(): HttpResponse {
@@ -431,6 +437,89 @@ export class SillyTavernCore {
       this.store.deleteDirectory(joinPath(this.userDirs.chats, internalName));
     }
     return HttpResponse.json(new OkResponse());
+  }
+
+  importCharacter(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const fileType = this.asString(body['file_type']).toLowerCase();
+    const file = request.file('avatar');
+    if (file === null || fileType.length === 0) {
+      return HttpResponse.empty(400);
+    }
+
+    try {
+      let card: JsonRecord | null = null;
+      let baseImage: Uint8Array | null = null;
+      if (fileType === 'json') {
+        card = this.importCardFromJsonBytes(file.bytes);
+      } else if (fileType === 'png') {
+        card = this.importCardFromPngBytes(file.bytes);
+        baseImage = file.bytes;
+      } else {
+        return HttpResponse.json(jsonMessage('unsupported_format', fileType), 400);
+      }
+
+      if (card === null) {
+        return HttpResponse.json(new ErrorFlagResponse());
+      }
+
+      const internalName = this.importedCharacterInternalName(card, body);
+      const path = joinPath(this.userDirs.characters, `${internalName}.png`);
+      const written = baseImage === null ? this.cardStore.writeCard(path, card) :
+        this.cardStore.writeCardWithBase(path, baseImage, card);
+      if (!written) {
+        return HttpResponse.json(jsonMessage('failed_to_write_character'), 500);
+      }
+      this.store.ensureDir(joinPath(this.userDirs.chats, internalName));
+
+      const response = emptyJsonRecord();
+      response['file_name'] = internalName;
+      return HttpResponse.json(response);
+    } catch (_err) {
+      return HttpResponse.json(new ErrorFlagResponse());
+    }
+  }
+
+  async exportCharacter(request: HttpRequest): Promise<HttpResponse> {
+    const body = this.bodyAsRecord(request);
+    const format = this.asString(body['format']).toLowerCase();
+    const avatarUrl = this.asString(body['avatar_url']);
+    if (format.length === 0 || avatarUrl.length === 0) {
+      return HttpResponse.empty(400);
+    }
+
+    const avatarName = ensurePngExtension(sanitizeFileName(avatarUrl));
+    const path = joinPath(this.userDirs.characters, avatarName);
+    const sourceBytes = this.store.readBytes(path);
+    if (sourceBytes === null) {
+      return HttpResponse.empty(404);
+    }
+
+    const card = this.cardStore.readCardFromBytes(sourceBytes);
+    if (card === null) {
+      return HttpResponse.empty(400);
+    }
+
+    const safeCard = this.unsetPrivateFields(this.normalizeCharacterCard(card));
+    const internalName = withoutExtension(avatarName);
+    if (format === 'json') {
+      const fileName = `${internalName}.json`;
+      const bytes = this.encoder.encodeInto(JSON.stringify(safeCard, null, 4));
+      const exported = this.shareExports.writeExportFile('characters', fileName, bytes,
+        ShareExportService.contentTypeForExtension('.json'), ShareExportService.utdForExtension('.json'));
+      return this.shareExports.shareHttpResponse(exported, fileName);
+    }
+    if (format === 'png') {
+      const bytes = this.cardStore.writeCardToBytes(sourceBytes, safeCard);
+      if (bytes === null) {
+        return HttpResponse.empty(400);
+      }
+      const fileName = `${internalName}.png`;
+      const exported = this.shareExports.writeExportFile('characters', fileName, bytes,
+        ShareExportService.contentTypeForExtension('.png'), ShareExportService.utdForExtension('.png'));
+      return this.shareExports.shareHttpResponse(exported, fileName);
+    }
+    return HttpResponse.empty(400);
   }
 
   listCharacterChats(request: HttpRequest): HttpResponse {
@@ -842,6 +931,95 @@ export class SillyTavernCore {
     return converted;
   }
 
+  private importCardFromJsonBytes(bytes: Uint8Array): JsonRecord | null {
+    const parsed = this.parseJsonRecord(this.decoder.decodeToString(bytes));
+    if (Object.keys(parsed).length === 0) {
+      return null;
+    }
+    return this.normalizeImportedCharacterCard(parsed);
+  }
+
+  private importCardFromPngBytes(bytes: Uint8Array): JsonRecord | null {
+    const parsed = this.cardStore.readCardFromBytes(bytes);
+    if (parsed === null) {
+      return null;
+    }
+    return this.normalizeImportedCharacterCard(parsed);
+  }
+
+  private normalizeImportedCharacterCard(rawCard: JsonRecord): JsonRecord | null {
+    let card: JsonRecord;
+    if (rawCard['spec'] !== undefined) {
+      card = this.normalizeCharacterCard(rawCard);
+    } else if (rawCard['name'] !== undefined) {
+      card = this.convertLegacyCharacterCard(rawCard);
+    } else if (rawCard['char_name'] !== undefined) {
+      card = this.convertPygmalionCharacterCard(rawCard);
+    } else {
+      return null;
+    }
+
+    card = this.unsetPrivateFields(card);
+    card['create_date'] = new Date().toISOString();
+
+    const data = this.asObject(card['data']) as JsonRecord;
+    const displayName = this.asString(data['name']) || this.asString(card['name']) || 'New Character';
+    const safeName = sanitizeFileName(displayName);
+    data['name'] = safeName;
+    card['name'] = safeName;
+    card['data'] = data;
+    return card;
+  }
+
+  private convertPygmalionCharacterCard(card: JsonRecord): JsonRecord {
+    const body = emptyJsonRecord();
+    body['ch_name'] = this.asString(card['char_name']);
+    body['description'] = this.asString(card['char_persona']);
+    body['personality'] = '';
+    body['scenario'] = this.asString(card['world_scenario']);
+    body['first_mes'] = this.asString(card['char_greeting']);
+    body['mes_example'] = this.asString(card['example_dialogue']);
+    body['creator_notes'] = this.asString(card['creatorcomment']) ||
+      this.stripDefaultCreatorNotes(this.asString(card['creator_notes']));
+    body['talkativeness'] = Number(card['talkativeness'] ?? 0.5);
+    body['fav'] = card['fav'] === true;
+    body['tags'] = this.asArray(card['tags']);
+    body['creator'] = this.asString(card['creator']);
+    const converted = this.buildCharacterCard(body, this.asString(card['char_name']));
+    converted['chat'] = `${this.asString(card['char_name'])} - ${new Date().toISOString()}`;
+    return converted;
+  }
+
+  private unsetPrivateFields(card: JsonRecord): JsonRecord {
+    const safeCard = emptyJsonRecord();
+    Object.keys(card).forEach((key: string) => {
+      if (key !== 'chat') {
+        safeCard[key] = card[key];
+      }
+    });
+    safeCard['fav'] = false;
+    const data = this.asObject(safeCard['data']) as JsonRecord;
+    const extensions = this.asObject(data['extensions']) as JsonRecord;
+    extensions['fav'] = false;
+    data['extensions'] = extensions;
+    safeCard['data'] = data;
+    return safeCard;
+  }
+
+  private importedCharacterInternalName(card: JsonRecord, body: JsonRecord): string {
+    const preserved = withoutExtension(sanitizeFileName(this.asString(body['preserved_name'])));
+    if (preserved.length > 0 && preserved !== 'unnamed') {
+      return preserved;
+    }
+    const data = this.asObject(card['data']) as JsonRecord;
+    const name = this.asString(data['name']) || this.asString(card['name']) || 'New Character';
+    return this.uniqueName(name, this.userDirs.characters, '.png');
+  }
+
+  private stripDefaultCreatorNotes(value: string): string {
+    return value.replace("Creator's notes go here.", '');
+  }
+
   private toCharacterResponse(card: Object, avatarName: string, entry: FileEntry, shallow: boolean): CharacterResponse {
     const record = card as JsonRecord;
     const data = this.asObject(record['data']) as JsonRecord;
@@ -933,11 +1111,12 @@ export class SillyTavernCore {
   }
 
   private parseJsonRecord(text: string): JsonRecord {
-    if (text.length === 0) {
+    const normalized = this.stripJsonBom(text);
+    if (normalized.length === 0) {
       return emptyJsonRecord();
     }
     try {
-      const parsed = JSON.parse(text) as Object;
+      const parsed = JSON.parse(normalized) as Object;
       if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
         return emptyJsonRecord();
       }
@@ -945,6 +1124,13 @@ export class SillyTavernCore {
     } catch (_err) {
       return emptyJsonRecord();
     }
+  }
+
+  private stripJsonBom(text: string): string {
+    if (text.length > 0 && text.charCodeAt(0) === 0xfeff) {
+      return text.slice(1);
+    }
+    return text;
   }
 
   private statEntry(name: string, path: string): FileEntry {

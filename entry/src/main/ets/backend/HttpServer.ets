@@ -2,12 +2,13 @@ import { socket } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { HttpRequest, HttpResponse, JsonRecord, jsonMessage, RouteHandler } from './HttpTypes';
+import { MultipartParser } from './MultipartParser';
 
 const DOMAIN = 0x544156;
 const TAG = 'TavernHttpServer';
 
 class ClientState {
-  buffer: string = '';
+  buffer: Uint8Array = new Uint8Array();
   responded: boolean = false;
 }
 
@@ -18,6 +19,7 @@ export class HttpServer {
   private fallbackHandler: RouteHandler | null = null;
   private decoder: util.TextDecoder = new util.TextDecoder();
   private encoder: util.TextEncoder = new util.TextEncoder('utf-8');
+  private multipartParser: MultipartParser = new MultipartParser();
   private listening: boolean = false;
   readonly host: string;
   readonly port: number;
@@ -96,8 +98,7 @@ export class HttpServer {
         return;
       }
 
-      const data = this.decoder.decodeToString(new Uint8Array(messageInfo.message));
-      state.buffer += data;
+      state.buffer = this.concatBytes(state.buffer, new Uint8Array(messageInfo.message));
 
       if (!this.hasCompleteRequest(state.buffer)) {
         return;
@@ -112,7 +113,7 @@ export class HttpServer {
     });
   }
 
-  private async dispatch(connection: socket.TCPSocketConnection, rawRequest: string): Promise<void> {
+  private async dispatch(connection: socket.TCPSocketConnection, rawRequest: Uint8Array): Promise<void> {
     let response: HttpResponse;
     try {
       const request = this.parseRequest(rawRequest);
@@ -152,23 +153,23 @@ export class HttpServer {
     }
   }
 
-  private hasCompleteRequest(buffer: string): boolean {
-    const headerEnd = buffer.indexOf('\r\n\r\n');
+  private hasCompleteRequest(buffer: Uint8Array): boolean {
+    const headerEnd = this.indexOfBytes(buffer, this.asciiBytes('\r\n\r\n'), 0);
     if (headerEnd < 0) {
       return false;
     }
 
-    const headerText = buffer.slice(0, headerEnd);
+    const headerText = this.decoder.decodeToString(buffer.slice(0, headerEnd));
     const headers = this.parseHeaders(headerText.split('\r\n').slice(1));
     const contentLength = Number(headers['content-length'] ?? '0');
-    const bodyLength = buffer.length - headerEnd - 4;
+    const bodyLength = buffer.byteLength - headerEnd - 4;
     return bodyLength >= contentLength;
   }
 
-  private parseRequest(rawRequest: string): HttpRequest {
-    const headerEnd = rawRequest.indexOf('\r\n\r\n');
-    const headerText = headerEnd >= 0 ? rawRequest.slice(0, headerEnd) : rawRequest;
-    const bodyText = headerEnd >= 0 ? rawRequest.slice(headerEnd + 4) : '';
+  private parseRequest(rawRequest: Uint8Array): HttpRequest {
+    const headerEnd = this.indexOfBytes(rawRequest, this.asciiBytes('\r\n\r\n'), 0);
+    const headerText = headerEnd >= 0 ? this.decoder.decodeToString(rawRequest.slice(0, headerEnd)) :
+      this.decoder.decodeToString(rawRequest);
     const lines = headerText.split('\r\n');
     const requestLine = lines[0].split(' ');
     const method = requestLine[0]?.toUpperCase() ?? 'GET';
@@ -182,10 +183,22 @@ export class HttpServer {
     request.path = decodeURIComponent(path);
     request.query = this.parseQuery(queryText);
     request.headers = this.parseHeaders(lines.slice(1));
+    request.bodyBytes = this.rawBodyBytes(rawRequest, headerEnd);
+    const bodyText = this.decoder.decodeToString(request.bodyBytes);
     request.bodyText = bodyText;
 
     const contentType = request.header('content-type');
-    if (bodyText.length > 0 && contentType.includes('application/json')) {
+    if (request.bodyBytes.byteLength > 0 && contentType.includes('multipart/form-data')) {
+      try {
+        const multipart = this.multipartParser.parse(contentType, request.bodyBytes);
+        request.body = multipart.fields;
+        request.files = multipart.files;
+      } catch (err) {
+        const error = new Error(`invalid_multipart: ${JSON.stringify(err)}`);
+        error.name = 'BadRequest';
+        throw error;
+      }
+    } else if (bodyText.length > 0 && contentType.includes('application/json')) {
       try {
         request.body = JSON.parse(bodyText) as JsonRecord;
       } catch (_err) {
@@ -196,6 +209,14 @@ export class HttpServer {
     }
 
     return request;
+  }
+
+  private rawBodyBytes(rawRequest: Uint8Array, headerEnd: number): Uint8Array {
+    if (headerEnd < 0) {
+      return new Uint8Array();
+    }
+    const bodyStart = headerEnd + 4;
+    return rawRequest.slice(bodyStart);
   }
 
   private parseHeaders(lines: string[]): Record<string, string> {
@@ -245,5 +266,39 @@ export class HttpServer {
     packet.set(headerBytes, 0);
     packet.set(bodyBytes, headerBytes.byteLength);
     return packet.buffer;
+  }
+
+  private concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {
+    const output = new Uint8Array(left.byteLength + right.byteLength);
+    output.set(left, 0);
+    output.set(right, left.byteLength);
+    return output;
+  }
+
+  private asciiBytes(value: string): Uint8Array {
+    const output = new Uint8Array(value.length);
+    for (let index = 0; index < value.length; index += 1) {
+      output[index] = value.charCodeAt(index) & 0xff;
+    }
+    return output;
+  }
+
+  private indexOfBytes(source: Uint8Array, target: Uint8Array, start: number): number {
+    if (target.byteLength === 0) {
+      return start;
+    }
+    for (let index = Math.max(0, start); index <= source.byteLength - target.byteLength; index += 1) {
+      let matched = true;
+      for (let inner = 0; inner < target.byteLength; inner += 1) {
+        if (source[index + inner] !== target[inner]) {
+          matched = false;
+          break;
+        }
+      }
+      if (matched) {
+        return index;
+      }
+    }
+    return -1;
   }
 }

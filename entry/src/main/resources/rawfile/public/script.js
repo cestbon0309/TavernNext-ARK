@@ -11941,15 +11941,8 @@ jQuery(async function () {
         });
 
         if (response.ok) {
-            const filename = characters[this_chid].avatar.replace('.png', `.${format}`);
-            const blob = await response.blob();
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.setAttribute('download', filename);
-            document.body.appendChild(a);
-            a.click();
-            URL.revokeObjectURL(a.href);
-            document.body.removeChild(a);
+            const data = await response.json();
+            toastr.success(data.shared ? t`Share panel opened.` : t`Character exported.`);
         }
     });
     //**************************CHAT IMPORT EXPORT*************************//

@@ -76,6 +76,8 @@ export class DataDirectories {
   storageRoot: string;
   cacheRoot: string;
   characterCacheRoot: string;
+  exportRoot: string;
+  characterExportRoot: string;
   defaultUser: UserDirectories;
   private store: FileStore;
 
@@ -85,11 +87,15 @@ export class DataDirectories {
     this.storageRoot = joinPath(this.dataRoot, '_storage');
     this.cacheRoot = joinPath(this.dataRoot, '_cache');
     this.characterCacheRoot = joinPath(this.cacheRoot, 'characters');
+    this.exportRoot = joinPath(filesDir, 'exports');
+    this.characterExportRoot = joinPath(this.exportRoot, 'characters');
     this.defaultUser = new UserDirectories(this.dataRoot, 'default-user');
     this.store = store;
   }
 
   initialize(): void {
+    this.store.ensureDir(this.exportRoot);
+    this.store.ensureDir(this.characterExportRoot);
     this.store.ensureDir(this.dataRoot);
     this.store.ensureDir(this.uploadRoot);
     this.store.ensureDir(this.storageRoot);

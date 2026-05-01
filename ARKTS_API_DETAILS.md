@@ -185,6 +185,15 @@ data/
 
 必须保持这些目录名大小写和空格与 SillyTavern 一致，例如 `User Avatars`、`group chats`、`NovelAI Settings`。
 
+铁律：`<context.filesDir>/data` 只保存 SillyTavern 原版会保存的数据结构和文件。OHOS 适配产生的临时导出、分享中转文件、系统交互状态不能写入 `data/default-user`，也不能在其中新增非原版目录。当前导出文件统一写入：
+
+```text
+<context.filesDir>/exports/
+  characters/
+```
+
+这个 `exports/` 是应用私有目录，专门用于 ShareKit 分享中转，不属于 SillyTavern `data/` 兼容结构。
+
 ## 4. 静态资源接口
 
 ### 4.1 `GET /`
@@ -412,6 +421,7 @@ data/default-user/chats/<internal-name>/
 - 写入时会删除已有 `chara` 和 `ccv3` 文本块，再在 `IEND` 前插入新的 `tEXt` chunk。
 - 新建角色没有现有图片时使用内置 1x1 PNG 透明占位图。
 - 当前写入关键字为 `chara`。
+- 支持从内存 PNG bytes 读取角色卡，也支持以用户上传 PNG 为底图重写角色元数据；这用于 `characters/import` 的 PNG 导入和 `characters/export` 的 PNG 私有导出。
 
 ### 7.2 角色响应结构
 
@@ -663,7 +673,110 @@ Assistant.png
 { "ok": true }
 ```
 
-### 7.8 `POST /api/characters/chats`
+### 7.8 `POST /api/characters/import`
+
+用途：导入角色卡，保持与原 SillyTavern 前端的 multipart 调用兼容。
+
+请求：
+
+```http
+POST /api/characters/import
+Content-Type: multipart/form-data
+```
+
+表单字段：
+
+```ts
+type CharacterImportForm = {
+  avatar: File;             // 必填，上传字段名必须是 avatar
+  file_type: "json" | "png";
+  user_name?: string;       // 当前阶段接收但不参与转换
+  preserved_name?: string;  // 可选，替换角色时保持原内部文件名
+};
+```
+
+当前支持：
+
+- `file_type=json`：读取上传文件 UTF-8 文本，兼容 UTF-8 BOM，支持 V2/V3 类角色卡、V1 角色卡、Pygmalion/Gradio notepad，并使用内置 1x1 PNG 透明图作为底图。
+- `file_type=png`：读取上传 PNG 的 `tEXt/chara` 或 `tEXt/ccv3` 元数据，并使用上传 PNG 原图作为底图重写角色元数据。
+
+导入时会归一为 `chara_card_v2`，清除 `fav`、`data.extensions.fav` 和 `chat`，刷新 `create_date`，并确保：
+
+```text
+data/default-user/characters/<internal-name>.png
+data/default-user/chats/<internal-name>/
+```
+
+成功响应：
+
+```json
+{
+  "file_name": "internal-name"
+}
+```
+
+缺少文件或 `file_type` 返回 `400` 空 body；格式不支持返回 `unsupported_format`；解析失败或无有效角色数据返回：
+
+```json
+{ "error": true }
+```
+
+当前未支持：`yaml`、`yml`、`charx`、`byaf`，也未导入 Risu sprites、CharX 附带资产、BYAF 附带聊天/背景/图片。
+
+### 7.9 `POST /api/characters/export`
+
+用途：导出角色卡。在 OHOS 中，所有导出先写入应用私有目录，再通过华为官方 ShareKit 唤起系统分享面板，让用户决定保存或发送到哪里。
+
+请求：
+
+```json
+{
+  "format": "json",
+  "avatar_url": "Assistant.png"
+}
+```
+
+`format` 当前支持 `json` 和 `png`。
+
+行为：
+
+- 读取 `data/default-user/characters/<avatar_url>`。
+- 从 PNG 角色卡元数据中读取角色 JSON。
+- 导出前归一为 V2 结构，并清除 `fav`、`data.extensions.fav` 和 `chat`。
+- `json` 导出写入格式化 JSON。
+- `png` 导出使用原 PNG bytes 作为底图，重写安全后的角色元数据。
+- 写入私有导出目录，不写入 SillyTavern `data/`：
+
+```text
+<context.filesDir>/exports/characters/<internal-name>.json
+<context.filesDir>/exports/characters/<internal-name>.png
+```
+
+ShareKit 调用：
+
+- 使用 `@kit.ShareKit` 的 `systemShare.SharedData` 和 `systemShare.ShareController`。
+- 文件 URI 来自 `@kit.CoreFileKit` 的 `fileUri.getUriFromPath(path)`。
+- JSON 使用 UTD `general.plain-text`，PNG 使用 UTD `general.png`。
+- 当前使用单选分享模式 `SelectionMode.SINGLE` 和默认预览模式 `SharePreviewMode.DEFAULT`。
+
+成功响应：
+
+```json
+{
+  "ok": true,
+  "shared": true,
+  "file_name": "Assistant.json",
+  "path": "/data/storage/el2/base/haps/entry/files/exports/characters/Assistant.json",
+  "uri": "file://com.esoteric.tavernnext/...",
+  "content_type": "application/json"
+}
+```
+
+如果文件已写入但 ShareKit 未能打开，返回 `500`，响应里仍会带 `path` 和 `uri` 方便调试。
+
+与原 Node 后端差异：原 SillyTavern `/api/characters/export` 直接返回下载流；OHOS 版按系统交互要求改为“私有文件 + ShareKit”。前端 rawfile 中角色导出点击逻辑也已适配为读取 JSON 结果，不再创建 WebView blob 下载。
+
+### 7.10 `POST /api/characters/chats`
 
 请求：
 
@@ -1357,7 +1470,7 @@ UI 截图：
 当前实现目标是“让 SillyTavern 前端先在手机 WebView 中跑起来”，不是完整后端替代。已知限制：
 
 - 不支持账号、登录、多用户、session 和真实 CSRF。
-- 不支持 multipart 上传，因此角色导入、头像上传、背景上传等仍需补。
+- multipart 解析已支持，角色卡 JSON/PNG 导入已接入；头像上传、背景上传、聊天导入、世界书导入等 multipart 接口仍需补。
 - 不支持真实模型代理，底部仍显示“未连接到 API!”。
 - 不支持真实 OpenAI / chat-completions 生成。
 - 不支持真实 tokenizer，仅按 UTF-8 字节数估算。
@@ -1382,12 +1495,12 @@ UI 截图：
 - `POST /api/characters/edit`
 - `POST /api/characters/delete`
 - `POST /api/characters/chats`
+- `POST /api/characters/import`，当前支持 `json` 和 `png`
+- `POST /api/characters/export`，当前支持 `json` 和 `png`，并通过私有目录 + ShareKit 分享
 - PNG 角色卡 `tEXt/chara` 元数据读写
 
 仍缺失：
 
-- `POST /api/characters/import`
-- `POST /api/characters/export`
 - `POST /api/characters/duplicate`
 - `POST /api/characters/rename`
 - `POST /api/characters/edit-avatar`
@@ -1400,7 +1513,7 @@ UI 截图：
 - CharX 附带资产导入
 - BYAF 附带聊天、背景、图片导入
 
-特别说明：原 SillyTavern 支持角色卡 JSON 导入，当前还没有做。原接口是：
+特别说明：原 SillyTavern 支持角色卡 JSON 导入，当前 ArkTS 已完成 JSON 和 PNG 的最小可用导入。原接口是：
 
 ```http
 POST /api/characters/import
@@ -1430,16 +1543,12 @@ avatar
 - `charx`
 - `byaf`
 
-当前 ArkTS 的 `POST /api/characters/create` 可以从 JSON body 的 `json_data` 写出 PNG 角色卡，但这不等价于原版导入接口，因为它不支持 multipart 文件上传，也没有实现各种导入格式的转换逻辑。
-
 建议优先实现顺序：
 
-1. `POST /api/characters/import`，先支持 `json`。
-2. `POST /api/characters/import` 支持 `png`，直接读取 PNG 内 `chara` / `ccv3`。
-3. `POST /api/characters/export`，支持 `json` 和 `png`。
-4. `duplicate`、`rename`、`edit-attribute`、`merge-attributes`。
-5. 头像上传、裁剪、resize。
-6. `yaml`、`charx`、`byaf`。
+1. `duplicate`、`rename`、`edit-attribute`、`merge-attributes`。
+2. 头像上传、裁剪、resize。
+3. `yaml`、`charx`、`byaf`。
+4. 缩略图失效、重建和缓存对齐。
 
 ### 17.2 聊天相关
 
@@ -1750,9 +1859,10 @@ avatar
 建议后续按以下大阶段推进，并在每个阶段完成后提交 Git commit：
 
 1. 角色导入导出阶段：
-   - `characters/import` 支持 JSON 和 PNG
-   - `characters/export` 支持 JSON 和 PNG
-   - 补文档和基础测试
+   - 已完成：`characters/import` 支持 JSON 和 PNG
+   - 已完成：`characters/export` 支持 JSON 和 PNG
+   - 已完成：导出写入 `<context.filesDir>/exports/characters` 并唤起 ShareKit
+   - 已完成：补文档和基础测试
 2. 角色管理补全阶段：
    - duplicate
    - rename

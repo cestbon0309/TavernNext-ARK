@@ -1,7 +1,8 @@
-import { Context } from '@kit.AbilityKit';
+import { common, Context } from '@kit.AbilityKit';
 import { DataDirectories } from './DataDirectories';
 import { FileStore } from './FileStore';
 import { HttpServer } from './HttpServer';
+import { ShareExportService } from './ShareExportService';
 import { SillyTavernCore } from './SillyTavernCore';
 import { StaticFileServer } from './StaticFileServer';
 
@@ -25,6 +26,7 @@ export class BackendService {
   private directories: DataDirectories;
   private store: FileStore;
   private core: SillyTavernCore;
+  private shareExports: ShareExportService;
   private staticFiles: StaticFileServer;
   private lastMessage: string = 'Not started';
 
@@ -32,7 +34,8 @@ export class BackendService {
     this.store = new FileStore();
     this.directories = new DataDirectories(context.filesDir, this.store);
     this.directories.initialize();
-    this.core = new SillyTavernCore(this.store, this.directories);
+    this.shareExports = new ShareExportService(context as common.UIAbilityContext, this.store, this.directories.exportRoot);
+    this.core = new SillyTavernCore(this.store, this.directories, this.shareExports);
     this.staticFiles = new StaticFileServer(context.resourceManager);
     this.server = new HttpServer('127.0.0.1', 8000);
     this.registerRoutes();
@@ -84,6 +87,8 @@ export class BackendService {
     this.server.route('POST', '/api/characters/edit', async (request) => this.core.editCharacter(request));
     this.server.route('POST', '/api/characters/delete', async (request) => this.core.deleteCharacter(request));
     this.server.route('POST', '/api/characters/chats', async (request) => this.core.listCharacterChats(request));
+    this.server.route('POST', '/api/characters/import', async (request) => this.core.importCharacter(request));
+    this.server.route('POST', '/api/characters/export', async (request) => await this.core.exportCharacter(request));
 
     this.server.route('POST', '/api/chats/get', async (request) => this.core.getChat(request));
     this.server.route('POST', '/api/chats/save', async (request) => this.core.saveChat(request));
