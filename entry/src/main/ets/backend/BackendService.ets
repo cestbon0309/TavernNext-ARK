@@ -99,6 +99,16 @@ export class BackendService {
 
     this.server.route('POST', '/api/chats/get', async (request) => this.core.getChat(request));
     this.server.route('POST', '/api/chats/save', async (request) => this.core.saveChat(request));
+    this.server.route('POST', '/api/chats/delete', async (request) => this.core.deleteChat(request));
+    this.server.route('POST', '/api/chats/rename', async (request) => this.core.renameChat(request));
+    this.server.route('POST', '/api/chats/import', async (request) => this.core.importChat(request));
+    this.server.route('POST', '/api/chats/export', async (request) => await this.core.exportChat(request));
+    this.server.route('POST', '/api/chats/search', async (request) => this.core.searchChats(request));
+    this.server.route('POST', '/api/chats/group/get', async (request) => this.core.getGroupChat(request));
+    this.server.route('POST', '/api/chats/group/save', async (request) => this.core.saveGroupChat(request));
+    this.server.route('POST', '/api/chats/group/delete', async (request) => this.core.deleteGroupChat(request));
+    this.server.route('POST', '/api/chats/group/import', async (request) => this.core.importGroupChat(request));
+    this.server.route('POST', '/api/chats/group/info', async (request) => this.core.groupChatInfo(request));
     this.server.route('POST', '/api/chats/recent', async (request) => this.core.recentChats(request));
 
     this.server.route('POST', '/api/worldinfo/list', async () => this.core.listWorlds());

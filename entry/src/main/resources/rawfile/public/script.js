@@ -11412,12 +11412,13 @@ jQuery(async function () {
                 toastr.error(`Error: ${data.message}`);
                 return;
             } else {
-                const mimeType = format == 'txt' ? 'text/plain' : 'application/octet-stream';
-                // success, handle response data
                 console.log(data);
                 await delay(250);
-                toastr.success(data.message);
-                download(data.result, body.exportfilename, mimeType);
+                toastr.success(data.message || data.file_name || body.exportfilename);
+                if (data.result !== undefined) {
+                    const mimeType = format == 'txt' ? 'text/plain' : 'application/octet-stream';
+                    download(data.result, body.exportfilename, mimeType);
+                }
             }
         } catch (error) {
             // display error message

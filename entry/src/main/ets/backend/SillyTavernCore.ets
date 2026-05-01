@@ -154,6 +154,14 @@ class RecentChatResponse {
   match: boolean = true;
 }
 
+class ChatSearchResponse {
+  file_name: string = '';
+  file_size: string = '';
+  message_count: number = 0;
+  last_mes: string = '';
+  preview_message: string = '';
+}
+
 class WorldListResponse {
   file_id: string = '';
   name: string = '';
@@ -757,6 +765,207 @@ export class SillyTavernCore {
     const jsonl = chat.map((item: Object | string | number | boolean | null) => JSON.stringify(item)).join('\n');
     this.store.writeText(joinPath(dir, sanitizeFileName(ensureJsonlExtension(fileName))), jsonl);
     return HttpResponse.json(new OkResponse());
+  }
+
+  deleteChat(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const avatarUrl = this.asString(body['avatar_url']);
+    let chatFile = this.asString(body['chatfile']);
+    if (avatarUrl.length === 0 || chatFile.length === 0) {
+      return HttpResponse.empty(400);
+    }
+    chatFile = ensureJsonlExtension(sanitizeFileName(chatFile));
+    const path = joinPath(this.userDirs.chats, withoutExtension(sanitizeFileName(avatarUrl)), chatFile);
+    if (!this.store.deleteFile(path)) {
+      return HttpResponse.empty(400);
+    }
+    return HttpResponse.json(new OkResponse());
+  }
+
+  renameChat(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const originalFile = sanitizeFileName(ensureJsonlExtension(this.asString(body['original_file'])));
+    const renamedFile = sanitizeFileName(ensureJsonlExtension(this.asString(body['renamed_file'])));
+    if (originalFile.length === 0 || renamedFile.length === 0) {
+      return HttpResponse.empty(400);
+    }
+
+    const directory = body['is_group'] === true ? this.userDirs.groupChats :
+      joinPath(this.userDirs.chats, withoutExtension(sanitizeFileName(this.asString(body['avatar_url']))));
+    if (directory.length === 0) {
+      return HttpResponse.empty(400);
+    }
+
+    const source = joinPath(directory, originalFile);
+    const target = joinPath(directory, renamedFile);
+    if (!this.store.exists(source) || this.store.exists(target)) {
+      return HttpResponse.json(new ErrorFlagResponse(), 400);
+    }
+    if (!this.store.copyFile(source, target)) {
+      return HttpResponse.json(new ErrorFlagResponse(), 500);
+    }
+    this.store.deleteFile(source);
+
+    const response = emptyJsonRecord();
+    response['ok'] = true;
+    response['sanitizedFileName'] = withoutExtension(renamedFile);
+    return HttpResponse.json(response);
+  }
+
+  importChat(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const avatarUrl = this.asString(body['avatar_url']);
+    const fileType = this.asString(body['file_type']).toLowerCase();
+    const file = request.file('avatar');
+    if (avatarUrl.length === 0 || fileType.length === 0 || file === null) {
+      return HttpResponse.empty(400);
+    }
+
+    const directory = joinPath(this.userDirs.chats, withoutExtension(sanitizeFileName(avatarUrl)));
+    this.store.ensureDir(directory);
+    const characterName = sanitizeFileName(this.asString(body['character_name']) || 'Character');
+    const userName = sanitizeFileName(this.asString(body['user_name']) || 'User');
+    const imported = this.importChatTexts(file.bytes, fileType, userName, characterName);
+    if (imported.length === 0) {
+      return HttpResponse.json(new ErrorFlagResponse());
+    }
+
+    const fileNames: string[] = [];
+    for (const chatText of imported) {
+      const fileName = this.uniqueChatImportFileName(directory, characterName);
+      this.store.writeText(joinPath(directory, fileName), chatText);
+      fileNames.push(fileName);
+    }
+    const response = emptyJsonRecord();
+    response['res'] = true;
+    response['fileNames'] = fileNames;
+    return HttpResponse.json(response);
+  }
+
+  importGroupChat(request: HttpRequest): HttpResponse {
+    const file = request.file('avatar');
+    if (file === null) {
+      return HttpResponse.empty(400);
+    }
+
+    const chatText = this.decoder.decodeToString(file.bytes);
+    if (!this.looksLikeJsonlChat(chatText)) {
+      return HttpResponse.json(new ErrorFlagResponse());
+    }
+
+    const chatId = this.uniqueName(this.humanizedDateTime(), this.userDirs.groupChats, '.jsonl');
+    this.store.writeText(joinPath(this.userDirs.groupChats, `${chatId}.jsonl`), chatText);
+    const response = emptyJsonRecord();
+    response['res'] = chatId;
+    return HttpResponse.json(response);
+  }
+
+  async exportChat(request: HttpRequest): Promise<HttpResponse> {
+    const body = this.bodyAsRecord(request);
+    const file = sanitizeFileName(ensureJsonlExtension(this.asString(body['file'])));
+    const format = this.asString(body['format']).toLowerCase() || 'txt';
+    if (file.length === 0) {
+      return HttpResponse.empty(400);
+    }
+
+    const directory = body['is_group'] === true ? this.userDirs.groupChats :
+      joinPath(this.userDirs.chats, withoutExtension(sanitizeFileName(this.asString(body['avatar_url']))));
+    const sourcePath = joinPath(directory, file);
+    const sourceText = this.store.readText(sourcePath, '');
+    if (sourceText.length === 0 && !this.store.exists(sourcePath)) {
+      return HttpResponse.json(jsonMessage('not_found', `Could not find JSONL file to export. Source chat file: ${sourcePath}.`),
+        404);
+    }
+
+    const exportName = sanitizeFileName(this.asString(body['exportfilename'])) ||
+      `${withoutExtension(file)}.${format === 'jsonl' ? 'jsonl' : 'txt'}`;
+    const exportText = format === 'jsonl' ? sourceText : this.chatJsonlToText(sourceText);
+    const extension = format === 'jsonl' ? '.jsonl' : '.txt';
+    const exported = this.shareExports.writeExportFile('chats', exportName, this.encoder.encodeInto(exportText),
+      ShareExportService.contentTypeForExtension(extension), ShareExportService.utdForExtension(extension));
+    return this.shareExports.shareHttpResponse(exported, exportName);
+  }
+
+  searchChats(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const query = this.asString(body['query']).trim().toLowerCase();
+    const groupId = this.asString(body['group_id']);
+    const files: FileEntry[] = [];
+
+    if (groupId.length > 0) {
+      const group = this.findGroupById(groupId);
+      const chats = this.asArray(group['chats']);
+      for (const chat of chats) {
+        const fileName = ensureJsonlExtension(sanitizeFileName(`${chat}`));
+        const entry = this.store.stat(joinPath(this.userDirs.groupChats, fileName), fileName);
+        if (entry !== null && entry.isFile) {
+          files.push(entry);
+        }
+      }
+    } else {
+      const avatarUrl = this.asString(body['avatar_url']);
+      if (avatarUrl.length === 0) {
+        return HttpResponse.json([]);
+      }
+      const directory = joinPath(this.userDirs.chats, withoutExtension(sanitizeFileName(avatarUrl)));
+      files.push(...this.store.listFilesByExtension(directory, '.jsonl'));
+    }
+
+    const results: ChatSearchResponse[] = [];
+    for (const file of files) {
+      const rows = this.readChatFile(file.path);
+      const row = this.chatSearchInfo(file, rows);
+      const match = query.length === 0 || this.chatMatchesQuery(withoutExtension(file.name), rows, query);
+      if (match) {
+        results.push(row);
+      }
+    }
+    return HttpResponse.json(results);
+  }
+
+  getGroupChat(request: HttpRequest): HttpResponse {
+    const id = sanitizeFileName(this.asString(this.bodyAsRecord(request)['id']));
+    if (id.length === 0) {
+      return HttpResponse.empty(400);
+    }
+    return HttpResponse.json(this.readChatFile(joinPath(this.userDirs.groupChats, ensureJsonlExtension(id))));
+  }
+
+  saveGroupChat(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const id = sanitizeFileName(this.asString(body['id']));
+    const chat = body['chat'];
+    if (id.length === 0 || !Array.isArray(chat)) {
+      return HttpResponse.json(jsonMessage('id and chat[] are required'), 400);
+    }
+    const jsonl = chat.map((item: Object | string | number | boolean | null) => JSON.stringify(item)).join('\n');
+    this.store.writeText(joinPath(this.userDirs.groupChats, ensureJsonlExtension(id)), jsonl);
+    return HttpResponse.json(new OkResponse());
+  }
+
+  deleteGroupChat(request: HttpRequest): HttpResponse {
+    const id = sanitizeFileName(this.asString(this.bodyAsRecord(request)['id']));
+    if (id.length === 0) {
+      return HttpResponse.empty(400);
+    }
+    if (!this.store.deleteFile(joinPath(this.userDirs.groupChats, ensureJsonlExtension(id)))) {
+      return HttpResponse.empty(400);
+    }
+    return HttpResponse.json(new OkResponse());
+  }
+
+  groupChatInfo(request: HttpRequest): HttpResponse {
+    const id = sanitizeFileName(this.asString(this.bodyAsRecord(request)['id']));
+    if (id.length === 0) {
+      return HttpResponse.empty(400);
+    }
+    const fileName = ensureJsonlExtension(id);
+    const path = joinPath(this.userDirs.groupChats, fileName);
+    const entry = this.store.stat(path, fileName);
+    if (entry === null || !entry.isFile) {
+      return HttpResponse.json(emptyJsonRecord());
+    }
+    return HttpResponse.json(this.chatInfo(entry, this.readChatFile(path)));
   }
 
   recentChats(request: HttpRequest): HttpResponse {
@@ -1492,6 +1701,264 @@ export class SillyTavernCore {
       }
     }
     return rows;
+  }
+
+  private importChatTexts(bytes: Uint8Array, fileType: string, userName: string, characterName: string): string[] {
+    const text = this.stripJsonBom(this.decoder.decodeToString(bytes));
+    if (fileType === 'jsonl') {
+      return this.looksLikeJsonlChat(text) ? [text] : [];
+    }
+    if (fileType !== 'json') {
+      return [];
+    }
+
+    const parsed = this.parseJsonValue(text);
+    if (parsed === null) {
+      return [];
+    }
+    if (Array.isArray(parsed)) {
+      const rows: Object[] = [];
+      for (let index = 0; index < parsed.length; index += 1) {
+        const item = parsed[index] as JsonValue;
+        if (item !== null && typeof item === 'object' && !Array.isArray(item)) {
+          rows.push(item as Object);
+        }
+      }
+      return rows.length > 0 ? [this.chatRowsToJsonl(rows)] : [];
+    }
+    if (typeof parsed !== 'object') {
+      return [];
+    }
+
+    const record = parsed as JsonRecord;
+    if (Array.isArray(record['data_visible'])) {
+      return [this.importOobaChat(userName, characterName, record['data_visible'] as JsonArray)];
+    }
+    if (Array.isArray(record['messages'])) {
+      return [this.importAgnaiChat(userName, characterName, record['messages'] as JsonArray)];
+    }
+    if (record['savedsettings'] !== undefined && Array.isArray(record['actions'])) {
+      return [this.importKoboldLiteChat(record)];
+    }
+    return [];
+  }
+
+  private looksLikeJsonlChat(text: string): boolean {
+    const rows = this.readChatRowsFromText(text);
+    if (rows.length === 0) {
+      return false;
+    }
+    const header = rows[0] as JsonRecord;
+    return header['user_name'] !== undefined || header['name'] !== undefined || header['chat_metadata'] !== undefined;
+  }
+
+  private readChatRowsFromText(text: string): Object[] {
+    const rows: Object[] = [];
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) {
+        continue;
+      }
+      try {
+        const parsed = JSON.parse(trimmed) as Object;
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          rows.push(parsed);
+        }
+      } catch (_err) {
+      }
+    }
+    return rows;
+  }
+
+  private chatRowsToJsonl(rows: Object[]): string {
+    return rows.map((row: Object) => JSON.stringify(row)).join('\n');
+  }
+
+  private importOobaChat(userName: string, characterName: string, visibleRows: JsonArray): string {
+    const rows: Object[] = [this.chatHeader()];
+    for (const item of visibleRows) {
+      if (!Array.isArray(item)) {
+        continue;
+      }
+      const userMessage = this.asString(item[0] as JsonValue);
+      const characterMessage = this.asString(item[1] as JsonValue);
+      if (userMessage.length > 0) {
+        rows.push(this.chatMessage(userName, true, userMessage));
+      }
+      if (characterMessage.length > 0) {
+        rows.push(this.chatMessage(characterName, false, characterMessage));
+      }
+    }
+    return this.chatRowsToJsonl(rows);
+  }
+
+  private importAgnaiChat(userName: string, characterName: string, messages: JsonArray): string {
+    const rows: Object[] = [this.chatHeader()];
+    for (const item of messages) {
+      if (item === null || Array.isArray(item) || typeof item !== 'object') {
+        continue;
+      }
+      const message = item as JsonRecord;
+      const isUser = message['userId'] !== undefined && this.asString(message['userId']).length > 0;
+      rows.push(this.chatMessage(isUser ? userName : characterName, isUser, this.asString(message['msg'])));
+    }
+    return this.chatRowsToJsonl(rows);
+  }
+
+  private importKoboldLiteChat(record: JsonRecord): string {
+    const savedSettings = this.asObject(record['savedsettings']) as JsonRecord;
+    const userName = this.asString(savedSettings['chatname']) || 'User';
+    const characterName = this.asString(savedSettings['chatopponent']).split('||$||')[0] || 'Character';
+    const rows: Object[] = [this.chatHeader()];
+    const prompt = this.asString(record['prompt']);
+    if (prompt.length > 0) {
+      rows.push(this.koboldLiteMessage(userName, characterName, prompt));
+    }
+    for (const action of this.asArray(record['actions'])) {
+      const actionText = this.asString(action as JsonValue);
+      if (actionText.length > 0) {
+        rows.push(this.koboldLiteMessage(userName, characterName, actionText));
+      }
+    }
+    return this.chatRowsToJsonl(rows);
+  }
+
+  private koboldLiteMessage(userName: string, characterName: string, text: string): Object {
+    const inputToken = '{{[INPUT]}}';
+    const outputToken = '{{[OUTPUT]}}';
+    const isUser = text.includes(inputToken);
+    const mes = text.replace(inputToken, '').replace(outputToken, '').trim();
+    return this.chatMessage(isUser ? userName : characterName, isUser, mes);
+  }
+
+  private chatHeader(): JsonRecord {
+    const header = emptyJsonRecord();
+    header['chat_metadata'] = emptyJsonRecord();
+    header['user_name'] = 'unused';
+    header['character_name'] = 'unused';
+    return header;
+  }
+
+  private chatMessage(name: string, isUser: boolean, message: string): JsonRecord {
+    const row = emptyJsonRecord();
+    row['name'] = name;
+    row['is_user'] = isUser;
+    row['send_date'] = new Date().toISOString();
+    row['mes'] = message;
+    row['extra'] = emptyJsonRecord();
+    return row;
+  }
+
+  private uniqueChatImportFileName(directory: string, characterName: string): string {
+    const baseName = `${characterName} - ${this.humanizedDateTime()} imported`;
+    return `${this.uniqueName(baseName, directory, '.jsonl')}.jsonl`;
+  }
+
+  private humanizedDateTime(): string {
+    const date = new Date();
+    const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} @${pad(date.getHours())}h ${pad(date.getMinutes())}m ${pad(date.getSeconds())}s`;
+  }
+
+  private parseJsonValue(text: string): JsonValue | JsonArray | null {
+    try {
+      return JSON.parse(text) as JsonValue | JsonArray;
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  private chatInfo(file: FileEntry, rows: Object[]): JsonRecord {
+    const result = emptyJsonRecord();
+    result['match'] = true;
+    result['file_id'] = withoutExtension(file.name);
+    result['file_name'] = file.name;
+    result['file_size'] = this.formatBytes(file.size);
+    result['chat_items'] = Math.max(0, rows.length - 1);
+    result['mes'] = '[The chat is empty]';
+    result['last_mes'] = new Date(Math.round(file.mtimeMs)).toISOString();
+
+    if (rows.length > 0) {
+      const last = rows[rows.length - 1] as JsonRecord;
+      result['mes'] = this.asString(last['mes']) || '[The message is empty]';
+      result['last_mes'] = this.asString(last['send_date']) || result['last_mes'];
+    }
+    return result;
+  }
+
+  private chatSearchInfo(file: FileEntry, rows: Object[]): ChatSearchResponse {
+    const info = this.chatInfo(file, rows);
+    const row = new ChatSearchResponse();
+    row.file_name = withoutExtension(file.name);
+    row.file_size = this.asString(info['file_size']);
+    row.message_count = Number(info['chat_items'] ?? 0);
+    row.last_mes = this.asString(info['last_mes']);
+    row.preview_message = this.previewMessage(this.asString(info['mes']));
+    return row;
+  }
+
+  private previewMessage(message: string): string {
+    const maxLength = 400;
+    if (message.length <= maxLength) {
+      return message;
+    }
+    return `...${message.slice(message.length - maxLength)}`;
+  }
+
+  private chatMatchesQuery(fileId: string, rows: Object[], query: string): boolean {
+    const fragments = query.split(/\s+/).filter((fragment: string) => fragment.length > 0);
+    if (fragments.length === 0) {
+      return true;
+    }
+    const texts: string[] = [fileId.toLowerCase()];
+    for (const row of rows) {
+      const record = row as JsonRecord;
+      texts.push(this.asString(record['mes']).toLowerCase());
+      texts.push(this.asString(record['name']).toLowerCase());
+    }
+    for (const fragment of fragments) {
+      let found = false;
+      for (const text of texts) {
+        if (text.includes(fragment)) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private chatJsonlToText(jsonl: string): string {
+    const rows = this.readChatRowsFromText(jsonl);
+    let output = '';
+    for (const row of rows) {
+      const record = row as JsonRecord;
+      if (record['is_system'] === true) {
+        continue;
+      }
+      const message = this.asString(record['mes']);
+      if (message.length === 0) {
+        continue;
+      }
+      const extra = this.asObject(record['extra']) as JsonRecord;
+      const displayText = this.asString(extra['display_text']) || message;
+      output += `${this.asString(record['name'])}: ${displayText.replace(/\r?\n/g, '\n')}\n\n`;
+    }
+    return output;
+  }
+
+  private findGroupById(id: string): JsonRecord {
+    const groupFiles = this.store.listFilesByExtension(this.userDirs.groups, '.json');
+    for (const groupFile of groupFiles) {
+      const group = this.store.readJsonRecord(groupFile.path);
+      if (this.asString(group['id']) === id) {
+        return group;
+      }
+    }
+    return emptyJsonRecord();
   }
 
   private getLastChatMessage(path: string): string {
