@@ -1,0 +1,95 @@
+# TavernNext OHOS 迁移要求
+
+本文档记录当前 SillyTavern -> HarmonyOS ArkTS 迁移过程中已经明确下来的工程约束。后续实现接口、整理数据结构、接入系统能力时，必须先对照这里的要求。
+
+## 1. data 目录铁律
+
+- `data/` 目录的数据结构必须和原版 SillyTavern 严格一致。
+- 任何会被 SillyTavern 原版保存的数据，必须继续写入对应的原版路径和文件格式。
+- 不允许在 `data/default-user/` 下新增 OHOS 专用目录、临时文件、分享中转文件或系统交互状态。
+- 目录名的大小写、空格和层级必须保持原样，例如：
+  - `User Avatars`
+  - `group chats`
+  - `NovelAI Settings`
+  - `OpenAI Settings`
+  - `TextGen Settings`
+  - `QuickReplies`
+- 当前固定为单用户兼容目录：
+
+```text
+<context.filesDir>/data/default-user/
+```
+
+## 2. 导出与 ShareKit
+
+- 所有导出类能力不能直接把文件写到公共目录，也不能把导出中转文件放入 `data/default-user/`。
+- 导出必须先写入应用私有目录：
+
+```text
+<context.filesDir>/exports/
+```
+
+- 分类导出目录示例：
+
+```text
+<context.filesDir>/exports/characters/
+<context.filesDir>/exports/chats/
+```
+
+- 写入私有导出文件后，必须调用 HarmonyOS 官方 ShareKit，由用户决定保存或分享目标。
+- ShareKit 当前采用官方 SDK API：
+  - `@kit.ShareKit`：`systemShare.SharedData`、`systemShare.ShareController`
+  - `@kit.CoreFileKit`：`fileUri.getUriFromPath(path)`
+  - `@kit.ArkData`：`uniformTypeDescriptor`
+- 如果 ShareKit 唤起失败，接口可以返回错误，但响应应尽量保留私有导出文件的 `path`、`uri`、`file_name`，方便调试。
+- 前端下载逻辑需要适配：OHOS 版导出接口返回 JSON 结果，不走浏览器 Blob 下载。
+
+## 3. 架构边界
+
+- `SillyTavernCore` 负责 SillyTavern 兼容的数据结构、接口行为和本地文件读写。
+- `DataDirectories` 只负责创建和暴露目录路径，并保持 `data/` 与 `exports/` 的边界清晰。
+- `ShareExportService` 负责私有导出文件写入、文件 URI 生成和 ShareKit 调用。
+- `PngCardStore` 负责 PNG 角色卡元数据读写。
+- `HttpServer` 只做 HTTP 解析、路由分发和 multipart/json 解析，不塞业务规则。
+- OHOS 适配代码不应污染 SillyTavern 数据结构。
+
+## 4. 工程与调试要求
+
+- 基于用户用 DevEco Studio 创建的空项目继续开发，项目目录为：
+
+```text
+tavernnext-ohos/
+```
+
+- 优先使用华为官方 SDK/API 声明，避免凭空写不存在的 ArkTS 接口。
+- 当前可使用 DevEco 模拟器和 `hdc` 做安装、启动、HTTP API 验证。
+- 已配置签名，构建产物可直接安装：
+
+```text
+entry/build/default/outputs/default/entry-default-signed.hap
+```
+
+## 5. 阶段提交要求
+
+- 每完成一个大阶段必须 `git commit`，方便回滚。
+- 阶段应尽量边界清楚，例如：
+  - 前端启动基线
+  - 接口文档整理
+  - 角色导入/导出
+  - 角色管理
+  - 聊天记录管理
+  - 媒体上传
+  - 设置/预设
+  - 模型代理
+- 提交前应尽量完成：
+  - ArkTS 构建验证
+  - 模拟器安装/启动验证
+  - 关键 API 烟测
+  - 文档同步
+
+## 6. 当前优先级
+
+- 目标是尽可能先让 SillyTavern 前端在手机/模拟器上跑起来。
+- 优先补齐前端启动、角色、聊天、设置等本地数据接口。
+- 真实模型代理、真实 tokenizer、向量索引、外部服务可以后置。
+- 所有后续实现必须继续遵守 `data/` 结构兼容和 ShareKit 导出规则。
