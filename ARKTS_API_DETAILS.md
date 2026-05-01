@@ -1368,3 +1368,417 @@ UI 截图：
 - `thumbnail` 当前直接返回源图，不生成或缓存缩略图。
 - 静态前端资源内的 `global.d.ts` 被 rawfile 打包会触发 hvigor source warning，但不影响运行。
 
+## 17. 缺失接口和功能清单
+
+这一节按 SillyTavern 原后端能力归类，记录当前 ArkTS 版还没有实现、仅占位、或只做了最小兼容的部分。后续每完成一个大阶段都应单独 commit，方便回滚。
+
+### 17.1 角色卡相关
+
+当前 ArkTS 已实现：
+
+- `POST /api/characters/all`
+- `POST /api/characters/get`
+- `POST /api/characters/create`
+- `POST /api/characters/edit`
+- `POST /api/characters/delete`
+- `POST /api/characters/chats`
+- PNG 角色卡 `tEXt/chara` 元数据读写
+
+仍缺失：
+
+- `POST /api/characters/import`
+- `POST /api/characters/export`
+- `POST /api/characters/duplicate`
+- `POST /api/characters/rename`
+- `POST /api/characters/edit-avatar`
+- `POST /api/characters/edit-attribute`
+- `POST /api/characters/merge-attributes`
+- 创建角色时上传头像、裁剪、resize
+- 编辑角色时替换头像、裁剪、resize
+- 缩略图失效与重建
+- Risu sprites 导入
+- CharX 附带资产导入
+- BYAF 附带聊天、背景、图片导入
+
+特别说明：原 SillyTavern 支持角色卡 JSON 导入，当前还没有做。原接口是：
+
+```http
+POST /api/characters/import
+```
+
+原接口通过 `multipart/form-data` 上传文件，上传字段来自全局 multer，字段名为：
+
+```text
+avatar
+```
+
+关键 body 字段：
+
+```json
+{
+  "file_type": "json",
+  "preserved_name": "optional-name"
+}
+```
+
+原版支持的导入格式：
+
+- `json`
+- `png`
+- `yaml`
+- `yml`
+- `charx`
+- `byaf`
+
+当前 ArkTS 的 `POST /api/characters/create` 可以从 JSON body 的 `json_data` 写出 PNG 角色卡，但这不等价于原版导入接口，因为它不支持 multipart 文件上传，也没有实现各种导入格式的转换逻辑。
+
+建议优先实现顺序：
+
+1. `POST /api/characters/import`，先支持 `json`。
+2. `POST /api/characters/import` 支持 `png`，直接读取 PNG 内 `chara` / `ccv3`。
+3. `POST /api/characters/export`，支持 `json` 和 `png`。
+4. `duplicate`、`rename`、`edit-attribute`、`merge-attributes`。
+5. 头像上传、裁剪、resize。
+6. `yaml`、`charx`、`byaf`。
+
+### 17.2 聊天相关
+
+当前 ArkTS 已实现：
+
+- `POST /api/chats/get`
+- `POST /api/chats/save`
+- `POST /api/chats/recent`
+
+仍缺失：
+
+- `POST /api/chats/delete`
+- `POST /api/chats/rename`
+- `POST /api/chats/export`
+- `POST /api/chats/import`
+- `POST /api/chats/search`
+- `POST /api/chats/group/get`
+- `POST /api/chats/group/save`
+- `POST /api/chats/group/delete`
+- `POST /api/chats/group/import`
+- `POST /api/chats/group/info`
+- 聊天备份相关接口：
+  - `POST /api/backups/chat/get`
+  - `POST /api/backups/chat/download`
+  - `POST /api/backups/chat/delete`
+
+兼容差异：
+
+- `POST /api/chats/recent` 已能返回最近聊天数组，但只实现本地扫描和基础字段。
+- `POST /api/characters/chats` 的 `last_mes` 当前取最后消息文本，原版更接近 `send_date` / mtime 语义，后续需要对齐。
+- 当前没有聊天完整性校验、metadata 读取开关、搜索匹配和 preview message 逻辑。
+
+### 17.3 背景、头像、图片和文件
+
+当前 ArkTS 已实现：
+
+- `POST /api/backgrounds/all`
+- `POST /api/backgrounds/folders`
+- `POST /api/avatars/get`
+- `POST /api/image-metadata/all`
+- `GET /thumbnail`
+- `GET /characters/*`
+- `GET /User Avatars/*`
+- `GET /backgrounds/*`
+
+仍缺失：
+
+- 背景：
+  - `POST /api/backgrounds/upload`
+  - `POST /api/backgrounds/delete`
+  - `POST /api/backgrounds/rename`
+- 用户头像：
+  - `POST /api/avatars/upload`
+  - `POST /api/avatars/delete`
+- 用户图片：
+  - `POST /api/images/upload`
+  - `POST /api/images/delete`
+  - `POST /api/images/folders`
+  - `POST /api/images/list/:folder?`
+- 通用文件：
+  - `POST /api/files/upload`
+  - `POST /api/files/delete`
+  - `POST /api/files/verify`
+  - `POST /api/files/sanitize-filename`
+- 缩略图：
+  - 真实生成缩略图
+  - 写入 `thumbnails/bg`
+  - 写入 `thumbnails/avatar`
+  - 写入 `thumbnails/persona`
+  - 缩略图缓存失效
+- 图片元数据：
+  - `POST /api/image-metadata/`
+  - `POST /api/image-metadata/cleanup`
+  - `POST /api/image-metadata/folders/get`
+  - `POST /api/image-metadata/folders/create`
+  - `POST /api/image-metadata/folders/update`
+  - `POST /api/image-metadata/folders/delete`
+  - `POST /api/image-metadata/folders/assign`
+  - `POST /api/image-metadata/folders/unassign`
+  - `POST /api/image-metadata/folders/set-thumbnails`
+- 资产：
+  - `POST /api/assets/get`
+  - `POST /api/assets/download`
+  - `POST /api/assets/delete`
+  - `POST /api/assets/character`
+- sprites：
+  - `GET /api/sprites/get`
+  - `POST /api/sprites/upload`
+  - `POST /api/sprites/upload-zip`
+  - `POST /api/sprites/delete`
+
+### 17.4 设置、预设、主题和 UI 配置
+
+当前 ArkTS 已实现：
+
+- `POST /api/settings/get`
+- `POST /api/settings/save`
+- 启动阶段所需的基础预设目录读取
+
+仍缺失：
+
+- 设置快照：
+  - `POST /api/settings/get-snapshots`
+  - `POST /api/settings/make-snapshot`
+  - `POST /api/settings/load-snapshot`
+  - `POST /api/settings/restore-snapshot`
+- 预设：
+  - `POST /api/presets/save`
+  - `POST /api/presets/delete`
+  - `POST /api/presets/restore`
+- 主题：
+  - `POST /api/themes/save`
+  - `POST /api/themes/delete`
+- moving UI：
+  - `POST /api/moving-ui/save`
+- Quick Replies：
+  - `POST /api/quick-replies/save`
+  - `POST /api/quick-replies/delete`
+
+兼容差异：
+
+- `settings/get` 中预设内容当前返回解析后的 JSON 对象数组；原版部分前端路径可能期望字符串数组，后续要按实际前端调用点对齐。
+
+### 17.5 世界书
+
+当前 ArkTS 已实现：
+
+- `POST /api/worldinfo/list`
+- `POST /api/worldinfo/get`
+- `POST /api/worldinfo/edit`
+- `POST /api/worldinfo/delete`
+
+仍缺失：
+
+- `POST /api/worldinfo/import`
+- 世界书导入时的文件上传解析
+- 更完整的世界书校验、备份和兼容转换
+
+### 17.6 群组
+
+当前 ArkTS 已实现：
+
+- `POST /api/groups/all`
+- `POST /api/groups/create`
+- `POST /api/groups/edit`
+- `POST /api/groups/delete`
+
+仍缺失：
+
+- 群聊消息相关接口在 `chats` 模块中尚未实现：
+  - `POST /api/chats/group/get`
+  - `POST /api/chats/group/save`
+  - `POST /api/chats/group/delete`
+  - `POST /api/chats/group/import`
+  - `POST /api/chats/group/info`
+- 群组头像上传和资源处理
+- 更完整的群组聊天统计和最近聊天字段对齐
+
+### 17.7 Secrets、扩展和账号
+
+当前 ArkTS 已实现：
+
+- `POST /api/secrets/settings`
+- `POST /api/secrets/read`
+- `GET /api/extensions/discover`
+- `POST /api/extensions/discover`
+
+仍缺失：
+
+- secrets：
+  - `POST /api/secrets/write`
+  - `POST /api/secrets/delete`
+  - `POST /api/secrets/find`
+  - `POST /api/secrets/view`
+  - `POST /api/secrets/rename`
+  - `POST /api/secrets/rotate`
+- extensions：
+  - `POST /api/extensions/version`
+  - `POST /api/extensions/install`
+  - `POST /api/extensions/update`
+  - `POST /api/extensions/delete`
+  - `POST /api/extensions/move`
+  - `POST /api/extensions/switch`
+  - `POST /api/extensions/branches`
+  - 扫描 `default-user/extensions`
+  - 解析 manifest
+  - 第三方扩展安装和更新
+- 用户账号：
+  - `POST /api/users/list`
+  - `POST /api/users/login`
+  - `POST /api/users/recover-step1`
+  - `POST /api/users/recover-step2`
+  - `GET /api/users/me`
+  - `POST /api/users/logout`
+  - `POST /api/users/change-avatar`
+  - `POST /api/users/change-name`
+  - `POST /api/users/change-password`
+  - `POST /api/users/reset-settings`
+  - 管理员用户创建、删除、启用、禁用、升降权等接口
+
+当前设计仍是单用户模式，所以账号相关可以后置。
+
+### 17.8 Tokenizer 和向量
+
+当前 ArkTS 已实现：
+
+- 多个 `/api/tokenizers/*/encode` 的估算接口
+- `POST /api/vector/query` 注册为 `501`
+
+仍缺失：
+
+- tokenizer decode：
+  - `POST /api/tokenizers/*/decode`
+- tokenizer count：
+  - `POST /api/tokenizers/openai/count`
+  - `POST /api/tokenizers/remote/kobold/count`
+  - `POST /api/tokenizers/remote/textgenerationwebui/encode`
+- 真实 tokenizer：
+  - GPT-2
+  - OpenAI
+  - Claude
+  - Llama / Llama 3
+  - Mistral
+  - Qwen2
+  - Gemma
+  - Yi
+  - DeepSeek
+  - Command 系列
+  - Nerdstash 等
+- vectors：
+  - `POST /api/vector/insert`
+  - `POST /api/vector/list`
+  - `POST /api/vector/delete`
+  - `POST /api/vector/purge`
+  - `POST /api/vector/purge-all`
+  - `POST /api/vector/query`
+  - `POST /api/vector/query-multi`
+- embedding 模型调用和本地索引持久化
+
+### 17.9 模型代理和外部服务
+
+当前 ArkTS 已注册但未实现：
+
+- `POST /api/backends/chat-completions/generate`
+- `POST /api/openai/generate`
+
+仍缺失的大类：
+
+- OpenAI / chat-completions 代理
+- OpenRouter
+- Claude / Anthropic
+- Google / Gemini
+- NovelAI
+- Horde
+- Kobold / KoboldCpp / TextGenerationWebUI 相关远程调用
+- Stable Diffusion
+- Azure
+- Minimax
+- Volcengine
+- 各类语音生成、语音识别、图片生成、视频生成
+- caption image
+- translate：
+  - Bing
+  - DeepL
+  - DeepLX
+  - Google
+  - Libre
+  - Lingva
+  - OneRing
+  - Yandex
+- search：
+  - SerpAPI
+  - Serper
+  - SearXNG
+  - Tavily
+  - transcript
+  - visit
+  - KoboldCpp
+  - ZAI
+- classify：
+  - label 列表
+  - 文本分类
+
+这些接口大多需要网络权限、密钥管理、流式响应、错误透传和前端中断控制，建议在本地数据 API 稳定后再分阶段实现。
+
+### 17.10 统计、备份、数据维护和内容导入
+
+仍缺失：
+
+- stats：
+  - `POST /api/stats/get`
+  - `POST /api/stats/update`
+  - `POST /api/stats/recreate`
+- data-maid：
+  - `POST /api/data-maid/report`
+  - `POST /api/data-maid/delete`
+  - `POST /api/data-maid/finalize`
+  - `GET /api/data-maid/view`
+- content-manager：
+  - `POST /api/content-manager/importURL`
+  - `POST /api/content-manager/importUUID`
+- backups：
+  - 聊天备份读取、下载、删除
+- master import/export 相关能力
+
+### 17.11 建议阶段划分
+
+建议后续按以下大阶段推进，并在每个阶段完成后提交 Git commit：
+
+1. 角色导入导出阶段：
+   - `characters/import` 支持 JSON 和 PNG
+   - `characters/export` 支持 JSON 和 PNG
+   - 补文档和基础测试
+2. 角色管理补全阶段：
+   - duplicate
+   - rename
+   - edit-attribute
+   - merge-attributes
+   - edit-avatar 基础版
+3. 聊天管理阶段：
+   - delete
+   - rename
+   - export
+   - import
+   - group chat get/save/delete
+4. 媒体上传阶段：
+   - avatars upload/delete
+   - backgrounds upload/delete/rename
+   - thumbnails 生成和缓存
+5. 设置与预设阶段：
+   - presets
+   - themes
+   - quick replies
+   - moving UI
+   - settings snapshots
+6. 模型连接最小阶段：
+   - 先实现一个可配置的 OpenAI-compatible chat completions proxy
+   - 支持非流式，再支持流式
+7. 高级能力阶段：
+   - vectors
+   - tokenizer 真实实现
+   - 图片、语音、翻译、搜索等外部能力
