@@ -131,6 +131,39 @@ export class FileStore {
     this.writeText(path, JSON.stringify(value, null, 4));
   }
 
+  copyFile(source: string, target: string): boolean {
+    const bytes = this.readBytes(source);
+    if (bytes === null) {
+      return false;
+    }
+    this.writeBytes(target, bytes);
+    return this.exists(target);
+  }
+
+  copyDirectory(source: string, target: string): boolean {
+    if (!this.exists(source)) {
+      return false;
+    }
+
+    try {
+      this.ensureDir(target);
+      const entries = this.list(source);
+      for (const entry of entries) {
+        const targetPath = joinPath(target, entry.name);
+        if (entry.isDirectory) {
+          if (!this.copyDirectory(entry.path, targetPath)) {
+            return false;
+          }
+        } else if (!this.copyFile(entry.path, targetPath)) {
+          return false;
+        }
+      }
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  }
+
   stat(path: string, name: string = ''): FileEntry | null {
     if (!this.exists(path)) {
       return null;

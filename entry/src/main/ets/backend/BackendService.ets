@@ -85,6 +85,13 @@ export class BackendService {
     this.server.route('POST', '/api/characters/get', async (request) => this.core.getCharacter(request));
     this.server.route('POST', '/api/characters/create', async (request) => this.core.createCharacter(request));
     this.server.route('POST', '/api/characters/edit', async (request) => this.core.editCharacter(request));
+    this.server.route('POST', '/api/characters/edit-avatar', async (request) => this.core.editCharacterAvatar(request));
+    this.server.route('POST', '/api/characters/edit-attribute',
+      async (request) => this.core.editCharacterAttribute(request));
+    this.server.route('POST', '/api/characters/merge-attributes',
+      async (request) => this.core.mergeCharacterAttributes(request));
+    this.server.route('POST', '/api/characters/duplicate', async (request) => this.core.duplicateCharacter(request));
+    this.server.route('POST', '/api/characters/rename', async (request) => this.core.renameCharacter(request));
     this.server.route('POST', '/api/characters/delete', async (request) => this.core.deleteCharacter(request));
     this.server.route('POST', '/api/characters/chats', async (request) => this.core.listCharacterChats(request));
     this.server.route('POST', '/api/characters/import', async (request) => this.core.importCharacter(request));

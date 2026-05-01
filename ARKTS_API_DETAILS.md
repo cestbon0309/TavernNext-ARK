@@ -421,7 +421,7 @@ data/default-user/chats/<internal-name>/
 - 写入时会删除已有 `chara` 和 `ccv3` 文本块，再在 `IEND` 前插入新的 `tEXt` chunk。
 - 新建角色没有现有图片时使用内置 1x1 PNG 透明占位图。
 - 当前写入关键字为 `chara`。
-- 支持从内存 PNG bytes 读取角色卡，也支持以用户上传 PNG 为底图重写角色元数据；这用于 `characters/import` 的 PNG 导入和 `characters/export` 的 PNG 私有导出。
+- 支持从内存 PNG bytes 读取角色卡，也支持以用户上传 PNG 为底图重写角色元数据；这用于 `characters/import` 的 PNG 导入、`characters/export` 的 PNG 私有导出，以及 `characters/edit-avatar` 的基础头像替换。
 
 ### 7.2 角色响应结构
 
@@ -649,7 +649,208 @@ Assistant.png
 }
 ```
 
-### 7.7 `POST /api/characters/delete`
+### 7.7 `POST /api/characters/duplicate`
+
+请求：
+
+```json
+{
+  "avatar_url": "Assistant.png"
+}
+```
+
+行为：
+
+- `avatar_url` 为空返回 `400` 空 body。
+- 源文件不存在返回 `404` 空 body。
+- 只复制角色 PNG 文件：`data/default-user/characters/<avatar_url>`。
+- 不复制 `data/default-user/chats/<internal-name>/`，这与原 SillyTavern 行为一致。
+- 新文件名沿用原版 `_数字` 递增策略，例如 `Alice.png` -> `Alice_1.png`，`Alice_1.png` -> `Alice_2.png`。
+
+成功响应：
+
+```json
+{
+  "path": "Assistant_1.png"
+}
+```
+
+写入失败时返回：
+
+```json
+{ "error": true }
+```
+
+### 7.8 `POST /api/characters/rename`
+
+请求：
+
+```json
+{
+  "avatar_url": "Assistant.png",
+  "new_name": "New Assistant"
+}
+```
+
+行为：
+
+- `avatar_url` 或 `new_name` 为空返回 `400` 空 body。
+- 读取旧角色 PNG 的卡片元数据。
+- 将卡片顶层 `name` 和 `data.name` 改为清理后的 `new_name`。
+- 使用 `new_name` 生成新的唯一内部名，写入：
+
+```text
+data/default-user/characters/<new-internal-name>.png
+```
+
+- 如果旧聊天目录存在且新聊天目录不存在，会递归复制并删除旧目录：
+
+```text
+data/default-user/chats/<old-internal-name>/
+data/default-user/chats/<new-internal-name>/
+```
+
+- 最后删除旧角色 PNG，并清理旧头像缩略图缓存文件。
+
+成功响应：
+
+```json
+{
+  "avatar": "New Assistant.png"
+}
+```
+
+已知差异：如果聊天目录复制失败，当前 ArkTS 版会保留旧聊天目录并继续返回角色重命名结果；后续可以改成更严格的事务式失败回滚。
+
+### 7.9 `POST /api/characters/edit-avatar`
+
+用途：替换角色卡底图，同时保留 PNG 里的角色卡 JSON 元数据。
+
+请求：
+
+```http
+POST /api/characters/edit-avatar
+Content-Type: multipart/form-data
+```
+
+表单字段：
+
+```ts
+type CharacterEditAvatarForm = {
+  avatar: File;        // 必填，上传字段名必须是 avatar
+  avatar_url: string;  // 必填，例如 Assistant.png
+};
+```
+
+行为：
+
+- 缺少 `avatar_url` 返回 `400` 文本错误。
+- 缺少上传文件返回 `400` 文本错误。
+- 读取 `characters/<avatar_url>` 中现有角色 JSON。
+- 以上传 PNG bytes 作为新底图，重新写入同一个角色卡文件。
+- 删除 `thumbnails/avatar/<avatar_url>`，让前端后续重新请求。
+
+成功响应：
+
+```http
+200 OK
+```
+
+响应 body 为纯文本：
+
+```text
+OK
+```
+
+当前限制：
+
+- 只做基础 PNG 底图替换，不做图片裁剪、resize、格式转换。
+- 原前端裁剪弹窗通常会给出 PNG blob，因此这个路径可覆盖核心使用场景；直接上传 JPEG/WebP 等格式后续需要接入图片解码/转 PNG 能力。
+
+### 7.10 `POST /api/characters/edit-attribute`
+
+请求：
+
+```json
+{
+  "avatar_url": "Assistant.png",
+  "field": "description",
+  "value": "new value",
+  "ch_name": "Assistant"
+}
+```
+
+行为：
+
+- `avatar_url` 或 `field` 为空返回 `400`。
+- `field=json_data` 返回 `400`。
+- 如果传入 `ch_name` 且为空字符串或 `.`，返回 `400`。
+- 读取角色卡 JSON，要求 `field` 已存在于顶层或 `data` 中。
+- 同时写入顶层字段和 `data[field]`，与原 Node 端行为保持一致。
+- 写入成功后清理头像缩略图缓存文件。
+
+成功响应：
+
+```http
+200 OK
+```
+
+响应 body 为纯文本：
+
+```text
+OK
+```
+
+### 7.11 `POST /api/characters/merge-attributes`
+
+请求：
+
+```json
+{
+  "avatar": "Assistant.png",
+  "fav": true,
+  "data": {
+    "extensions": {
+      "fav": true,
+      "world": "Lorebook"
+    }
+  }
+}
+```
+
+行为：
+
+- `avatar` 为空时会退回读取 `avatar_url`；两者都为空返回 `400`。
+- 读取 `characters/<avatar>` 中的角色卡 JSON。
+- 删除请求和原卡片中的 `json_data` 字段。
+- 对对象字段执行递归 deep merge；数组、字符串、数字、布尔和 `null` 直接覆盖。
+- 做最小卡片校验：顶层 `name` 或 `data.name` 至少存在一个，`data` 必须是对象。
+- 写入同一个角色 PNG，并清理头像缩略图缓存文件。
+
+成功响应：
+
+```http
+200 OK
+```
+
+响应 body 为纯文本：
+
+```text
+OK
+```
+
+校验失败：
+
+```json
+{
+  "message": "Validation failed for Assistant",
+  "error": "data must be an object"
+}
+```
+
+当前说明：原 Node 端使用完整 `TavernCardValidator` 校验 V1/V2 规格；ArkTS 版目前只做最小保护，后续需要补齐完整 Tavern Card 校验。
+
+### 7.12 `POST /api/characters/delete`
 
 请求：
 
@@ -673,7 +874,7 @@ Assistant.png
 { "ok": true }
 ```
 
-### 7.8 `POST /api/characters/import`
+### 7.13 `POST /api/characters/import`
 
 用途：导入角色卡，保持与原 SillyTavern 前端的 multipart 调用兼容。
 
@@ -723,7 +924,7 @@ data/default-user/chats/<internal-name>/
 
 当前未支持：`yaml`、`yml`、`charx`、`byaf`，也未导入 Risu sprites、CharX 附带资产、BYAF 附带聊天/背景/图片。
 
-### 7.9 `POST /api/characters/export`
+### 7.14 `POST /api/characters/export`
 
 用途：导出角色卡。在 OHOS 中，所有导出先写入应用私有目录，再通过华为官方 ShareKit 唤起系统分享面板，让用户决定保存或发送到哪里。
 
@@ -776,7 +977,7 @@ ShareKit 调用：
 
 与原 Node 后端差异：原 SillyTavern `/api/characters/export` 直接返回下载流；OHOS 版按系统交互要求改为“私有文件 + ShareKit”。前端 rawfile 中角色导出点击逻辑也已适配为读取 JSON 结果，不再创建 WebView blob 下载。
 
-### 7.10 `POST /api/characters/chats`
+### 7.15 `POST /api/characters/chats`
 
 请求：
 
@@ -1493,6 +1694,11 @@ UI 截图：
 - `POST /api/characters/get`
 - `POST /api/characters/create`
 - `POST /api/characters/edit`
+- `POST /api/characters/duplicate`
+- `POST /api/characters/rename`
+- `POST /api/characters/edit-avatar`，基础版：使用上传 PNG 替换底图，保留角色卡元数据
+- `POST /api/characters/edit-attribute`
+- `POST /api/characters/merge-attributes`，基础版：递归合并字段并做最小卡片校验
 - `POST /api/characters/delete`
 - `POST /api/characters/chats`
 - `POST /api/characters/import`，当前支持 `json` 和 `png`
@@ -1501,14 +1707,10 @@ UI 截图：
 
 仍缺失：
 
-- `POST /api/characters/duplicate`
-- `POST /api/characters/rename`
-- `POST /api/characters/edit-avatar`
-- `POST /api/characters/edit-attribute`
-- `POST /api/characters/merge-attributes`
 - 创建角色时上传头像、裁剪、resize
-- 编辑角色时替换头像、裁剪、resize
-- 缩略图失效与重建
+- 编辑角色时的真实 crop/resize/格式转换；当前 `edit-avatar` 只支持上传 PNG bytes 作为新底图
+- 完整缩略图生成与重建；当前仅删除 `thumbnails/avatar/<avatar>` 触发后续重新请求
+- 完整 Tavern Card V1/V2/V3 校验器；当前 `merge-attributes` 只做最小结构校验
 - Risu sprites 导入
 - CharX 附带资产导入
 - BYAF 附带聊天、背景、图片导入
@@ -1545,10 +1747,10 @@ avatar
 
 建议优先实现顺序：
 
-1. `duplicate`、`rename`、`edit-attribute`、`merge-attributes`。
-2. 头像上传、裁剪、resize。
+1. 完整图片处理：头像上传、裁剪、resize、JPEG/WebP 转 PNG。
+2. 完整 Tavern Card 校验器。
 3. `yaml`、`charx`、`byaf`。
-4. 缩略图失效、重建和缓存对齐。
+4. 缩略图生成、重建和缓存对齐。
 
 ### 17.2 聊天相关
 
@@ -1864,11 +2066,13 @@ avatar
    - 已完成：导出写入 `<context.filesDir>/exports/characters` 并唤起 ShareKit
    - 已完成：补文档和基础测试
 2. 角色管理补全阶段：
-   - duplicate
-   - rename
-   - edit-attribute
-   - merge-attributes
-   - edit-avatar 基础版
+   - 已完成：duplicate
+   - 已完成：rename
+   - 已完成：edit-attribute
+   - 已完成：merge-attributes 基础版
+   - 已完成：edit-avatar 基础版
+   - 待补：头像 crop/resize/格式转换
+   - 待补：完整 Tavern Card 校验器
 3. 聊天管理阶段：
    - delete
    - rename

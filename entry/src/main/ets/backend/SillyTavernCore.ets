@@ -422,6 +422,175 @@ export class SillyTavernCore {
     return HttpResponse.json(new OkResponse());
   }
 
+  editCharacterAvatar(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const avatarUrl = this.asString(body['avatar_url']);
+    const file = request.file('avatar');
+    if (avatarUrl.length === 0) {
+      return HttpResponse.text('Error: no avatar_url in request body', 400);
+    }
+    if (file === null) {
+      return HttpResponse.text('Error: no file uploaded', 400);
+    }
+
+    const avatarName = ensurePngExtension(sanitizeFileName(avatarUrl));
+    const path = joinPath(this.userDirs.characters, avatarName);
+    const card = this.cardStore.readCard(path);
+    if (card === null) {
+      return HttpResponse.text('Error: failed to read character data', 400);
+    }
+
+    const written = this.cardStore.writeCardWithBase(path, file.bytes, card);
+    if (!written) {
+      return HttpResponse.json(jsonMessage('failed_to_write_character'), 500);
+    }
+    this.invalidateAvatarThumbnail(avatarName);
+    return HttpResponse.text('OK');
+  }
+
+  editCharacterAttribute(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const avatarUrl = this.asString(body['avatar_url']);
+    const field = this.asString(body['field']);
+    if (avatarUrl.length === 0 || field.length === 0) {
+      return HttpResponse.text('Error: avatar_url and field are required', 400);
+    }
+    if (field === 'json_data') {
+      return HttpResponse.text('Error: cannot edit json_data field.', 400);
+    }
+
+    const chName = this.asString(body['ch_name']);
+    if (chName === '.' || (body['ch_name'] !== undefined && chName.length === 0)) {
+      return HttpResponse.text('Error: invalid name.', 400);
+    }
+
+    const avatarName = ensurePngExtension(sanitizeFileName(avatarUrl));
+    const path = joinPath(this.userDirs.characters, avatarName);
+    const card = this.cardStore.readCard(path);
+    if (card === null) {
+      return HttpResponse.empty(500);
+    }
+
+    const data = this.asObject(card['data']) as JsonRecord;
+    if (card[field] === undefined && data[field] === undefined) {
+      return HttpResponse.text('Error: invalid field.', 400);
+    }
+
+    const value = body['value'] ?? null;
+    card[field] = value;
+    data[field] = value;
+    card['data'] = data;
+    if (!this.cardStore.writeCard(path, card)) {
+      return HttpResponse.json(jsonMessage('failed_to_write_character'), 500);
+    }
+    this.invalidateAvatarThumbnail(avatarName);
+    return HttpResponse.text('OK');
+  }
+
+  mergeCharacterAttributes(request: HttpRequest): HttpResponse {
+    const update = this.bodyAsRecord(request);
+    const avatarUrl = this.asString(update['avatar']) || this.asString(update['avatar_url']);
+    if (avatarUrl.length === 0) {
+      return HttpResponse.text('Error: avatar is required', 400);
+    }
+
+    const avatarName = ensurePngExtension(sanitizeFileName(avatarUrl));
+    const path = joinPath(this.userDirs.characters, avatarName);
+    const stored = this.cardStore.readCard(path);
+    if (stored === null) {
+      return HttpResponse.text('Error: invalid character file.', 400);
+    }
+
+    const merged = this.deepMergeRecord(this.withoutJsonData(stored), this.withoutJsonData(update));
+    const validationError = this.validateCharacterCardForSave(merged);
+    if (validationError.length > 0) {
+      const response = emptyJsonRecord();
+      response['message'] = `Validation failed for ${this.asString(merged['name'])}`;
+      response['error'] = validationError;
+      return HttpResponse.json(response, 400);
+    }
+
+    if (!this.cardStore.writeCard(path, merged)) {
+      return HttpResponse.json(jsonMessage('failed_to_write_character'), 500);
+    }
+    this.invalidateAvatarThumbnail(avatarName);
+    return HttpResponse.text('OK');
+  }
+
+  duplicateCharacter(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const avatarUrl = this.asString(body['avatar_url']);
+    if (avatarUrl.length === 0) {
+      return HttpResponse.empty(400);
+    }
+
+    const avatarName = ensurePngExtension(sanitizeFileName(avatarUrl));
+    const source = joinPath(this.userDirs.characters, avatarName);
+    if (!this.store.exists(source)) {
+      return HttpResponse.empty(404);
+    }
+
+    const duplicateName = this.nextDuplicateAvatarName(avatarName);
+    const target = joinPath(this.userDirs.characters, duplicateName);
+    if (!this.store.copyFile(source, target)) {
+      return HttpResponse.json(new ErrorFlagResponse());
+    }
+
+    const response = emptyJsonRecord();
+    response['path'] = duplicateName;
+    return HttpResponse.json(response);
+  }
+
+  renameCharacter(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const avatarUrl = this.asString(body['avatar_url']);
+    const requestedName = this.asString(body['new_name']);
+    if (avatarUrl.length === 0 || requestedName.length === 0) {
+      return HttpResponse.empty(400);
+    }
+
+    const oldAvatarName = ensurePngExtension(sanitizeFileName(avatarUrl));
+    const oldInternalName = withoutExtension(oldAvatarName);
+    const oldPath = joinPath(this.userDirs.characters, oldAvatarName);
+    const oldBytes = this.store.readBytes(oldPath);
+    if (oldBytes === null) {
+      return HttpResponse.empty(404);
+    }
+
+    const card = this.cardStore.readCardFromBytes(oldBytes);
+    if (card === null) {
+      return HttpResponse.json(jsonMessage('failed_to_read_character'), 500);
+    }
+
+    const newName = sanitizeFileName(requestedName);
+    const newInternalName = this.uniqueName(newName, this.userDirs.characters, '.png');
+    const newAvatarName = `${newInternalName}.png`;
+    const newPath = joinPath(this.userDirs.characters, newAvatarName);
+    const normalized = this.normalizeCharacterCard(card);
+    const data = this.asObject(normalized['data']) as JsonRecord;
+    data['name'] = newName;
+    normalized['data'] = data;
+    normalized['name'] = newName;
+
+    if (!this.cardStore.writeCardWithBase(newPath, oldBytes, normalized)) {
+      return HttpResponse.json(jsonMessage('failed_to_write_character'), 500);
+    }
+
+    const oldChatsPath = joinPath(this.userDirs.chats, oldInternalName);
+    const newChatsPath = joinPath(this.userDirs.chats, newInternalName);
+    if (this.store.exists(oldChatsPath) && !this.store.exists(newChatsPath)) {
+      if (this.store.copyDirectory(oldChatsPath, newChatsPath)) {
+        this.store.deleteDirectory(oldChatsPath);
+      }
+    }
+    this.store.deleteFile(oldPath);
+    this.invalidateAvatarThumbnail(oldAvatarName);
+
+    const response = emptyJsonRecord();
+    response['avatar'] = newAvatarName;
+    return HttpResponse.json(response);
+  }
+
   deleteCharacter(request: HttpRequest): HttpResponse {
     const body = this.bodyAsRecord(request);
     const avatarUrl = this.asString(body['avatar_url']);
@@ -1004,6 +1173,113 @@ export class SillyTavernCore {
     data['extensions'] = extensions;
     safeCard['data'] = data;
     return safeCard;
+  }
+
+  private withoutJsonData(source: JsonRecord): JsonRecord {
+    const target = emptyJsonRecord();
+    Object.keys(source).forEach((key: string) => {
+      if (key !== 'json_data') {
+        target[key] = source[key];
+      }
+    });
+    return target;
+  }
+
+  private deepMergeRecord(base: JsonRecord, update: JsonRecord): JsonRecord {
+    const result = this.cloneRecord(base);
+    Object.keys(update).forEach((key: string) => {
+      if (key === 'json_data') {
+        return;
+      }
+      const updateValue = update[key];
+      const baseValue = result[key];
+      if (this.isPlainRecord(baseValue) && this.isPlainRecord(updateValue)) {
+        result[key] = this.deepMergeRecord(baseValue as JsonRecord, updateValue as JsonRecord);
+      } else {
+        result[key] = this.cloneJsonValue(updateValue);
+      }
+    });
+    return result;
+  }
+
+  private cloneRecord(source: JsonRecord): JsonRecord {
+    const result = emptyJsonRecord();
+    Object.keys(source).forEach((key: string) => {
+      result[key] = this.cloneJsonValue(source[key]);
+    });
+    return result;
+  }
+
+  private cloneJsonValue(value: JsonValue | JsonArray | undefined): JsonValue | JsonArray {
+    if (Array.isArray(value)) {
+      const arrayCopy: JsonArray = [];
+      for (let index = 0; index < value.length; index += 1) {
+        const item = value[index] as JsonValue;
+        arrayCopy.push(this.cloneJsonValue(item) as JsonValue);
+      }
+      return arrayCopy;
+    }
+    if (this.isPlainRecord(value)) {
+      return this.cloneRecord(value as JsonRecord);
+    }
+    return value ?? null;
+  }
+
+  private isPlainRecord(value: JsonValue | JsonArray | undefined): boolean {
+    return value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value);
+  }
+
+  private validateCharacterCardForSave(card: JsonRecord): string {
+    const name = this.asString(card['name']);
+    const data = this.asObject(card['data']) as JsonRecord;
+    const dataName = this.asString(data['name']);
+    if (name.length === 0 && dataName.length === 0) {
+      return 'name is required';
+    }
+    if (card['spec'] !== undefined && this.asString(card['spec']).length === 0) {
+      return 'spec is invalid';
+    }
+    if (card['data'] !== undefined && !this.isPlainRecord(card['data'])) {
+      return 'data must be an object';
+    }
+    return '';
+  }
+
+  private nextDuplicateAvatarName(avatarName: string): string {
+    const ext = this.extensionOf(avatarName) || '.png';
+    const stem = withoutExtension(avatarName);
+    const parts = stem.split('_');
+    const last = parts.length > 0 ? parts[parts.length - 1] : '';
+    let suffix = 1;
+    let baseName = stem;
+    if (parts.length > 1 && this.isDigits(last)) {
+      suffix = Number(last) + 1;
+      baseName = parts.slice(0, parts.length - 1).join('_');
+    }
+
+    let candidate = `${baseName}_${suffix}${ext}`;
+    while (this.store.exists(joinPath(this.userDirs.characters, candidate))) {
+      suffix += 1;
+      candidate = `${baseName}_${suffix}${ext}`;
+    }
+    return sanitizeFileName(candidate);
+  }
+
+  private isDigits(value: string): boolean {
+    if (value.length === 0) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      if (code < 48 || code > 57) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private invalidateAvatarThumbnail(avatarName: string): void {
+    this.store.deleteFile(joinPath(this.userDirs.thumbnailsAvatar, sanitizeFileName(avatarName)));
   }
 
   private importedCharacterInternalName(card: JsonRecord, body: JsonRecord): string {
