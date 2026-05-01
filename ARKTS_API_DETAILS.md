@@ -1459,6 +1459,124 @@ type RecentChatResponse = {
 - `last_mes` 优先取最后一行 `send_date`，否则用文件修改时间 ISO 字符串。
 - `file_size` 使用简化格式：`B`、`KB`、`MB`、`GB`、`TB`，小数保留一位。
 
+### 8.14 聊天阶段待完善细节
+
+这一节专门记录聊天记录管理阶段已经基础可用、但还没有完全对齐原 SillyTavern Node 后端的部分。后续做聊天增强时优先对照这里。
+
+#### 8.14.1 保存完整性和备份
+
+当前 `POST /api/chats/save` 和 `POST /api/chats/group/save` 只做最小写入：
+
+- 接收 `force` 字段，但不执行原版 `chat_metadata.integrity` 校验。
+- 没有实现原版 `IntegrityMismatchError`。
+- 没有按 `backups/chat` 规则写聊天备份。
+- 没有实现节流备份逻辑。
+- 没有实现最大备份数量清理。
+- 没有实现：
+  - `POST /api/backups/chat/get`
+  - `POST /api/backups/chat/download`
+  - `POST /api/backups/chat/delete`
+
+后续需要对齐原版 `trySaveChat()`、`backupChat()`、`removeOldBackups()` 和前端强制覆盖确认流程。
+
+#### 8.14.2 导入格式
+
+当前 `POST /api/chats/import` 支持：
+
+- SillyTavern JSONL 原样导入
+- SillyTavern JSON 数组
+- Oobabooga `data_visible`
+- Agnai `messages`
+- Kobold Lite `savedsettings` + `actions`
+
+仍需补齐：
+
+- CAI Tools `histories.histories`
+- RisuAI `type === "risuChat"`
+- Chub Chat 的 `msg` / `swipes` flatten 细节
+- 多聊天 JSON 导入时的批量文件名稳定生成
+- 导入失败时更贴近原版的错误类型和日志
+- group import 目前只接受 SillyTavern JSONL，原版也是较窄支持，但仍需确认前端所有 group import 场景。
+
+#### 8.14.3 搜索和聊天摘要
+
+当前 `POST /api/chats/search` 是基础本地搜索：
+
+- 按空白拆词。
+- 匹配文件名、消息 `mes`、消息 `name`。
+- 返回 `file_name`、`file_size`、`message_count`、`last_mes`、`preview_message`。
+
+仍需补齐：
+
+- 原版 `getChatInfo()` 的 `withMetadata` 开关。
+- `chat_metadata` 读取和返回。
+- 原版 matcher 的滑动 buffer 行为。
+- 损坏/空聊天文件的警告与跳过细节。
+- preview message 对最后消息和匹配消息的更精确选择。
+- `POST /api/characters/chats` 的 `last_mes` 目前仍取最后消息文本，后续要改为更接近原版 `send_date` / mtime 语义。
+- `POST /api/chats/recent` 目前是基础扫描，仍需对齐原版 pinned、metadata、空文件、损坏文件、preview message 的完整行为。
+
+#### 8.14.4 导出行为
+
+当前 `POST /api/chats/export` 已按 OHOS 迁移规则改为：
+
+```text
+<context.filesDir>/exports/chats/<exportfilename>
+```
+
+然后唤起 ShareKit。与原版差异：
+
+- 原版返回 `{ message, result }`，前端用浏览器下载。
+- OHOS 版返回 ShareKit JSON，包括 `path`、`uri`、`file_name`、`content_type`。
+- 前端导出按钮已兼容 ShareKit 响应，不再要求 `result`。
+
+仍需补齐：
+
+- 如果 ShareKit 失败，前端需要更明确展示“文件已写入私有目录但分享面板打开失败”。
+- 导出文件名冲突策略目前是覆盖同名私有导出文件，后续可考虑保留历史或追加序号。
+- `txt` 导出当前只处理 `name: message`，还没有完全复刻原版对 `extra.display_text`、不可打印消息、隐藏 prompt、换行和边界异常的全部细节。
+
+#### 8.14.5 群聊联动
+
+当前群聊文件接口已基础可用：
+
+- `POST /api/chats/group/get`
+- `POST /api/chats/group/save`
+- `POST /api/chats/group/delete`
+- `POST /api/chats/group/import`
+- `POST /api/chats/group/info`
+
+仍需补齐：
+
+- 删除群聊文件时，当前只删 `group chats/<id>.jsonl`；前端会负责更新 `groups/<id>.json` 中的 `chats[]`，但后端还没有做一致性兜底。
+- 重命名群聊文件通过 `POST /api/chats/rename` 的 `is_group=true` 路径完成；后端只改文件名，不主动更新 group JSON。
+- 群组最近聊天统计和 `groups/all` 的 `chat_size` / `date_last_chat` 仍是基础扫描。
+- 群聊导入后是否自动写回 group JSON 仍由前端处理，后端没有事务式保证。
+
+#### 8.14.6 数据结构约束
+
+所有聊天相关后续改动必须继续遵守：
+
+- 普通聊天只写：
+
+```text
+data/default-user/chats/<character internal name>/<file_name>.jsonl
+```
+
+- 群聊只写：
+
+```text
+data/default-user/group chats/<chat id>.jsonl
+```
+
+- 聊天导出只写：
+
+```text
+<context.filesDir>/exports/chats/
+```
+
+- 不允许为了 OHOS 分享、缓存、导出或临时转换，在 `data/default-user/` 下新增非原版目录或文件。
+
 ## 9. 世界书接口
 
 世界书存储：
@@ -2058,11 +2176,19 @@ avatar
   - CAI Tools `histories`
   - RisuAI `risuChat`
   - Chub Chat swipe flatten 的完整转换
+  - 多聊天 JSON 导入时的批量文件名稳定生成
+  - 导入错误类型与原版日志细节
 - 聊天保存完整性校验和强制覆盖确认；当前 `force` 字段接收但不做 integrity slug 校验
+- 聊天保存节流备份、最大备份数量清理和备份文件命名
 - 聊天备份相关接口：
   - `POST /api/backups/chat/get`
   - `POST /api/backups/chat/download`
   - `POST /api/backups/chat/delete`
+- 群聊文件和 `groups/<id>.json` 的后端一致性兜底；当前主要依赖前端更新 `chats[]` 和 `chat_id`
+- 群聊导入后自动写回 group JSON 的事务式保障
+- 聊天导出 ShareKit 失败时的前端提示细化
+- 聊天导出文件名冲突策略；当前私有导出目录同名覆盖
+- 文本导出对 `extra.display_text`、隐藏 prompt、不可打印消息和换行边界的完整对齐
 
 兼容差异：
 
@@ -2070,6 +2196,7 @@ avatar
 - `POST /api/characters/chats` 的 `last_mes` 当前取最后消息文本，原版更接近 `send_date` / mtime 语义，后续需要对齐。
 - `POST /api/chats/search` 已实现基础搜索和 preview message，但没有原版完整 metadata 读取开关、match buffer 细节和损坏聊天提示。
 - `POST /api/chats/export` 已按 OHOS 要求改为 ShareKit 分享，不再返回大段 `result` 供浏览器下载。
+- `POST /api/chats/group/info` 已返回基础摘要，但还没有完整复刻原版 `getChatInfo()` 的 metadata 与损坏文件处理。
 
 ### 17.3 背景、头像、图片和文件
 
