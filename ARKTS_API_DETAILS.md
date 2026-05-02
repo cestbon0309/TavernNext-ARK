@@ -17,11 +17,11 @@
 - OpenAI chat-completions 支持 `openai` 和 `custom` 来源，支持 `/models` 状态检查、`/chat/completions` 非流式生成和流式 SSE 生成。
 - 流式生成已改为 Harmony `requestInStream()` + `dataReceive` 转发，并通过虚拟机、hdc 端口映射、慢速 mock OpenAI 服务确认分块即时到达。
 
-暂缓或未完成：
-- 多用户暂缓：账号接口目前是本地兼容层，不启用真实 session、cookie-session、当前用户切换和权限中间件。
-- 模型 provider 暂缓：OpenRouter、Claude、Gemini、NovelAI、Kobold/TextGen、Horde、Stable Diffusion 等还未完整实现。
-- Tokenizer 暂缓：当前只有估算/占位接口，尚未接入 MikTik/OHOS native tokenizer。
-- Vector 暂缓：embedding 调用、本地向量索引、insert/query/delete/list/purge 仍未完成。
+明确暂缓或仍不完善：
+- 多用户明确暂缓：当前 App 形态不需要多用户运行模型，后端固定使用 `data/default-user/`；`/api/users/*` 只保留为本地账号弹窗、密码校验和备份恢复的兼容层，不启用真实 session、cookie-session、当前用户切换和权限中间件。
+- 模型 provider 仍不完整：OpenAI/OpenAI-compatible `openai` 和 `custom` 主路径已可用；text-completions、NovelAI、Horde、Stable Diffusion 等已有基础代理或查询路由，但还没有完整对齐原版 provider 行为、错误格式、请求取消和流式转换。
+- Tokenizer 仍是估算/兼容接口：已补 encode/decode/count 和部分 remote tokenizer proxy，但尚未接入 MikTik/OHOS native tokenizer，不是真实 OpenAI/Claude/Llama/Qwen/Gemma 等 tokenizer。
+- Vector 已有最小实现：支持本地 JSON 索引、insert/list/delete/query/query-multi/purge，以及部分 embedding provider 调用和 hash fallback；但尚未对齐原版 `vectra.LocalIndex` 的完整行为和性能。
 - Git 后续增强：私有仓库认证、SSH、submodule、非 fast-forward merge 冲突处理、hooks 执行仍暂缓。
 - settings snapshots、presets、themes、moving UI、assets/content-manager、聊天备份等管理类接口仍需后续补齐。
 
@@ -48,7 +48,7 @@ http://127.0.0.1:8000
 - `GET /csrf-token` 固定返回 `{ "token": "disabled" }`
 - `enable_accounts` 固定为 `false`
 - `SillyTavernCore` 的角色、聊天、设置等核心数据接口仍固定读写 `data/default-user/`
-- `/api/users/*` 已实现本地账号 CRUD、密码校验、头像记录和备份等兼容接口，但还没有真实 session、cookie-session、当前用户切换和权限中间件
+- `/api/users/*` 已实现本地账号 CRUD、密码校验、头像记录和备份等兼容接口；多用户系统明确暂缓，当前不会建立真实 session、cookie-session、当前用户切换和权限中间件
 
 `HttpServer.start()` 已做单飞保护：Ability 和页面重复调用启动时会复用同一个 `startPromise`，避免监听竞态。
 
@@ -2455,28 +2455,20 @@ tokens = ceil(utf8ByteLength(text) / 3.35)
 
 这是启动阶段和 UI Token 计数的占位实现，不是真 tokenizer。
 
-## 14. 暂缓接口
+## 14. 未注册接口和占位响应
 
-以下接口已注册，但返回 `501 Not Implemented`：
+当前没有专门注册为 `501` 的模型/vector 主路径。`/api/vector/*`、`/api/backends/chat-completions/*`、`/api/openai/generate` 已有实际处理逻辑。
 
-- `POST /api/vector/query`
-- `POST /api/backends/chat-completions/generate`
-- `POST /api/openai/generate`
+仍会返回 `501 Not Implemented` 的情况是：请求路径没有命中任何已注册路由，也没有被静态资源或数据文件 fallback 处理。此时 `HttpServer` 返回：
 
 响应：
 
 ```json
 {
   "error": "not_implemented",
-  "message": "<name> is outside the first ArkTS local-data milestone."
+  "path": "<request path>"
 }
 ```
-
-其中 `<name>` 当前分别为：
-
-- `Vector index`
-- `Model proxy`
-- `OpenAI proxy`
 
 ## 15. 当前已验证行为
 
@@ -2495,7 +2487,11 @@ tokens = ceil(utf8ByteLength(text) / 3.35)
 - `POST /api/secrets/write`、`POST /api/secrets/read`、`POST /api/secrets/delete` 已通过 HTTP API 验证。
 - `POST /api/users/backup` 已通过 HTTP API 验证，能够调用 Harmony `zlib.compressFile` 生成 zip，并通过 ShareKit 返回分享结果。
 - `POST /api/users/restore-data` 已通过非破坏性 HTTP API 验证，坏 zip 和非 data zip 都会返回 `400`，不会覆盖当前 `data/`。
-- 扩展抽屉的 `数据导出/恢复` 折叠栏已能在 rawfile HTML 中加载，导出调用 `users/backup`，导入会在上传前要求用户确认覆盖。
+- `POST /api/users/restore-data-picker` 已在模拟器验证：后端唤起 Harmony 文件选择器，选择 50MB 级 SillyTavern data 备份后可以恢复，避免 WebView 上传卡死。
+- 扩展抽屉的 `数据导出/恢复` 折叠栏已能在 rawfile HTML 中加载，导出调用 `users/backup`，导入会先确认覆盖，再调用后端 picker。
+- 第三方扩展 Git 已通过 native `libgit2` 验证：`Extension-Blip` 的 `version`、`branches`、`update`、`switch origin/main` 均可用。
+- OpenAI/OpenAI-compatible chat-completions 已通过 mock OpenAI 服务验证：状态检查、非流式生成、流式 SSE 生成均可用。
+- 媒体上传回归已验证：背景、用户头像、聊天图片、附件、sprites、sprite zip、thumbnail、image-metadata 基础流程可用。
 
 常用验证命令：
 
@@ -2539,15 +2535,16 @@ UI 截图：
 
 当前实现目标是“让 SillyTavern 前端先在手机 WebView 中跑起来”，不是完整后端替代。已知限制：
 
-- 已有本地账号兼容 API 和密码校验，但不支持真实多用户会话、cookie-session、当前用户切换、权限中间件和真实 CSRF。
+- 已有本地账号兼容 API 和密码校验；多用户系统明确暂缓，当前固定使用 `default-user`，不支持真实多用户会话、cookie-session、当前用户切换、权限中间件和真实 CSRF。
 - multipart 解析已支持，角色卡 JSON/PNG 导入、头像上传、背景上传、sprites 上传、聊天导入已接入；世界书导入等 multipart 接口仍需补。
-- OpenAI chat-completions 已有最小可用代理，支持状态检查、非流式生成和流式 SSE 透传；其他 provider 仍未完整实现。
-- 不支持真实 tokenizer，仅按 UTF-8 字节数估算。
+- OpenAI/OpenAI-compatible chat-completions 已有最小可用代理，支持 `openai` 和 `custom` 来源、状态检查、非流式生成和流式 SSE 透传；其他 provider 或外部服务仍未完整对齐。
+- Tokenizer 已有估算 encode/decode/count 和部分 remote proxy，但不是真实 tokenizer；上下文裁剪和模型精确 token 计数仍需 native MikTik/tokenizer。
+- Vector 已有最小本地 JSON 索引和 embedding/hash fallback，但还不是原版 `vectra.LocalIndex` 等价实现。
 - 背景、头像、聊天图片、附件、sprites、缩略图和 `image-metadata` 已接入本地文件实现；其中图片处理依赖 Harmony `ImageKit`，与 Node/Jimp 在极端格式上的像素级结果可能存在细微差异。
-- `extensions/discover` 已扫描 rawfile 系统扩展和本地/全局第三方扩展目录，但扩展安装/更新不支持 Git，manifest 解析也未对齐原版。
+- `extensions/discover` 已扫描 rawfile 系统扩展和本地/全局第三方扩展目录；扩展 Git 已支持 HTTPS 公共仓库，但私有仓库认证、SSH、submodule、merge 冲突处理和 hooks 仍暂缓。
 - `users/backup` 已使用 Harmony zlib 生成 zip 并调用 ShareKit；扩展页新入口已适配 OHOS JSON/ShareKit 结果，但 rawfile `user.js` 账号弹窗里的备份按钮仍保留浏览器 blob 下载逻辑。
-- `users/restore-data` 已有 zip 解压和覆盖恢复逻辑，但真实覆盖恢复尚未在模拟器上执行；目前只验证了坏包和非 data 包不会覆盖。
-- `settings/get` 的预设内容目前是解析后的 JSON 对象，后续可能需要按 Node 版调整为字符串。
+- `users/restore-data` 和 `users/restore-data-picker` 已有 zip 解压和覆盖恢复逻辑，后端 picker 已在模拟器用 50MB 级备份验证；HTTP multipart 恢复入口主要保留为调试兼容。
+- `settings/get` 的 Kobold/NovelAI/OpenAI/TextGen 预设已按原版返回 JSON 文件原文字符串数组；settings snapshots 等管理接口仍缺。
 - `characters/chats` 的 `last_mes` 当前不是 `send_date`，后续需要与 Node 版 `getChatInfo()` 完全对齐。
 - 静态前端资源内的 `global.d.ts` 被 rawfile 打包会触发 hvigor source warning，但不影响运行。
 
@@ -2849,34 +2846,35 @@ avatar
   - `view` 和非导出 key 的 `find` 在当前配置下固定受限
   - 更完整的错误格式与原版日志细节
 - extensions：
-  - 解析 manifest
+  - manifest 基础读取已用于 install 响应；完整 manifest 校验、依赖检查和更细的前端兼容逻辑仍需补齐
   - 私有 Git 仓库认证、SSH、submodule
   - 非 fast-forward merge 冲突处理
 - 用户账号：
-  - 真实登录 session、cookie-session、当前用户切换和权限中间件
-  - `enable_accounts=true` 模式下的完整前端流程
-  - 核心角色、聊天、设置接口按登录用户切换目录；当前仍固定使用 `default-user`
+  - 多用户系统明确暂缓：真实登录 session、cookie-session、当前用户切换和权限中间件当前不做
+  - `enable_accounts=true` 模式下的完整前端流程当前不做
+  - 核心角色、聊天、设置接口固定使用 `default-user`
   - 头像 multipart 上传和裁剪；当前只记录 data URL
   - 通过邮件或外部通道恢复密码；当前恢复码只在本地响应中直接返回
   - `user.js` 账号弹窗里的 `users/backup` 前端 OHOS JSON/ShareKit 结果适配；扩展页新入口已经适配
 
-当前设计仍是默认用户优先的本地兼容模式；账号接口用于满足前端账号弹窗和数据备份流程，还不是完整多用户运行模型。
+当前设计是默认用户优先的本地兼容模式；账号接口用于满足前端账号弹窗、密码校验和数据备份流程，不计划在当前阶段发展成完整多用户运行模型。
 
 ### 17.8 Tokenizer 和向量
 
 当前 ArkTS 已实现：
 
-- 多个 `/api/tokenizers/*/encode` 的估算接口
-- `POST /api/vector/query` 注册为 `501`
+- 多个 `/api/tokenizers/*/encode` 的估算接口，返回 byte token ids、count 和按字符拆分的 chunks。
+- 多个 `/api/tokenizers/*/decode` 的兼容接口，可把 byte token ids 解回文本。
+- `POST /api/tokenizers/openai/count` 的估算实现。
+- `POST /api/backends/chat-completions/bias` 的 byte-token logit bias 映射。
+- `POST /api/tokenizers/remote/kobold/count`：转发到 Kobold/KoboldCpp `tokencount`。
+- `POST /api/tokenizers/remote/textgenerationwebui/encode`：按 tabby/koboldcpp/llamacpp/vllm/aphrodite 等 API 类型转发远程 encode/tokenize。
+- `/api/vector/insert`、`list`、`delete`、`query`、`query-multi`、`purge`、`purge-all`。
+- vector 索引写入 `data/default-user/vectors/<source>/<collectionId>/<model>/index.json`。
+- embedding 支持 OpenAI-compatible、Mistral、OpenRouter、ElectronHub、NanoGPT、SiliconFlow、Chutes、llamacpp、vllm、ollama、extras、cohere 等基础 endpoint；请求失败或未配置时回退到本地 hash vector。
 
 仍缺失：
 
-- tokenizer decode：
-  - `POST /api/tokenizers/*/decode`
-- tokenizer count：
-  - `POST /api/tokenizers/openai/count`
-  - `POST /api/tokenizers/remote/kobold/count`
-  - `POST /api/tokenizers/remote/textgenerationwebui/encode`
 - 真实 tokenizer：
   - GPT-2
   - OpenAI
@@ -2889,15 +2887,8 @@ avatar
   - DeepSeek
   - Command 系列
   - Nerdstash 等
-- vectors：
-  - `POST /api/vector/insert`
-  - `POST /api/vector/list`
-  - `POST /api/vector/delete`
-  - `POST /api/vector/purge`
-  - `POST /api/vector/purge-all`
-  - `POST /api/vector/query`
-  - `POST /api/vector/query-multi`
-- embedding 模型调用和本地索引持久化
+- 原版 `vectra.LocalIndex` 等价索引、性能优化、大数据量索引格式和精确排序行为。
+- 各 embedding provider 的完整请求参数、鉴权细节、错误透传和前端配置字段对齐。
 
 ### 17.9 模型代理和外部服务
 
@@ -2906,28 +2897,50 @@ avatar
 - `POST /api/backends/chat-completions/generate`
 - `POST /api/backends/chat-completions/status`
 - `POST /api/openai/generate`
+- `POST /api/backends/text-completions/status`
+- `POST /api/backends/text-completions/generate`
+- `POST /api/novelai/status`
+- `POST /api/novelai/generate`
+- `POST /api/horde/status`
+- `POST /api/horde/text-models`
+- `POST /api/horde/text-workers`
+- `POST /api/horde/sd-models`
+- `POST /api/horde/generate-text`
+- `POST /api/horde/task-status`
+- `POST /api/horde/cancel-task`
+- `POST /api/horde/user-info`
+- `POST /api/sd/ping`
+- `POST /api/sd/models`
+- `POST /api/sd/samplers`
+- `POST /api/sd/schedulers`
+- `POST /api/sd/upscalers`
+- `POST /api/sd/vaes`
+- `POST /api/sd/generate`
 
 当前范围：
 
-- 仅支持 `chat_completion_source=openai`。
-- `status` 使用 `reverse_proxy || https://api.openai.com/v1` 拼接 `/models`。
-- `generate` 使用 `reverse_proxy || https://api.openai.com/v1` 拼接 `/chat/completions`。
+- chat-completions 主路径支持 `chat_completion_source=openai` 和 `custom`。
+- `custom` 可配置 OpenAI-compatible 端点；DeepSeek、Groq、Mistral、xAI、OpenRouter 等专门 provider source 尚未在入口处放行，后续需要逐项启用并验证差异。
+- `status` 使用 `<base>/models`。
+- `generate` 使用 `<base>/chat/completions`。
 - API key 使用 `proxy_password` 或本地 `api_key_openai` secret；缺少 key 且没有 reverse proxy 时返回 `{ "error": true }`。
 - 非流式响应透传 OpenAI JSON。
 - 流式响应以 `text/event-stream` 透传上游 SSE 分块。
 - 请求体会清理 `chat_completion_source`、`reverse_proxy`、`proxy_password`、`custom_*`、`bypass_status_check` 等内部字段，只转发 OpenAI 接受的 `messages/model/temperature/max_tokens/max_completion_tokens/stream/presence_penalty/frequency_penalty/top_p/stop/logit_bias/seed/n/user/tools/tool_choice/logprobs/response_format` 等字段。
 - `logprobs` 数字会转换为 OpenAI chat API 的 `logprobs=true` 和 `top_logprobs=<n>`。
 - `json_schema` 会转换为 OpenAI `response_format: { type: "json_schema", json_schema: ... }`。
+- text-completions 基础代理会按 `api_type` 查询模型或透传 `/v1/completions` / KoboldCpp `/api/v1/generate`。
+- NovelAI、Horde、Stable Diffusion 当前是基础 HTTP 代理/查询，不代表完整原版 provider 行为。
 
-仍缺失的大类：
+仍缺失或未完整对齐的大类：
 
-- OpenRouter
-- Claude / Anthropic
-- Google / Gemini
-- NovelAI
-- Horde
-- Kobold / KoboldCpp / TextGenerationWebUI 相关远程调用
-- Stable Diffusion
+- OpenRouter 等 OpenAI-compatible provider 的错误格式、headers、模型列表、流式细节逐项验证。
+- Claude / Anthropic 完整 payload builder 和 stream 事件转换。
+- Google / Gemini 完整 payload builder、安全设置、工具调用和 stream 事件转换。
+- NovelAI 完整参数转换、错误格式和流式/非流式差异。
+- Horde 完整排队、取消、worker/model 过滤和错误兼容。
+- Kobold / KoboldCpp / TextGenerationWebUI 的完整 text-completions 行为。
+- Stable Diffusion 完整 txt2img/img2img/options/progress/upscale 等接口。
 - Azure
 - Minimax
 - Volcengine
@@ -3012,7 +3025,8 @@ avatar
    - 已完成：data zip 导出和恢复，使用 Harmony zlib 与 ShareKit
    - 已完成：扩展发现扫描本地/全局/rawfile，扩展移动/删除
    - 已完成：第三方扩展 Git 安装、版本、更新、分支列表、分支切换，使用 native `libgit2`
-   - 待补：真实 session、当前用户切换、私有 Git 仓库认证、manifest 完整解析
+   - 暂缓：真实 session、当前用户切换等多用户系统
+   - 待补：私有 Git 仓库认证、manifest 完整解析
 5. 媒体上传阶段：
    - 已完成：avatars upload/delete
    - 已完成：backgrounds upload/delete/rename
@@ -3030,8 +3044,10 @@ avatar
 7. 模型连接最小阶段：
    - 已完成：OpenAI chat-completions 最小代理
    - 已完成：支持非流式 JSON 和流式 SSE 透传
+   - 已完成：text-completions、NovelAI、Horde、Stable Diffusion 的基础 HTTP 代理/查询路由
    - 待补：OpenAI-compatible provider 差异、请求取消、错误细节完全对齐
 8. 高级能力阶段：
-   - vectors
+   - 已完成：vectors 最小本地 JSON 索引和 embedding/hash fallback
+   - 待补：vectors 原版等价索引和性能优化
    - tokenizer 真实实现
    - 图片、语音、翻译、搜索等外部能力

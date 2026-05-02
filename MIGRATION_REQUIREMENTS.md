@@ -63,6 +63,13 @@
 - private credential、SSH、submodule、merge 冲突处理和 hooks 执行仍后置。
 - `libgit2` 使用 mbedTLS，应用内打包 CA bundle，启动时复制到 `<context.filesDir>/_certs/cacert.pem` 后显式传给 native Git；默认不得关闭 TLS 证书校验。
 
+## 3.2 多用户能力边界
+
+- 当前 App 形态不需要多用户系统，默认固定使用 `data/default-user/`。
+- `/api/users/*` 只作为本地账号弹窗、密码校验、头像记录和数据备份/恢复兼容层存在。
+- 不启用真实 session、cookie-session、当前用户切换、权限中间件和 `enable_accounts=true` 完整流程。
+- 后续补功能时不要为了兼容 users 路由而改动核心角色、聊天、设置接口的默认用户路径。
+
 ## 4. 工程与调试要求
 
 - 基于用户用 DevEco Studio 创建的空项目继续开发，项目目录为：

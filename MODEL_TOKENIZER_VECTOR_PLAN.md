@@ -14,7 +14,9 @@
 - 当前可用来源是 `openai` 和 `custom`。`status` 会访问 `<base>/models`，`generate` 会访问 `<base>/chat/completions`；custom 来源允许使用 OpenAI-compatible API 端点。
 - OpenAI `generate` 支持非流式 JSON 响应和流式 `text/event-stream` 透传；请求体会清理 SillyTavern 内部字段，只转发 OpenAI 接受的字段。
 - 2026-05-03 已验证流式链路：前端打开 OpenAI/Chat Completion 的 `Streaming` 后会发送 `stream: true`；ArkTS 后端使用 Harmony `requestInStream()` 监听 `dataReceive`，SSE 分块可以即时到达前端。
-- OpenRouter、Claude、Gemini、Text completions、Horde、Stable Diffusion、真实 tokenizer 和 vector 仍暂缓，后续按阶段补齐。
+- text-completions、NovelAI、Horde、Stable Diffusion 已有基础代理/查询路由；OpenRouter/DeepSeek/Groq/Mistral 等 OpenAI-compatible provider 目前应通过 `custom` 端点使用，专门 source 尚未逐项放行和验证。
+- Vector 已有最小 ArkTS 实现：本地 JSON 索引、insert/list/delete/query/query-multi/purge、部分 embedding provider 调用和 hash fallback；还不是原版 `vectra.LocalIndex` 等价实现。
+- Claude、Gemini、真实 tokenizer 仍暂缓，后续按阶段补齐。
 
 ## 0. 当前落地结论
 

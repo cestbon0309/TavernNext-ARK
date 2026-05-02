@@ -15,10 +15,11 @@ http://127.0.0.1:8000
 - settings、角色卡、聊天、群聊、世界书、groups、QuickReplies、Comfy workflow 列表等本地数据 API 的基础兼容。
 - 角色卡 PNG `tEXt/chara` 元数据读写，JSON/PNG 角色导入导出，聊天导入导出，data zip 导出/恢复。
 - 背景、头像、聊天图片、附件、sprites 和 image-metadata 等媒体上传接口；图片处理已接入 Harmony `ImageKit`，zip 压缩/解压已接入 Harmony `zlib`。
-- secrets、users、extensions 的本地兼容接口；目前仍是默认用户优先，不启用真实多用户 session。扩展发现已兼容导入备份里常见的 `extensions/third-party/<name>` 和 `public/scripts/extensions/third-party/<name>` 结构，第三方扩展静态资源也会从这些位置优先读取。
+- secrets、users、extensions 的本地兼容接口；当前 App 形态固定使用默认用户，多用户系统明确暂缓。扩展发现已兼容导入备份里常见的 `extensions/third-party/<name>` 和 `public/scripts/extensions/third-party/<name>` 结构，第三方扩展静态资源也会从这些位置优先读取。
 - 第三方扩展 Git 第一阶段：native `libtavern_git.so` 基于 `libgit2` + mbedTLS，已支持 HTTPS 公共仓库安装、版本状态、分支列表、分支切换和 fast-forward 更新。
 - `/version` 现在返回 SillyTavern 兼容 agent，例如 `SillyTavern:1.17.0:TavernNext-OHOS`，用于通过第三方扩展的 `minimum_client_version` 检查。
 - OpenAI chat-completions 最小可用代理：支持 `openai` 和 `custom` 两种来源，`status` 请求 `/v1/models`，`generate` 请求 `/v1/chat/completions`，支持非流式 JSON 和流式 `text/event-stream` 透传。
+- Vector 最小实现：本地 JSON 索引、insert/list/delete/query/query-multi/purge、部分 embedding provider 调用和 hash fallback。
 
 本次确认的模型调用状态：
 - 前端 OpenAI/Chat Completion 面板中的 `Streaming` 开关打开后，请求体会发送 `stream: true`。
@@ -26,10 +27,10 @@ http://127.0.0.1:8000
 - 已在虚拟机安装后通过 hdc 端口映射和慢速 mock OpenAI 服务验证：代理返回的 SSE 分块按约 700ms 间隔到达，不再等上游结束后一次性吐出。
 
 仍缺失或不完善的重点：
-- 多用户暂缓：`/api/users/*` 只满足本地弹窗和备份流程，尚无真实 session、cookie-session、当前用户切换和权限中间件。
-- 模型 provider 暂缓：OpenRouter、Claude、Gemini、NovelAI、Kobold/TextGen、Horde、Stable Diffusion 等真实代理还未完整对齐；目前只完成 OpenAI/OpenAI-compatible 最小链路。
-- Tokenizer 仍是估算接口：尚未接入 MikTik/native tokenizer，也没有完整 OpenAI/Claude/Llama/Qwen/Gemma 等 encode/decode/count。
-- Vector 仍未完成：向量 insert/query/delete/list/purge、embedding 调用和本地持久化索引都还需要后续实现。
+- 多用户明确暂缓：`/api/users/*` 只满足本地弹窗、密码校验和备份恢复流程；当前不做真实 session、cookie-session、当前用户切换和权限中间件。
+- 模型 provider 仍不完整：OpenAI/OpenAI-compatible 主路径已可用；text-completions、NovelAI、Horde、Stable Diffusion 等已有基础代理或查询路由，但还没有完整对齐原版 provider 行为、错误格式、请求取消和流式转换。
+- Tokenizer 仍是估算/兼容接口：尚未接入 MikTik/native tokenizer，也没有完整 OpenAI/Claude/Llama/Qwen/Gemma 等真实 encode/decode/count。
+- Vector 仍不完善：已有最小本地索引和 embedding/hash fallback，但还不是原版 `vectra.LocalIndex` 等价实现。
 - 第三方扩展 Git 仍有后续项：私有仓库认证、SSH、submodule、非 fast-forward merge 冲突处理和 hooks 执行暂缓。
 - settings snapshots、presets、themes、moving UI、assets/content-manager、聊天备份等管理类接口仍有缺口。
 
@@ -227,11 +228,11 @@ data/
 - `POST /api/horde/text-workers`
 - `POST /api/horde/sd-models`
 
-当前仍是默认用户优先的本地兼容模型，`/csrf-token` 返回 `disabled`。账号 API 已能满足本地弹窗和密码校验基础流程，但还没有真实 session、cookie-session、当前用户切换和权限中间件。
+当前仍是默认用户优先的本地兼容模型，`/csrf-token` 返回 `disabled`。账号 API 已能满足本地弹窗、密码校验和备份恢复基础流程；多用户系统明确暂缓，不启用真实 session、cookie-session、当前用户切换和权限中间件。
 
 `POST /api/settings/get` 中 Kobold/NovelAI/OpenAI/TextGen 预设按原版返回 JSON 文件原文字符串数组；主题、moving UI、QuickReplies、instruct/context/sysprompt/reasoning 返回解析后的对象数组。
 
-模型连接当前只完成 OpenAI chat-completions 的最小可用路径：`status` 会请求 `/v1/models`，`generate` 会请求 `/v1/chat/completions`，支持非流式 JSON 和流式 `text/event-stream` 透传。ArkTS 侧会清理 `chat_completion_source`、`reverse_proxy`、`proxy_password`、`custom_*`、`bypass_status_check` 等内部字段，只把 OpenAI 接受的 `messages/model/temperature/max_tokens/max_completion_tokens/stream/penalties/top_p/stop/logit_bias/seed/n/user/tools/tool_choice/logprobs/response_format` 等字段发给上游。OpenRouter、Claude、Gemini、Text completions、Horde、Stable Diffusion 等真实 provider 代理仍暂缓。
+模型连接当前已完成 OpenAI/OpenAI-compatible chat-completions 的最小可用路径：`status` 会请求 `/v1/models`，`generate` 会请求 `/v1/chat/completions`，支持非流式 JSON 和流式 `text/event-stream` 透传。ArkTS 侧会清理 `chat_completion_source`、`reverse_proxy`、`proxy_password`、`custom_*`、`bypass_status_check` 等内部字段，只把 OpenAI 接受的 `messages/model/temperature/max_tokens/max_completion_tokens/stream/penalties/top_p/stop/logit_bias/seed/n/user/tools/tool_choice/logprobs/response_format` 等字段发给上游。text-completions、NovelAI、Horde、Stable Diffusion 已有基础代理或查询路由，但 provider 专属 payload、错误格式、请求取消和流式事件转换仍未完整对齐。
 
 媒体上传阶段已接入 Harmony 官方 API：头像裁剪/resize、缩略图、图片尺寸和平均色使用 `@kit.ImageKit`，sprite zip 解包使用 `@kit.BasicServicesKit` 的 `zlib.decompressFile`。MediaKit 暂未接入，因为当前后端接口只需要保存、列出和读取音视频文件，不涉及播放、录制或转码。
 
@@ -281,7 +282,7 @@ SillyTavern/dist/_webpack/d2f8920b496f6d16/output/lib.js
 
 ## 暂缓接口
 
-OpenAI chat-completions 已有最小可用代理，第三方扩展 Git 已有 HTTPS 公共仓库最小可用路径；除此之外的模型代理、真实 tokenizer、向量索引、预设/主题细节、内容管理器、assets 管理和复杂外部服务接口仍未完整实现。部分导入导出已经接入 ShareKit 或 zlib：角色导入/导出、聊天导入/导出、data zip 导出/恢复、sprite zip 导入。
+OpenAI chat-completions、第三方扩展 Git、vector 最小本地索引已经有可用路径；除此之外的完整 provider 适配、真实 tokenizer、原版等价 vector index、预设/主题细节、内容管理器、assets 管理和复杂外部服务接口仍未完整实现。多用户系统明确暂缓。部分导入导出已经接入 ShareKit 或 zlib：角色导入/导出、聊天导入/导出、data zip 导出/恢复、sprite zip 导入。
 
 ## 构建与调试
 
