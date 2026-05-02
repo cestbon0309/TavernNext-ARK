@@ -7,4 +7,6 @@ edition = "2024"
 crate-type = ["staticlib"]
 
 [dependencies]
-miktik = { path = "../../third_party/miktik", default-features = false, features = ["openai"] }
+miktik = { path = "../../third_party/miktik", default-features = false, features = ["openai", "huggingface", "sentencepiece"] }
+flate2 = "1"
+serde_json = "1"

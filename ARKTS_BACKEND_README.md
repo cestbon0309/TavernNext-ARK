@@ -19,7 +19,7 @@ http://127.0.0.1:8000
 - 第三方扩展 Git 第一阶段：native `libtavern_git.so` 基于 `libgit2` + mbedTLS，已支持 HTTPS 公共仓库安装、版本状态、分支列表、分支切换和 fast-forward 更新。
 - `/version` 现在返回 SillyTavern 兼容 agent，例如 `SillyTavern:1.17.0:TavernNext-OHOS`，用于通过第三方扩展的 `minimum_client_version` 检查。
 - OpenAI chat-completions 最小可用代理：支持 `openai` 和 `custom` 两种来源，`status` 请求 `/v1/models`，`generate` 请求 `/v1/chat/completions`，支持非流式 JSON 和流式 `text/event-stream` 透传。
-- OpenAI/tiktoken tokenizer 第一阶段：native `libtavern_tokenizer.so` 基于 Rust `miktik`，已接管 `/api/tokenizers/openai/encode`、`/api/tokenizers/openai/decode`、`/api/tokenizers/openai/count` 和 chat-completions `bias` 中的 OpenAI token 映射。
+- Tokenizer native bridge：native `libtavern_tokenizer.so` 基于 Rust `miktik`，已接管 OpenAI/tiktoken、Claude、DeepSeek、Gemma 的真实 encode/decode/count；`/api/tokenizers/openai/count` 会按原版模型分支分别走 OpenAI chat overhead、Claude-style prompt 计数或 SentencePiece flatten 计数。
 - Vector 最小实现：本地 JSON 索引、insert/list/delete/query/query-multi/purge、部分 embedding provider 调用和 hash fallback。
 
 本次确认的模型调用状态：
@@ -30,7 +30,7 @@ http://127.0.0.1:8000
 仍缺失或不完善的重点：
 - 多用户明确暂缓：`/api/users/*` 只满足本地弹窗、密码校验和备份恢复流程；当前不做真实 session、cookie-session、当前用户切换和权限中间件。
 - 模型 provider 仍不完整：OpenAI/OpenAI-compatible 主路径已可用；text-completions、NovelAI、Horde、Stable Diffusion 等已有基础代理或查询路由，但还没有完整对齐原版 provider 行为、错误格式、请求取消和流式转换。
-- Tokenizer 仍未全量：OpenAI/tiktoken 已接入 MikTik native；GPT-2、Claude、Llama/Llama 3、Mistral、Qwen、Gemma、Yi、Command、Nemo、DeepSeek 等仍使用兼容/估算路径或远程 tokenizer proxy，后续需要补 tokenizer 资源和 MikTik `huggingface/sentencepiece` 能力。
+- Tokenizer 仍未全量：OpenAI/tiktoken、Claude、DeepSeek、Gemma 已接入 MikTik native；GPT-2、Llama/Llama 3、Mistral、Qwen、Yi、Command、Nemo、Nerdstash、Jamba 等仍使用兼容/估算路径或远程 tokenizer proxy，后续需要补 tokenizer 资源打包或首次下载缓存。
 - Vector 仍不完善：已有最小本地索引和 embedding/hash fallback，但还不是原版 `vectra.LocalIndex` 等价实现。
 - 第三方扩展 Git 仍有后续项：私有仓库认证、SSH、submodule、非 fast-forward merge 冲突处理和 hooks 执行暂缓。
 - settings snapshots、presets、themes、moving UI、assets/content-manager、聊天备份等管理类接口仍有缺口。
@@ -280,11 +280,11 @@ SillyTavern/dist/_webpack/d2f8920b496f6d16/output/lib.js
 - 第三方扩展 Git 已在 x86_64 模拟器通过 native `libgit2` 验证：`POST /api/extensions/version` 可读取 `Extension-Blip` 的 `main`、GitHub remote 和真实 commit；`branches` 返回本地与 `origin/main`；`update` 返回 up-to-date；`switch origin/main` 返回 `204`。
 - 媒体上传回归已通过 hdc 端口映射和 curl 验证：背景上传/列表/缩略图/删除、用户头像上传裁剪/缩略图/删除、聊天图片上传/列表/旧路由兼容/静态读取/删除、附件上传/verify/读取/删除、sprites 单张上传/zip 上传/读取/删除、`image-metadata` 文件夹创建/assign/delete/cleanup，以及 `m4a` 音频媒体列表。
 - OpenAI chat-completions 最小代理已通过本机 mock OpenAI 服务验证：状态检查、非流式生成、流式 SSE 生成均可用，且上游请求体不会包含 `reverse_proxy`、`proxy_password`、`custom_*` 等内部字段。
-- OpenAI tokenizer native bridge 已在 x86_64 模拟器验证：`encode?model=gpt-4o` 对 `Hello world` 返回 `[13225,2375]` 和 chunks `["Hello"," world"]`；`decode` 可还原文本；`openai/count` 对单条 user message 返回 `8`；chat-completions `bias` 支持文本和原始 token 数组。
+- Tokenizer native bridge 已在 x86_64 模拟器验证：`encode?model=gpt-4o` 对 `Hello world` 返回 `[13225,2375]`；Claude encode 返回 `[10002,2253]`，DeepSeek encode 返回 `[19923,2058]`，Gemma encode 返回 `[2405,545,513,483,706]`；Claude decode 可还原文本；`openai/count` 已验证 `gpt-4o`、`claude-3-7-sonnet`、`deepseek-chat`、`gemini-2.0-flash` 和未知 custom model 的默认 OpenAI fallback；chat-completions `bias` 支持文本和原始 token 数组，Claude 按原版返回空对象。
 
 ## 暂缓接口
 
-OpenAI chat-completions、OpenAI/tiktoken native tokenizer、第三方扩展 Git、vector 最小本地索引已经有可用路径；除此之外的完整 provider 适配、非 OpenAI tokenizer、原版等价 vector index、预设/主题细节、内容管理器、assets 管理和复杂外部服务接口仍未完整实现。多用户系统明确暂缓。部分导入导出已经接入 ShareKit 或 zlib：角色导入/导出、聊天导入/导出、data zip 导出/恢复、sprite zip 导入。
+OpenAI chat-completions、OpenAI/Claude/DeepSeek/Gemma native tokenizer、第三方扩展 Git、vector 最小本地索引已经有可用路径；除此之外的完整 provider 适配、剩余 tokenizer、原版等价 vector index、预设/主题细节、内容管理器、assets 管理和复杂外部服务接口仍未完整实现。多用户系统明确暂缓。部分导入导出已经接入 ShareKit 或 zlib：角色导入/导出、聊天导入/导出、data zip 导出/恢复、sprite zip 导入。
 
 ## 构建与调试
 

@@ -1,5 +1,6 @@
 import {
-  count as nativeCount,
+  canUseModel as nativeCanUseModel,
+  countMessages as nativeCountMessages,
   decode as nativeDecode,
   encode as nativeEncode,
   resolveModel as nativeResolveModel,
@@ -12,23 +13,6 @@ import { asArray, asString, bodyAsRecord } from './JsonUtils';
 type JsonPrimitive = Object | string | number | boolean | null;
 
 const BYTES_PER_TOKEN = 3.35;
-const NON_NATIVE_TOKENIZER_NAMES: string[] = [
-  'gpt2',
-  'llama',
-  'nerdstash',
-  'nerdstash_v2',
-  'mistral',
-  'yi',
-  'claude',
-  'llama3',
-  'gemma',
-  'jamba',
-  'qwen2',
-  'command-r',
-  'command-a',
-  'nemo',
-  'deepseek',
-];
 
 class EncodeResponse {
   ids: number[] = [];
@@ -49,7 +33,7 @@ export class TokenizerService {
   encode(request: HttpRequest): HttpResponse {
     const body = bodyAsRecord(request);
     const text = asString(body['text']);
-    const model = this.modelFromRequest(request);
+    const model = this.nativeModelFromRequest(request);
     if (this.canUseNativeTokenizer(model)) {
       try {
         const encoded = nativeEncode(model, text);
@@ -72,7 +56,7 @@ export class TokenizerService {
 
   decode(request: HttpRequest): HttpResponse {
     const ids = asArray(bodyAsRecord(request)['ids']);
-    const model = this.modelFromRequest(request);
+    const model = this.nativeModelFromRequest(request);
     const nativeIds = this.numberArray(ids);
     if (this.canUseNativeTokenizer(model)) {
       try {
@@ -102,11 +86,11 @@ export class TokenizerService {
 
   countOpenAi(request: HttpRequest): HttpResponse {
     const body = this.bodyAsArray(request);
-    const model = this.modelFromRequest(request);
+    const model = this.nativeModelFromRequest(request);
     const response = emptyJsonRecord();
     if (this.canUseNativeTokenizer(model)) {
       try {
-        response['token_count'] = this.countOpenAiMessages(model, body);
+        response['token_count'] = nativeCountMessages(model, JSON.stringify(body));
         return HttpResponse.json(response);
       } catch (_err) {
       }
@@ -122,7 +106,7 @@ export class TokenizerService {
       return HttpResponse.empty(400);
     }
 
-    const model = this.modelFromRequest(request);
+    const model = this.resolveTokenizerModel(this.modelFromRequest(request));
     if (this.resolveTokenizerModel(model) === 'claude') {
       return HttpResponse.json(result);
     }
@@ -258,6 +242,14 @@ export class TokenizerService {
     return routeModel === 'openai' ? '' : routeModel;
   }
 
+  private nativeModelFromRequest(request: HttpRequest): string {
+    const model = this.modelFromRequest(request);
+    if (request.path.startsWith('/api/tokenizers/openai/')) {
+      return this.resolveTokenizerModel(model);
+    }
+    return model;
+  }
+
   private resolveTokenizerModel(model: string): string {
     try {
       return nativeResolveModel(model);
@@ -267,12 +259,11 @@ export class TokenizerService {
   }
 
   private canUseNativeTokenizer(model: string): boolean {
-    if (NON_NATIVE_TOKENIZER_NAMES.includes(model)) {
+    try {
+      return nativeCanUseModel(model);
+    } catch (_err) {
       return false;
     }
-    const resolved = this.resolveTokenizerModel(model);
-    return resolved === 'o1' || resolved === 'gpt-4o' || resolved === 'gpt-4' || resolved === 'gpt-4-32k' ||
-      resolved === 'gpt-3.5-turbo' || resolved === 'gpt-3.5-turbo-0301';
   }
 
   private safeNativeEncode(model: string, text: string): number[] {
@@ -284,12 +275,36 @@ export class TokenizerService {
   }
 
   private tokenChunks(model: string, ids: number[]): string[] {
+    const resolved = this.resolveTokenizerModel(model);
+    if (resolved === 'claude' || resolved === 'deepseek' || resolved === 'llama3' || resolved === 'qwen2' ||
+      resolved === 'command-r' || resolved === 'command-a' || resolved === 'nemo') {
+      return this.webTokenizerChunks(model, ids);
+    }
+
     const chunks: string[] = [];
     for (const id of ids) {
       try {
         chunks.push(nativeDecode(model, [id]));
       } catch (_err) {
         chunks.push('');
+      }
+    }
+    return chunks;
+  }
+
+  private webTokenizerChunks(model: string, ids: number[]): string[] {
+    const chunks: string[] = [];
+    let lastProcessed = 0;
+    for (let index = 0; index < ids.length; index += 1) {
+      const chunkIds = ids.slice(lastProcessed, index + 1);
+      try {
+        const chunkText = nativeDecode(model, chunkIds);
+        if (chunkText === '\uFFFD') {
+          continue;
+        }
+        chunks.push(chunkText);
+        lastProcessed = index + 1;
+      } catch (_err) {
       }
     }
     return chunks;
@@ -304,43 +319,6 @@ export class TokenizerService {
       return [];
     }
     return [body];
-  }
-
-  private countOpenAiMessages(model: string, messages: JsonArray): number {
-    const resolved = this.resolveTokenizerModel(model);
-    const legacy = resolved === 'gpt-3.5-turbo-0301';
-    const tokensPerMessage = legacy ? 4 : 3;
-    const tokensPerName = legacy ? -1 : 1;
-    let total = 0;
-
-    for (const message of messages) {
-      total += tokensPerMessage;
-      if (message === null || Array.isArray(message) || typeof message !== 'object') {
-        total += nativeCount(model, this.valueToText(message));
-        continue;
-      }
-
-      const record = message as JsonRecord;
-      Object.keys(record).forEach((key: string) => {
-        total += nativeCount(model, this.valueToText(record[key]));
-        if (key === 'name') {
-          total += tokensPerName;
-        }
-      });
-    }
-
-    total += 3;
-    if (legacy) {
-      total += 9;
-    }
-    return Math.max(0, total);
-  }
-
-  private valueToText(value: Object | string | number | boolean | null | JsonArray | undefined): string {
-    if (typeof value === 'string') {
-      return value;
-    }
-    return JSON.stringify(value ?? '');
   }
 
   private idsFromRawTokenArray(text: string): number[] {

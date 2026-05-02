@@ -50,11 +50,16 @@ endif()
 
 if(OHOS_ARCH STREQUAL "x86_64")
     set(RUST_OHOS_TARGET "x86_64-unknown-linux-ohos")
+    set(RUST_ENV_TARGET "x86_64_unknown_linux_ohos")
 elseif(OHOS_ARCH STREQUAL "arm64-v8a")
     set(RUST_OHOS_TARGET "aarch64-unknown-linux-ohos")
+    set(RUST_ENV_TARGET "aarch64_unknown_linux_ohos")
 else()
     message(FATAL_ERROR "Unsupported OHOS_ARCH for tavern_tokenizer: ${OHOS_ARCH}")
 endif()
+
+set(RUST_CFLAGS "--target=${RUST_OHOS_TARGET} --sysroot=\"${CMAKE_SYSROOT}\"")
+set(RUST_CXXFLAGS "${RUST_CFLAGS}")
 
 set(TAVERN_TOKENIZER_FFI_DIR "${REPO_ROOT}/native/tavern_tokenizer_ffi")
 set(TAVERN_TOKENIZER_FFI_LIB
@@ -62,12 +67,23 @@ set(TAVERN_TOKENIZER_FFI_LIB
 
 add_custom_command(
     OUTPUT "${TAVERN_TOKENIZER_FFI_LIB}"
-    COMMAND ${CARGO_EXECUTABLE} build --manifest-path "${TAVERN_TOKENIZER_FFI_DIR}/Cargo.toml"
+    COMMAND ${CMAKE_COMMAND} -E env
+        "CC_${RUST_ENV_TARGET}=${CMAKE_C_COMPILER}"
+        "CXX_${RUST_ENV_TARGET}=${CMAKE_CXX_COMPILER}"
+        "AR_${RUST_ENV_TARGET}=${CMAKE_AR}"
+        "CFLAGS_${RUST_ENV_TARGET}=${RUST_CFLAGS}"
+        "CXXFLAGS_${RUST_ENV_TARGET}=${RUST_CXXFLAGS}"
+        "CC_SHELL_ESCAPED_FLAGS=1"
+        ${CARGO_EXECUTABLE} build --manifest-path "${TAVERN_TOKENIZER_FFI_DIR}/Cargo.toml"
         --target ${RUST_OHOS_TARGET} --release
     WORKING_DIRECTORY "${REPO_ROOT}"
     DEPENDS
         "${TAVERN_TOKENIZER_FFI_DIR}/Cargo.toml"
+        "${TAVERN_TOKENIZER_FFI_DIR}/Cargo.lock"
         "${TAVERN_TOKENIZER_FFI_DIR}/src/lib.rs"
+        "${TAVERN_TOKENIZER_FFI_DIR}/resources/tokenizers/claude.json.gz"
+        "${TAVERN_TOKENIZER_FFI_DIR}/resources/tokenizers/deepseek.json.gz"
+        "${TAVERN_TOKENIZER_FFI_DIR}/resources/tokenizers/gemma.model.gz"
         "${REPO_ROOT}/third_party/miktik/Cargo.toml"
     COMMENT "Building Rust MikTik tokenizer bridge for ${RUST_OHOS_TARGET}"
     VERBATIM
