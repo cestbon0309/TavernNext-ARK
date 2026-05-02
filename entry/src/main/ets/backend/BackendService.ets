@@ -1,10 +1,14 @@
 import { common, Context } from '@kit.AbilityKit';
 import { DataDirectories } from './DataDirectories';
+import { CryptoUtils } from './CryptoUtils';
+import { ExtensionsService } from './ExtensionsService';
 import { FileStore } from './FileStore';
 import { HttpServer } from './HttpServer';
+import { SecretsService } from './SecretsService';
 import { ShareExportService } from './ShareExportService';
 import { SillyTavernCore } from './SillyTavernCore';
 import { StaticFileServer } from './StaticFileServer';
+import { UsersService } from './UsersService';
 
 export class BackendStatus {
   running: boolean;
@@ -26,16 +30,24 @@ export class BackendService {
   private directories: DataDirectories;
   private store: FileStore;
   private core: SillyTavernCore;
+  private crypto: CryptoUtils;
+  private secrets: SecretsService;
+  private users: UsersService;
+  private extensions: ExtensionsService;
   private shareExports: ShareExportService;
   private staticFiles: StaticFileServer;
   private lastMessage: string = 'Not started';
 
   private constructor(context: Context) {
     this.store = new FileStore();
+    this.crypto = new CryptoUtils();
     this.directories = new DataDirectories(context.filesDir, this.store);
     this.directories.initialize();
     this.shareExports = new ShareExportService(context as common.UIAbilityContext, this.store, this.directories.exportRoot);
     this.core = new SillyTavernCore(this.store, this.directories, this.shareExports);
+    this.secrets = new SecretsService(this.store, this.directories.defaultUser, this.crypto);
+    this.users = new UsersService(this.store, this.directories, this.crypto, this.shareExports);
+    this.extensions = new ExtensionsService(this.store, this.directories, context.resourceManager);
     this.staticFiles = new StaticFileServer(context.resourceManager);
     this.server = new HttpServer('127.0.0.1', 8000);
     this.registerRoutes();
@@ -127,10 +139,46 @@ export class BackendService {
 
     this.server.route('POST', '/api/avatars/get', async () => this.core.listAvatars());
 
-    this.server.route('POST', '/api/secrets/settings', async () => this.core.secretsSettings());
-    this.server.route('POST', '/api/secrets/read', async () => this.core.readSecretState());
-    this.server.route('GET', '/api/extensions/discover', async () => this.core.discoverExtensions());
-    this.server.route('POST', '/api/extensions/discover', async () => this.core.discoverExtensions());
+    this.server.route('POST', '/api/secrets/settings', async () => this.secrets.settings());
+    this.server.route('POST', '/api/secrets/write', async (request) => this.secrets.write(request));
+    this.server.route('POST', '/api/secrets/read', async () => this.secrets.read());
+    this.server.route('POST', '/api/secrets/view', async () => this.secrets.view());
+    this.server.route('POST', '/api/secrets/find', async (request) => this.secrets.find(request));
+    this.server.route('POST', '/api/secrets/delete', async (request) => this.secrets.delete(request));
+    this.server.route('POST', '/api/secrets/rotate', async (request) => this.secrets.rotate(request));
+    this.server.route('POST', '/api/secrets/rename', async (request) => this.secrets.rename(request));
+
+    this.server.route('POST', '/api/users/list', async () => this.users.listPublic());
+    this.server.route('POST', '/api/users/login', async (request) => this.users.login(request));
+    this.server.route('POST', '/api/users/recover-step1', async (request) => this.users.recoverStep1(request));
+    this.server.route('POST', '/api/users/recover-step2', async (request) => this.users.recoverStep2(request));
+    this.server.route('POST', '/api/users/logout', async () => this.users.logout());
+    this.server.route('GET', '/api/users/me', async () => this.users.me());
+    this.server.route('POST', '/api/users/get', async () => this.users.getAdmin());
+    this.server.route('POST', '/api/users/enable', async (request) => this.users.enable(request));
+    this.server.route('POST', '/api/users/disable', async (request) => this.users.disable(request));
+    this.server.route('POST', '/api/users/promote', async (request) => this.users.promote(request));
+    this.server.route('POST', '/api/users/demote', async (request) => this.users.demote(request));
+    this.server.route('POST', '/api/users/create', async (request) => this.users.create(request));
+    this.server.route('POST', '/api/users/delete', async (request) => this.users.delete(request));
+    this.server.route('POST', '/api/users/slugify', async (request) => this.users.slugify(request));
+    this.server.route('POST', '/api/users/change-avatar', async (request) => this.users.changeAvatar(request));
+    this.server.route('POST', '/api/users/change-password', async (request) => this.users.changePassword(request));
+    this.server.route('POST', '/api/users/backup', async (request) => await this.users.backup(request));
+    this.server.route('POST', '/api/users/reset-settings', async (request) => this.users.resetSettings(request));
+    this.server.route('POST', '/api/users/change-name', async (request) => this.users.changeName(request));
+    this.server.route('POST', '/api/users/reset-step1', async () => this.users.resetStep1());
+    this.server.route('POST', '/api/users/reset-step2', async (request) => this.users.resetStep2(request));
+
+    this.server.route('GET', '/api/extensions/discover', async () => this.extensions.discover());
+    this.server.route('POST', '/api/extensions/discover', async () => this.extensions.discover());
+    this.server.route('POST', '/api/extensions/install', async (request) => this.extensions.install(request));
+    this.server.route('POST', '/api/extensions/update', async (request) => this.extensions.update(request));
+    this.server.route('POST', '/api/extensions/branches', async (request) => this.extensions.branches(request));
+    this.server.route('POST', '/api/extensions/switch', async (request) => this.extensions.switchBranch(request));
+    this.server.route('POST', '/api/extensions/move', async (request) => this.extensions.move(request));
+    this.server.route('POST', '/api/extensions/version', async (request) => this.extensions.version(request));
+    this.server.route('POST', '/api/extensions/delete', async (request) => this.extensions.delete(request));
 
     this.server.route('POST', '/api/tokenizers/encode', async (request) => this.core.tokenEstimate(request));
     this.server.route('POST', '/api/tokenizers/gpt2/encode', async (request) => this.core.tokenEstimate(request));
@@ -148,6 +196,9 @@ export class BackendService {
     this.server.route('POST', '/api/openai/generate', async () => this.core.notImplemented('OpenAI proxy'));
 
     this.server.fallback(async (request) => {
+      if (request.path.startsWith('/scripts/extensions/third-party/')) {
+        return this.extensions.serveThirdPartyFile(request);
+      }
       if (request.path.startsWith('/characters/') || request.path.startsWith('/User Avatars/') ||
         request.path.startsWith('/backgrounds/')) {
         return this.core.getDataFile(request);

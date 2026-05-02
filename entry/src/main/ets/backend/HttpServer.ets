@@ -250,7 +250,8 @@ export class HttpServer {
   }
 
   private serializeResponse(response: HttpResponse): ArrayBuffer {
-    const bodyBytes = response.bodyBytes ?? this.encoder.encodeInto(response.body);
+    const bodyBytes = response.bodyBytes ?? (response.body.length > 0 ? this.encoder.encodeInto(response.body) :
+      new Uint8Array());
     response.headers['content-length'] = `${bodyBytes.byteLength}`;
     response.headers['connection'] = 'close';
 

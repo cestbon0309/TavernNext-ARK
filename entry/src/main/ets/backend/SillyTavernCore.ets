@@ -365,20 +365,6 @@ export class SillyTavernCore {
     return HttpResponse.json(avatars);
   }
 
-  secretsSettings(): HttpResponse {
-    const result = emptyJsonRecord();
-    result['allowKeysExposure'] = false;
-    return HttpResponse.json(result);
-  }
-
-  readSecretState(): HttpResponse {
-    return HttpResponse.json(emptyJsonRecord());
-  }
-
-  discoverExtensions(): HttpResponse {
-    return HttpResponse.json([]);
-  }
-
   getCharacter(request: HttpRequest): HttpResponse {
     const body = this.bodyAsRecord(request);
     const avatarUrl = this.asString(body['avatar_url']);

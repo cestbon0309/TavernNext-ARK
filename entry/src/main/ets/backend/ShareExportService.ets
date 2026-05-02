@@ -39,12 +39,17 @@ export class ShareExportService {
   }
 
   writeExportFile(category: string, fileName: string, bytes: Uint8Array, contentType: string, utd: string): ExportedFile {
+    const file = this.exportFileReference(category, fileName, contentType, utd);
+    this.store.writeBytes(file.path, bytes);
+    return file;
+  }
+
+  exportFileReference(category: string, fileName: string, contentType: string, utd: string): ExportedFile {
     const safeCategory = sanitizeFileName(category);
     const safeFileName = sanitizeFileName(fileName);
     const directory = joinPath(this.root, safeCategory);
     const path = joinPath(directory, safeFileName);
     this.store.ensureDir(directory);
-    this.store.writeBytes(path, bytes);
     return new ExportedFile(path, fileUri.getUriFromPath(path), safeFileName, contentType, utd);
   }
 
@@ -94,6 +99,8 @@ export class ShareExportService {
 
   static contentTypeForExtension(extension: string): string {
     switch (extension.toLowerCase()) {
+      case '.zip':
+        return 'application/zip';
       case '.json':
         return 'application/json';
       case '.jsonl':
@@ -109,6 +116,8 @@ export class ShareExportService {
 
   static utdForExtension(extension: string): string {
     switch (extension.toLowerCase()) {
+      case '.zip':
+        return uniformTypeDescriptor.UniformDataType.ZIP_ARCHIVE;
       case '.json':
       case '.jsonl':
       case '.txt':

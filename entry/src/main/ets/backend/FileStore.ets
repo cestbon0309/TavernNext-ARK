@@ -164,6 +164,16 @@ export class FileStore {
     }
   }
 
+  moveDirectory(source: string, target: string): boolean {
+    if (!this.exists(source) || this.exists(target)) {
+      return false;
+    }
+    if (!this.copyDirectory(source, target)) {
+      return false;
+    }
+    return this.deleteDirectory(source);
+  }
+
   stat(path: string, name: string = ''): FileEntry | null {
     if (!this.exists(path)) {
       return null;
@@ -241,11 +251,7 @@ export class FileStore {
     }
   }
 
-  private toMs(value: number): number {
-    return value > 0 && value < 1000000000000 ? value * 1000 : value;
-  }
-
-  private baseName(path: string): string {
+  baseName(path: string): string {
     const normalized = path.replace(/\\/g, '/');
     const index = normalized.lastIndexOf('/');
     if (index < 0) {
@@ -253,4 +259,18 @@ export class FileStore {
     }
     return normalized.slice(index + 1);
   }
+
+  directoryName(path: string): string {
+    const normalized = path.replace(/\\/g, '/');
+    const index = normalized.lastIndexOf('/');
+    if (index <= 0) {
+      return '';
+    }
+    return normalized.slice(0, index);
+  }
+
+  private toMs(value: number): number {
+    return value > 0 && value < 1000000000000 ? value * 1000 : value;
+  }
+
 }
