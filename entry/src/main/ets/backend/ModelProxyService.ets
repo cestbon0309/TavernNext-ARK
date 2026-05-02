@@ -1,8 +1,9 @@
 import { DataDirectories } from './DataDirectories';
 import { SecretsService } from './SecretsService';
-import { HttpRequest, HttpResponse, JsonArray, JsonRecord, JsonScalar, emptyJsonRecord } from './HttpTypes';
+import { HttpRequest, HttpResponse, JsonArray, JsonRecord, emptyJsonRecord } from './HttpTypes';
 import { RemoteHttpClient, proxyErrorResponse } from './RemoteHttpClient';
-import { asBoolean, asNumber, asRecord, asString, bodyAsRecord, parseJsonRecord } from './JsonUtils';
+import { asString, bodyAsRecord, parseJsonRecord } from './JsonUtils';
+import { ChatCompletionService } from './model/ChatCompletionService';
 
 class HordeStatusResponse {
   ok: boolean = false;
@@ -16,62 +17,16 @@ export class ModelProxyService {
   private http: RemoteHttpClient = new RemoteHttpClient();
   private secrets: SecretsService;
   private dirs: DataDirectories;
+  private chatCompletions: ChatCompletionService;
 
   constructor(dirs: DataDirectories, secrets: SecretsService) {
     this.dirs = dirs;
     this.secrets = secrets;
+    this.chatCompletions = new ChatCompletionService(secrets);
   }
 
   async chatCompletionsGenerate(request: HttpRequest): Promise<HttpResponse> {
-    const body = bodyAsRecord(request);
-    const source = asString(body['chat_completion_source']) || 'openai';
-    if (source !== 'openai' && source !== 'custom') {
-      return HttpResponse.json(this.errorTrue(), 400);
-    }
-    const endpoint = this.chatCompletionEndpoint(source, body);
-    if (endpoint.url.length === 0) {
-      return HttpResponse.json(this.errorTrue(), 400);
-    }
-    if (endpoint.apiKey.length === 0 && endpoint.requiresKey) {
-      return HttpResponse.json(this.errorTrue(), 400);
-    }
-
-    let requestBody = this.openAiChatCompletionBody(body);
-    if (source === 'custom') {
-      this.mergeCustomYamlObject(requestBody, asString(body['custom_include_body']));
-      requestBody = this.withoutCustomYamlKeys(requestBody, asString(body['custom_exclude_body']));
-    }
-    const headers = this.jsonAuthHeaders(endpoint.apiKey);
-    Object.keys(endpoint.headers).forEach((name: string) => headers[name] = endpoint.headers[name]);
-    if (source === 'custom') {
-      this.mergeCustomYamlHeaders(headers, asString(body['custom_include_headers']));
-    }
-    if (asBoolean(body['stream'])) {
-      const response = HttpResponse.stream('text/event-stream; charset=utf-8', async (send) => {
-        try {
-          await this.http.streamPostJson(endpoint.url, requestBody, headers, send, 300000);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : JSON.stringify(err);
-          await send(`event: error\ndata: ${JSON.stringify(this.errorFromText(message))}\n\n`);
-        }
-      });
-      response.headers['x-accel-buffering'] = 'no';
-      return response;
-    }
-
-    try {
-      const result = await this.http.postJson(endpoint.url, requestBody, headers);
-      if (result.statusCode >= 200 && result.statusCode < 300) {
-        return this.http.responseFromRemote(result);
-      }
-      const error = emptyJsonRecord();
-      const message = emptyJsonRecord();
-      message['message'] = result.text.length > 0 ? result.text : `HTTP ${result.statusCode}`;
-      error['error'] = message;
-      return HttpResponse.json(error, 200);
-    } catch (err) {
-      return proxyErrorResponse(err instanceof Error ? err.message : JSON.stringify(err), 502);
-    }
+    return this.chatCompletions.generate(request);
   }
 
   async openAiGenerate(request: HttpRequest): Promise<HttpResponse> {
@@ -79,37 +34,7 @@ export class ModelProxyService {
   }
 
   async chatCompletionStatus(request: HttpRequest): Promise<HttpResponse> {
-    const body = bodyAsRecord(request);
-    const source = asString(body['chat_completion_source']) || 'openai';
-    if (source !== 'openai' && source !== 'custom') {
-      return HttpResponse.json(this.errorTrue(), 400);
-    }
-    if (asBoolean(body['bypass_status_check'])) {
-      const response = emptyJsonRecord();
-      response['bypass'] = true;
-      return HttpResponse.json(response);
-    }
-    const endpoint = this.modelListEndpoint(source, body);
-    if (endpoint.url.length === 0) {
-      return HttpResponse.json(this.errorTrue(), 400);
-    }
-    if (endpoint.apiKey.length === 0 && endpoint.requiresKey) {
-      return HttpResponse.json(this.errorTrue(), 400);
-    }
-    try {
-      const headers = this.jsonAuthHeaders(endpoint.apiKey);
-      Object.keys(endpoint.headers).forEach((name: string) => headers[name] = endpoint.headers[name]);
-      if (source === 'custom') {
-        this.mergeCustomYamlHeaders(headers, asString(body['custom_include_headers']));
-      }
-      const result = await this.http.getText(endpoint.url, headers, 30000);
-      if (result.statusCode < 200 || result.statusCode >= 300) {
-        return HttpResponse.json(this.errorTrue(), 400);
-      }
-      return this.http.responseFromRemote(result);
-    } catch (err) {
-      return proxyErrorResponse(err instanceof Error ? err.message : JSON.stringify(err), 502);
-    }
+    return this.chatCompletions.status(request);
   }
 
   async textCompletionStatus(request: HttpRequest): Promise<HttpResponse> {
@@ -291,226 +216,7 @@ export class ModelProxyService {
   }
 
   async openAiModelList(source: string): Promise<HttpResponse> {
-    const endpoint = this.modelListEndpoint(source, emptyJsonRecord());
-    if (endpoint.url.length === 0 || endpoint.apiKey.length === 0) {
-      return HttpResponse.json([]);
-    }
-    try {
-      const result = await this.http.getText(endpoint.url, this.jsonAuthHeaders(endpoint.apiKey), 30000);
-      if (result.statusCode < 200 || result.statusCode >= 300) {
-        return HttpResponse.json([]);
-      }
-      const data = parseJsonRecord(result.text);
-      if (Array.isArray(data['data'])) {
-        return HttpResponse.json(data['data'] as Object);
-      }
-      return HttpResponse.json([]);
-    } catch (_err) {
-      return HttpResponse.json([]);
-    }
-  }
-
-  private chatCompletionEndpoint(source: string, body: JsonRecord): EndpointSettings {
-    const endpoint = new EndpointSettings();
-    if (source === 'openai' || source.length === 0) {
-      const reverseProxy = asString(body['reverse_proxy']);
-      endpoint.url = this.http.joinUrl(reverseProxy || 'https://api.openai.com/v1', '/chat/completions');
-      endpoint.apiKey = reverseProxy.length > 0 ? asString(body['proxy_password']) : this.secret('api_key_openai');
-      endpoint.requiresKey = reverseProxy.length === 0;
-      return endpoint;
-    }
-    if (source === 'claude') {
-      endpoint.url = this.http.joinUrl(asString(body['reverse_proxy']) || 'https://api.anthropic.com/v1', '/messages');
-      endpoint.apiKey = asString(body['proxy_password']) || this.secret('api_key_claude');
-      endpoint.headers['anthropic-version'] = '2023-06-01';
-      endpoint.headers['anthropic-beta'] = 'prompt-caching-2024-07-31';
-      return endpoint;
-    }
-    if (source === 'makersuite') {
-      const key = asString(body['proxy_password']) || this.secret('api_key_makersuite');
-      const model = encodeURIComponent(asString(body['model']));
-      endpoint.url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
-      endpoint.apiKey = '';
-      endpoint.requiresKey = key.length === 0;
-      return endpoint;
-    }
-    if (source === 'openrouter') {
-      endpoint.url = this.http.joinUrl(asString(body['reverse_proxy']) || 'https://openrouter.ai/api/v1', '/chat/completions');
-      endpoint.apiKey = asString(body['proxy_password']) || this.secret('api_key_openrouter');
-      endpoint.headers['HTTP-Referer'] = 'https://sillytavern.app';
-      endpoint.headers['X-Title'] = 'SillyTavern';
-      return endpoint;
-    }
-    if (source === 'novel') {
-      endpoint.url = 'https://api.novelai.net/ai/generate';
-      endpoint.apiKey = this.secret('api_key_novel');
-      return endpoint;
-    }
-    if (source === 'custom') {
-      const baseUrl = asString(body['custom_url']) || asString(body['reverse_proxy']);
-      endpoint.url = baseUrl.length > 0 ? this.http.joinUrl(baseUrl, '/chat/completions') : '';
-      endpoint.apiKey = asString(body['proxy_password']) || this.secret('api_key_custom');
-      endpoint.requiresKey = false;
-      return endpoint;
-    }
-    const base = this.defaultOpenAiCompatibleBase(source, body);
-    endpoint.url = this.http.joinUrl(base.url, '/chat/completions');
-    endpoint.apiKey = base.apiKey;
-    endpoint.requiresKey = base.requiresKey;
-    return endpoint;
-  }
-
-  private chatCompletionBody(body: JsonRecord): Object {
-    const source = asString(body['chat_completion_source']);
-    if (source === 'claude') {
-      const request = emptyJsonRecord();
-      request['model'] = body['model'] ?? '';
-      request['messages'] = body['messages'] ?? [];
-      request['max_tokens'] = body['max_tokens'] ?? body['max_completion_tokens'] ?? 300;
-      this.setIfPresent(request, 'temperature', body['temperature']);
-      this.setIfPresent(request, 'top_p', body['top_p']);
-      this.setIfPresent(request, 'top_k', body['top_k']);
-      request['stop_sequences'] = body['stop'] ?? [];
-      request['stream'] = asBoolean(body['stream']);
-      return this.stripUndefined(request);
-    }
-    if (source === 'makersuite') {
-      return this.geminiBody(body);
-    }
-    return this.stripUndefined(body);
-  }
-
-  private geminiBody(body: JsonRecord): Object {
-    const contents: Object[] = [];
-    const messages = body['messages'];
-    if (Array.isArray(messages)) {
-      const values = messages as JsonArray;
-      for (const item of values) {
-        if (item === null || Array.isArray(item) || typeof item !== 'object') {
-          continue;
-        }
-        const message = item as JsonRecord;
-        const content = asString(message['content']);
-        const part = emptyJsonRecord();
-        part['text'] = content;
-        const geminiMessage = emptyJsonRecord();
-        geminiMessage['role'] = asString(message['role']) === 'assistant' ? 'model' : 'user';
-        geminiMessage['parts'] = [part];
-        contents.push(geminiMessage);
-      }
-    }
-    const generationConfig = emptyJsonRecord();
-    this.setIfPresent(generationConfig, 'maxOutputTokens', body['max_tokens'] ?? body['max_completion_tokens']);
-    this.setIfPresent(generationConfig, 'temperature', body['temperature']);
-    this.setIfPresent(generationConfig, 'topP', body['top_p']);
-    this.setIfPresent(generationConfig, 'topK', body['top_k']);
-    const request = emptyJsonRecord();
-    request['contents'] = contents;
-    request['generationConfig'] = this.stripUndefined(generationConfig);
-    return request;
-  }
-
-  private defaultOpenAiCompatibleBase(source: string, body: JsonRecord): EndpointSettings {
-    const endpoint = new EndpointSettings();
-    endpoint.url = asString(body['reverse_proxy']);
-    endpoint.apiKey = asString(body['proxy_password']);
-    switch (source) {
-      case 'openai':
-      case '':
-        endpoint.requiresKey = endpoint.url.length === 0;
-        endpoint.url = endpoint.url || 'https://api.openai.com/v1';
-        endpoint.apiKey = endpoint.apiKey || (endpoint.requiresKey ? this.secret('api_key_openai') : '');
-        break;
-      case 'deepseek':
-        endpoint.url = endpoint.url || 'https://api.deepseek.com/beta';
-        endpoint.apiKey = endpoint.apiKey || this.secret('api_key_deepseek');
-        break;
-      case 'groq':
-        endpoint.url = endpoint.url || 'https://api.groq.com/openai/v1';
-        endpoint.apiKey = endpoint.apiKey || this.secret('api_key_groq');
-        break;
-      case 'mistralai':
-        endpoint.url = endpoint.url || 'https://api.mistral.ai/v1';
-        endpoint.apiKey = endpoint.apiKey || this.secret('api_key_mistralai');
-        break;
-      case 'xai':
-        endpoint.url = endpoint.url || 'https://api.x.ai/v1';
-        endpoint.apiKey = endpoint.apiKey || this.secret('api_key_xai');
-        break;
-      case 'chutes':
-        endpoint.url = endpoint.url || 'https://llm.chutes.ai/v1';
-        endpoint.apiKey = endpoint.apiKey || this.secret('api_key_chutes');
-        break;
-      case 'electronhub':
-        endpoint.url = endpoint.url || 'https://api.electronhub.ai/v1';
-        endpoint.apiKey = endpoint.apiKey || this.secret('api_key_electronhub');
-        break;
-      case 'nanogpt':
-        endpoint.url = endpoint.url || 'https://nano-gpt.com/api/v1';
-        endpoint.apiKey = endpoint.apiKey || this.secret('api_key_nanogpt');
-        break;
-      case 'aimlapi':
-        endpoint.url = endpoint.url || 'https://api.aimlapi.com/v1';
-        endpoint.apiKey = endpoint.apiKey || this.secret('api_key_aimlapi');
-        break;
-      case 'moonshot':
-        endpoint.url = endpoint.url || 'https://api.moonshot.ai/v1';
-        endpoint.apiKey = endpoint.apiKey || this.secret('api_key_moonshot');
-        break;
-      case 'fireworks':
-        endpoint.url = endpoint.url || 'https://api.fireworks.ai/inference/v1';
-        endpoint.apiKey = endpoint.apiKey || this.secret('api_key_fireworks');
-        break;
-      case 'zai':
-        endpoint.url = endpoint.url || 'https://api.z.ai/api/paas/v4';
-        endpoint.apiKey = endpoint.apiKey || this.secret('api_key_zai');
-        break;
-      case 'siliconflow':
-        endpoint.url = endpoint.url || 'https://api.siliconflow.com/v1';
-        endpoint.apiKey = endpoint.apiKey || this.secret('api_key_siliconflow');
-        break;
-      default:
-        endpoint.url = endpoint.url || '';
-        endpoint.requiresKey = false;
-        break;
-    }
-    return endpoint;
-  }
-
-  private openAiChatCompletionBody(body: JsonRecord): JsonRecord {
-    const request = emptyJsonRecord();
-    const keys = ['messages', 'model', 'temperature', 'max_tokens', 'max_completion_tokens', 'stream',
-      'presence_penalty', 'frequency_penalty', 'top_p', 'stop', 'logit_bias', 'seed', 'n', 'user'];
-    for (const key of keys) {
-      this.setIfPresent(request, key, body[key]);
-    }
-    if (Array.isArray(body['tools'])) {
-      request['tools'] = body['tools'];
-      this.setIfPresent(request, 'tool_choice', body['tool_choice']);
-    }
-    this.mapOpenAiLogprobs(request, body);
-    const responseFormat = this.openAiResponseFormat(body);
-    if (responseFormat !== null) {
-      request['response_format'] = responseFormat;
-    }
-    this.setOpenAiReasoningFields(request, body);
-    return this.stripUndefined(request);
-  }
-
-  private modelListEndpoint(source: string, body: JsonRecord): EndpointSettings {
-    if (source === 'custom') {
-      const endpoint = new EndpointSettings();
-      const baseUrl = asString(body['custom_url']) || asString(body['reverse_proxy']);
-      endpoint.url = baseUrl.length > 0 ? this.http.joinUrl(baseUrl, '/models') : '';
-      endpoint.apiKey = asString(body['proxy_password']) || this.secret('api_key_custom');
-      endpoint.requiresKey = false;
-      return endpoint;
-    }
-    const endpoint = this.defaultOpenAiCompatibleBase(source, body);
-    if (endpoint.url.length > 0) {
-      endpoint.url = this.http.joinUrl(endpoint.url, '/models');
-    }
-    return endpoint;
+    return this.chatCompletions.modelList(source);
   }
 
   private textCompletionModelsPath(apiType: string): string {
@@ -572,16 +278,6 @@ export class ModelProxyService {
     return headers;
   }
 
-  private jsonAuthHeaders(apiKey: string): Record<string, string> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (apiKey.length > 0) {
-      headers['Authorization'] = `Bearer ${apiKey}`;
-    }
-    return headers;
-  }
-
   private hordeHeaders(): Record<string, string> {
     return {
       'Content-Type': 'application/json',
@@ -613,203 +309,6 @@ export class ModelProxyService {
     }
   }
 
-  private stripUndefined(value: JsonRecord): JsonRecord {
-    const result = emptyJsonRecord();
-    Object.keys(value).forEach((key: string) => {
-      if (value[key] !== undefined) {
-        result[key] = value[key];
-      }
-    });
-    return result;
-  }
-
-  private setIfPresent(record: JsonRecord, key: string, value: JsonScalar | JsonArray | undefined): void {
-    if (value !== undefined) {
-      record[key] = value;
-    }
-  }
-
-  private mapOpenAiLogprobs(request: JsonRecord, body: JsonRecord): void {
-    if (body['logprobs'] === undefined || body['logprobs'] === null) {
-      return;
-    }
-    if (typeof body['logprobs'] === 'boolean') {
-      request['logprobs'] = body['logprobs'];
-      if (body['logprobs'] === true) {
-        this.setIfPresent(request, 'top_logprobs', body['top_logprobs']);
-      }
-      return;
-    }
-    const value = asNumber(body['logprobs'], 0);
-    if (value > 0) {
-      request['logprobs'] = true;
-      request['top_logprobs'] = value;
-    }
-  }
-
-  private openAiResponseFormat(body: JsonRecord): JsonRecord | null {
-    if (body['response_format'] !== undefined && body['response_format'] !== null && !Array.isArray(body['response_format']) &&
-      typeof body['response_format'] === 'object') {
-      return body['response_format'] as JsonRecord;
-    }
-    const schema = asRecord(body['json_schema']);
-    if (Object.keys(schema).length === 0) {
-      return null;
-    }
-    const value = schema['value'];
-    if (value === undefined || value === null || Array.isArray(value) || typeof value !== 'object') {
-      return null;
-    }
-    const jsonSchema = emptyJsonRecord();
-    jsonSchema['name'] = asString(schema['name']) || 'response';
-    jsonSchema['strict'] = schema['strict'] === undefined ? true : schema['strict'];
-    jsonSchema['schema'] = value as Object;
-    const responseFormat = emptyJsonRecord();
-    responseFormat['type'] = 'json_schema';
-    responseFormat['json_schema'] = jsonSchema;
-    return responseFormat;
-  }
-
-  private setOpenAiReasoningFields(request: JsonRecord, body: JsonRecord): void {
-    const model = asString(body['model']).trim().toLowerCase();
-    const effort = asString(body['reasoning_effort']).trim();
-    if (effort.length > 0 && effort !== 'auto' && this.isOpenAiReasoningModel(model)) {
-      request['reasoning_effort'] = effort === 'min' ? 'minimal' : effort;
-    }
-    const verbosity = asString(body['verbosity']).trim();
-    if (verbosity.length > 0 && model.startsWith('gpt-5')) {
-      request['verbosity'] = verbosity;
-    }
-  }
-
-  private isOpenAiReasoningModel(model: string): boolean {
-    return model.startsWith('o1') || model.startsWith('o3') || model.startsWith('o4') || model.startsWith('gpt-5');
-  }
-
-  private mergeCustomYamlHeaders(headers: Record<string, string>, text: string): void {
-    const custom = this.parseCustomYamlObject(text);
-    Object.keys(custom).forEach((key: string) => {
-      headers[key] = asString(custom[key]);
-    });
-  }
-
-  private mergeCustomYamlObject(target: JsonRecord, text: string): void {
-    const custom = this.parseCustomYamlObject(text);
-    Object.keys(custom).forEach((key: string) => {
-      target[key] = custom[key];
-    });
-  }
-
-  private withoutCustomYamlKeys(target: JsonRecord, text: string): JsonRecord {
-    const keys = this.parseCustomYamlKeys(text);
-    if (keys.length === 0) {
-      return target;
-    }
-    const result = emptyJsonRecord();
-    Object.keys(target).forEach((key: string) => {
-      if (!keys.includes(key)) {
-        result[key] = target[key];
-      }
-    });
-    return result;
-  }
-
-  private parseCustomYamlObject(text: string): JsonRecord {
-    const trimmed = text.trim();
-    if (trimmed.length === 0) {
-      return emptyJsonRecord();
-    }
-    try {
-      const parsed = JSON.parse(trimmed) as Object;
-      if (parsed !== null && !Array.isArray(parsed) && typeof parsed === 'object') {
-        return parsed as JsonRecord;
-      }
-      if (Array.isArray(parsed)) {
-        const record = emptyJsonRecord();
-        const parsedItems = parsed as Object[];
-        for (const item of parsedItems) {
-          if (item !== null && !Array.isArray(item) && typeof item === 'object') {
-            Object.keys(item as JsonRecord).forEach((key: string) => record[key] = (item as JsonRecord)[key]);
-          }
-        }
-        return record;
-      }
-    } catch (_err) {
-    }
-
-    const record = emptyJsonRecord();
-    for (const line of this.customYamlLines(trimmed)) {
-      const index = line.indexOf(':');
-      if (index <= 0) {
-        continue;
-      }
-      const key = line.slice(0, index).trim();
-      if (key.length === 0) {
-        continue;
-      }
-      record[key] = this.parseCustomYamlScalar(line.slice(index + 1).trim());
-    }
-    return record;
-  }
-
-  private parseCustomYamlKeys(text: string): string[] {
-    const trimmed = text.trim();
-    if (trimmed.length === 0) {
-      return [];
-    }
-    try {
-      const parsed = JSON.parse(trimmed) as Object;
-      if (Array.isArray(parsed)) {
-        return parsed.map((value: Object | string | number | boolean | null): string => `${value}`);
-      }
-      if (parsed !== null && typeof parsed === 'object') {
-        return Object.keys(parsed);
-      }
-      if (typeof parsed === 'string') {
-        return [parsed];
-      }
-    } catch (_err) {
-    }
-
-    const keys: string[] = [];
-    for (const line of this.customYamlLines(trimmed)) {
-      const value = line.startsWith('-') ? line.slice(1).trim() : line.trim();
-      const index = value.indexOf(':');
-      keys.push(index > 0 ? value.slice(0, index).trim() : value);
-    }
-    return keys.filter((key: string): boolean => key.length > 0);
-  }
-
-  private customYamlLines(text: string): string[] {
-    return text.split('\n')
-      .map((line: string): string => line.trim())
-      .filter((line: string): boolean => line.length > 0 && !line.startsWith('#'));
-  }
-
-  private parseCustomYamlScalar(value: string): JsonScalar {
-    if (value.length >= 2) {
-      const first = value.charAt(0);
-      const last = value.charAt(value.length - 1);
-      if ((first === '"' && last === '"') || (first === '\'' && last === '\'')) {
-        return value.slice(1, value.length - 1);
-      }
-    }
-    if (value === 'true') {
-      return true;
-    }
-    if (value === 'false') {
-      return false;
-    }
-    if (value === 'null') {
-      return null;
-    }
-    const numberValue = Number(value);
-    if (value.length > 0 && Number.isFinite(numberValue)) {
-      return numberValue;
-    }
-    return value;
-  }
-
   private trimV1(value: string): string {
     return value.endsWith('/v1') ? value.slice(0, value.length - 3) : value;
   }
@@ -831,11 +330,4 @@ export class ModelProxyService {
   private secret(key: string): string {
     return this.secrets.activeSecretValue(key);
   }
-}
-
-class EndpointSettings {
-  url: string = '';
-  apiKey: string = '';
-  requiresKey: boolean = true;
-  headers: Record<string, string> = {};
 }
