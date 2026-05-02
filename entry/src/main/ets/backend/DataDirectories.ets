@@ -110,11 +110,6 @@ export class DataDirectories {
     this.ensureUserDirectories(this.defaultUser);
     this.ensureRootFile('cookie-secret.txt', this.generateCookieSecret());
 
-    const settingsPath = joinPath(this.defaultUser.root, 'settings.json');
-    if (!this.store.exists(settingsPath)) {
-      this.store.writeJson(settingsPath, emptyJsonRecord());
-    }
-
     const secretsPath = joinPath(this.defaultUser.root, 'secrets.json');
     if (!this.store.exists(secretsPath)) {
       this.store.writeJson(secretsPath, emptyJsonRecord());
@@ -126,6 +121,13 @@ export class DataDirectories {
     }
 
     this.ensureUserFile('content.log', '');
+  }
+
+  ensureDefaultUserFiles(): void {
+    const settingsPath = joinPath(this.defaultUser.root, 'settings.json');
+    if (!this.store.exists(settingsPath)) {
+      this.store.writeJson(settingsPath, emptyJsonRecord());
+    }
     this.ensureUserFile('image-metadata.json', '{}');
   }
 

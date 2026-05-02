@@ -67,6 +67,8 @@ data/
 
 角色卡按 SillyTavern 原格式保存为 `characters/<internal-name>.png`。PNG 中写入 `tEXt` 元数据，关键字为 `chara`，内容是 base64 UTF-8 JSON；读取时兼容优先读取 `ccv3`，没有 `ccv3` 再读 `chara`。
 
+首次启动会从 `rawfile/default/content` 导入原版默认内容，包括默认 `settings.json`、23 张背景、Seraphina、Eldoria、`user-default.png`、主题、预设、QuickReplies 和 Comfy workflows。导入逻辑复用原版 `content.log`：`content.log` 为空时执行一次，之后不再重复初始化；目标文件已存在时不会覆盖用户文件。
+
 ## 已实现接口
 
 - `GET /`
@@ -186,8 +188,17 @@ data/
 - `POST /api/extensions/delete`
 - `POST /api/tokenizers/encode`
 - `POST /api/tokenizers/*/encode`
+- `POST /api/quick-reply/save`
+- `POST /api/quick-reply/delete`
+- `POST /api/sd/comfy/workflows`
+- `POST /api/horde/status`
+- `POST /api/horde/text-models`
+- `POST /api/horde/text-workers`
+- `POST /api/horde/sd-models`
 
 当前仍是默认用户优先的本地兼容模型，`/csrf-token` 返回 `disabled`。账号 API 已能满足本地弹窗和密码校验基础流程，但还没有真实 session、cookie-session、当前用户切换和权限中间件。
+
+`POST /api/settings/get` 中 Kobold/NovelAI/OpenAI/TextGen 预设按原版返回 JSON 文件原文字符串数组；主题、moving UI、QuickReplies、instruct/context/sysprompt/reasoning 返回解析后的对象数组。Horde 目前只提供启动阶段兼容桩，返回离线状态和空模型列表，不做真实网络代理。
 
 媒体上传阶段已接入 Harmony 官方 API：头像裁剪/resize、缩略图、图片尺寸和平均色使用 `@kit.ImageKit`，sprite zip 解包使用 `@kit.BasicServicesKit` 的 `zlib.decompressFile`。MediaKit 暂未接入，因为当前后端接口只需要保存、列出和读取音视频文件，不涉及播放、录制或转码。
 

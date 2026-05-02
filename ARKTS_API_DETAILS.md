@@ -178,7 +178,9 @@ data/
 初始化默认文件：
 
 - `data/cookie-secret.txt`：随机文本，格式为 `<Date.now()>-<random number>`。
-- `data/default-user/settings.json`：不存在时写 `{}`。
+- 首次启动会先从 `entry/src/main/resources/rawfile/default/content/index.json` 读取原版默认内容清单，并把 `default/content` 中的默认 `settings.json`、背景、Seraphina、Eldoria、头像、主题、预设、QuickReplies、Comfy workflow 等复制到 `data/default-user` 对应目录。
+- 默认内容导入复用原版 `content.log` 语义：`content.log` 为空时执行一次初始化；写入已处理 filename 后，后续启动直接跳过。目标文件已存在时不覆盖，只记录该 filename。
+- `data/default-user/settings.json`：默认内容导入后仍不存在时写 `{}` 兜底。
 - `data/default-user/secrets.json`：不存在时写 `{}`。
 - `data/default-user/stats.json`：不存在时写 `{}`。
 - `data/default-user/content.log`：不存在时写空字符串。
@@ -333,13 +335,13 @@ public/<request path without leading slash>
 ```ts
 type SettingsResponse = {
   settings: string;
-  koboldai_settings: object[];
+  koboldai_settings: string[];
   koboldai_setting_names: string[];
-  novelai_settings: object[];
+  novelai_settings: string[];
   novelai_setting_names: string[];
-  openai_settings: object[];
+  openai_settings: string[];
   openai_setting_names: string[];
-  textgenerationwebui_presets: object[];
+  textgenerationwebui_presets: string[];
   textgenerationwebui_preset_names: string[];
   world_names: string[];
   themes: object[];
@@ -377,7 +379,7 @@ type SettingsResponse = {
 - `sysprompt`：`sysprompt/*.json`
 - `reasoning`：`reasoning/*.json`
 
-已知兼容差异：当前预设数组返回解析后的 JSON 对象。原 SillyTavern 某些路径可能期望字符串数组；如果后续前端在某个 loader 对元素执行 `JSON.parse(item)`，这里需要改为返回文件原文字符串。
+兼容点：`koboldai_settings`、`novelai_settings`、`openai_settings` 和 `textgenerationwebui_presets` 与原版一致返回 JSON 文件原文字符串数组，前端会自行 `JSON.parse(item)`。主题、moving UI、Quick Reply、instruct、context、sysprompt、reasoning 仍返回解析后的对象数组。
 
 ### 6.2 `POST /api/settings/save`
 
@@ -2663,6 +2665,10 @@ avatar
 - `POST /api/settings/get`
 - `POST /api/settings/save`
 - 启动阶段所需的基础预设目录读取
+- `POST /api/quick-reply/save`
+- `POST /api/quick-reply/delete`
+- 旧路径兼容：`/savequickreply`、`/deletequickreply`
+- 启动阶段所需的 Comfy workflow 本地列表读取：`POST /api/sd/comfy/workflows`
 
 仍缺失：
 
@@ -2680,13 +2686,14 @@ avatar
   - `POST /api/themes/delete`
 - moving UI：
   - `POST /api/moving-ui/save`
-- Quick Replies：
-  - `POST /api/quick-replies/save`
-  - `POST /api/quick-replies/delete`
+- Comfy workflow 完整管理：
+  - `POST /api/sd/comfy/save-workflow`
+  - `POST /api/sd/comfy/delete-workflow`
+  - `POST /api/sd/comfy/rename-workflow`
 
 兼容差异：
 
-- `settings/get` 中预设内容当前返回解析后的 JSON 对象数组；原版部分前端路径可能期望字符串数组，后续要按实际前端调用点对齐。
+- Horde 启动阶段兼容桩已返回离线状态和空模型/worker 数组；真实 Horde 网络代理和生成仍未实现。
 
 ### 17.5 世界书
 

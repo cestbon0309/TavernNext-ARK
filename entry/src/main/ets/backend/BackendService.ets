@@ -1,6 +1,7 @@
 import { common, Context } from '@kit.AbilityKit';
 import { DataDirectories } from './DataDirectories';
 import { CryptoUtils } from './CryptoUtils';
+import { DefaultContentSeeder } from './DefaultContentSeeder';
 import { ExtensionsService } from './ExtensionsService';
 import { FileStore } from './FileStore';
 import { HttpServer } from './HttpServer';
@@ -45,6 +46,8 @@ export class BackendService {
     this.crypto = new CryptoUtils();
     this.directories = new DataDirectories(context.filesDir, this.store);
     this.directories.initialize();
+    new DefaultContentSeeder(this.store, this.directories, context.resourceManager).seedDefaultUser();
+    this.directories.ensureDefaultUserFiles();
     this.shareExports = new ShareExportService(context as common.UIAbilityContext, this.store, this.directories.exportRoot);
     this.core = new SillyTavernCore(this.store, this.directories, this.shareExports);
     this.media = new MediaService(this.store, this.directories, this.crypto);
@@ -188,6 +191,10 @@ export class BackendService {
     this.server.route('POST', '/api/image-metadata/folders/unassign',
       async (request) => this.media.imageMetadataFoldersUnassign(request));
     this.server.route('POST', '/api/image-metadata/cleanup', async () => this.media.imageMetadataCleanup());
+    this.server.route('POST', '/api/quick-reply/save', async (request) => this.core.saveQuickReply(request));
+    this.server.route('POST', '/api/quick-reply/delete', async (request) => this.core.deleteQuickReply(request));
+    this.server.route('POST', '/savequickreply', async (request) => this.core.saveQuickReply(request));
+    this.server.route('POST', '/deletequickreply', async (request) => this.core.deleteQuickReply(request));
 
     this.server.route('POST', '/api/secrets/settings', async () => this.secrets.settings());
     this.server.route('POST', '/api/secrets/write', async (request) => this.secrets.write(request));
@@ -242,6 +249,12 @@ export class BackendService {
     this.server.route('POST', '/api/tokenizers/jamba/encode', async (request) => this.core.tokenEstimate(request));
     this.server.route('POST', '/api/tokenizers/qwen2/encode', async (request) => this.core.tokenEstimate(request));
     this.server.route('POST', '/api/tokenizers/command-r/encode', async (request) => this.core.tokenEstimate(request));
+    this.server.route('POST', '/api/horde/status', async () => this.core.offlineStatus());
+    this.server.route('POST', '/api/horde/text-models', async () => this.core.emptyArray());
+    this.server.route('POST', '/api/horde/text-workers', async () => this.core.emptyArray());
+    this.server.route('POST', '/api/horde/sd-models', async () => this.core.emptyArray());
+    this.server.route('POST', '/api/sd/comfy/workflows', async () => this.core.listComfyWorkflows());
+    this.server.route('POST', '/api/sd/comfy/workflow', async (request) => this.core.getComfyWorkflow(request));
     this.server.route('POST', '/api/vector/query', async () => this.core.notImplemented('Vector index'));
     this.server.route('POST', '/api/backends/chat-completions/generate', async () => this.core.notImplemented('Model proxy'));
     this.server.route('POST', '/api/openai/generate', async () => this.core.notImplemented('OpenAI proxy'));

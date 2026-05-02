@@ -30,6 +30,10 @@ class CsrfResponse {
   token: string = 'disabled';
 }
 
+class StatusResponse {
+  ok: boolean = false;
+}
+
 class OkResponse {
   ok: boolean = true;
 }
@@ -190,7 +194,7 @@ class GroupResponse {
 }
 
 class PresetDirectoryResult {
-  fileContents: JsonArray = [];
+  fileContents: string[] = [];
   fileNames: string[] = [];
 }
 
@@ -246,6 +250,49 @@ export class SillyTavernCore {
 
   ping(): HttpResponse {
     return HttpResponse.json(new OkResponse());
+  }
+
+  offlineStatus(): HttpResponse {
+    return HttpResponse.json(new StatusResponse());
+  }
+
+  emptyArray(): HttpResponse {
+    return HttpResponse.json([]);
+  }
+
+  saveQuickReply(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const name = sanitizeFileName(this.asString(body['name']));
+    if (name.length === 0 || name === 'unnamed') {
+      return HttpResponse.empty(400);
+    }
+    this.store.writeJson(joinPath(this.userDirs.quickreplies, ensureJsonExtension(name)), request.body ?? emptyJsonRecord());
+    return HttpResponse.empty(200);
+  }
+
+  deleteQuickReply(request: HttpRequest): HttpResponse {
+    const name = sanitizeFileName(this.asString(this.bodyAsRecord(request)['name']));
+    if (name.length === 0 || name === 'unnamed') {
+      return HttpResponse.empty(400);
+    }
+    this.store.deleteFile(joinPath(this.userDirs.quickreplies, ensureJsonExtension(name)));
+    return HttpResponse.empty(200);
+  }
+
+  listComfyWorkflows(): HttpResponse {
+    const workflows = this.store.listFilesByExtension(this.userDirs.comfyWorkflows, '.json')
+      .filter((file: FileEntry): boolean => !file.name.startsWith('.'))
+      .map((file: FileEntry): string => file.name);
+    return HttpResponse.json(workflows);
+  }
+
+  getComfyWorkflow(request: HttpRequest): HttpResponse {
+    const requested = sanitizeFileName(this.asString(this.bodyAsRecord(request)['file_name']));
+    let path = requested.length > 0 && requested !== 'unnamed' ? joinPath(this.userDirs.comfyWorkflows, requested) : '';
+    if (path.length === 0 || !this.store.exists(path)) {
+      path = joinPath(this.userDirs.comfyWorkflows, 'Default_Comfy_Workflow.json');
+    }
+    return HttpResponse.json(this.store.readText(path, '{}'));
   }
 
   getSettings(): HttpResponse {
@@ -1164,11 +1211,23 @@ export class SillyTavernCore {
     const result = new PresetDirectoryResult();
     const files = this.store.listFilesByExtension(directory, '.json');
     for (const file of files) {
-      const value = this.store.readJsonObject(file.path, emptyJsonRecord());
-      result.fileContents.push(value);
+      const text = this.store.readText(file.path, '');
+      if (text.length === 0 || !this.isValidJson(text)) {
+        continue;
+      }
+      result.fileContents.push(text);
       result.fileNames.push(withoutExtension(file.name));
     }
     return result;
+  }
+
+  private isValidJson(text: string): boolean {
+    try {
+      JSON.parse(text);
+      return true;
+    } catch (_err) {
+      return false;
+    }
   }
 
   private readAndParseFromDirectory(directory: string): JsonArray {
