@@ -116,8 +116,35 @@ data/
 - `POST /api/ping`
 - `POST /api/backgrounds/all`
 - `POST /api/backgrounds/folders`
+- `POST /api/backgrounds/upload`
+- `POST /api/backgrounds/delete`
+- `POST /api/backgrounds/rename`
 - `POST /api/image-metadata/all`
+- `POST /api/image-metadata`
+- `POST /api/image-metadata/cleanup`
+- `POST /api/image-metadata/folders/get`
+- `POST /api/image-metadata/folders/create`
+- `POST /api/image-metadata/folders/update`
+- `POST /api/image-metadata/folders/delete`
+- `POST /api/image-metadata/folders/assign`
+- `POST /api/image-metadata/folders/unassign`
+- `POST /api/image-metadata/folders/set-thumbnails`
 - `POST /api/avatars/get`
+- `POST /api/avatars/upload`
+- `POST /api/avatars/delete`
+- `POST /api/images/upload`
+- `POST /api/images/list`
+- `POST /api/images/list/:folder`
+- `POST /api/images/folders`
+- `POST /api/images/delete`
+- `POST /api/files/sanitize-filename`
+- `POST /api/files/upload`
+- `POST /api/files/delete`
+- `POST /api/files/verify`
+- `GET /api/sprites/get`
+- `POST /api/sprites/upload`
+- `POST /api/sprites/upload-zip`
+- `POST /api/sprites/delete`
 - `POST /api/secrets/settings`
 - `POST /api/secrets/read`
 - `POST /api/secrets/write`
@@ -162,6 +189,8 @@ data/
 
 当前仍是默认用户优先的本地兼容模型，`/csrf-token` 返回 `disabled`。账号 API 已能满足本地弹窗和密码校验基础流程，但还没有真实 session、cookie-session、当前用户切换和权限中间件。
 
+媒体上传阶段已接入 Harmony 官方 API：头像裁剪/resize、缩略图、图片尺寸和平均色使用 `@kit.ImageKit`，sprite zip 解包使用 `@kit.BasicServicesKit` 的 `zlib.decompressFile`。MediaKit 暂未接入，因为当前后端接口只需要保存、列出和读取音视频文件，不涉及播放、录制或转码。
+
 ## 前端移植状态
 
 当前已经把 SillyTavern 的 `public/` 前端资源复制到：
@@ -200,10 +229,11 @@ SillyTavern/dist/_webpack/d2f8920b496f6d16/output/lib.js
 - `POST /api/users/backup` 已通过 HTTP API 验证，能够生成 data zip 并通过 ShareKit 返回分享结果。
 - `POST /api/users/restore-data` 已通过非破坏性 HTTP API 验证，坏 zip 和非 data zip 都会返回 `400`，不会覆盖当前 `data/`。
 - 扩展抽屉的 `数据导出/恢复` 折叠栏已能在 rawfile HTML 中加载。
+- 媒体上传回归已通过 hdc 端口映射和 curl 验证：背景上传/列表/缩略图/删除、用户头像上传裁剪/缩略图/删除、聊天图片上传/列表/旧路由兼容/静态读取/删除、附件上传/verify/读取/删除、sprites 单张上传/zip 上传/读取/删除、`image-metadata` 文件夹创建/assign/delete/cleanup，以及 `m4a` 音频媒体列表。
 
 ## 暂缓接口
 
-模型代理、真实 tokenizer、向量索引、图片处理、媒体上传、预设/主题细节、内容管理器和复杂外部服务接口仍未完整实现。部分导入导出已经接入 ShareKit 或 zlib：角色导入/导出、聊天导入/导出、data zip 导出/恢复。
+模型代理、真实 tokenizer、向量索引、预设/主题细节、内容管理器、assets 管理和复杂外部服务接口仍未完整实现。部分导入导出已经接入 ShareKit 或 zlib：角色导入/导出、聊天导入/导出、data zip 导出/恢复、sprite zip 导入。
 
 ## 构建与调试
 

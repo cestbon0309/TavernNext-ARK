@@ -4,6 +4,7 @@ import { CryptoUtils } from './CryptoUtils';
 import { ExtensionsService } from './ExtensionsService';
 import { FileStore } from './FileStore';
 import { HttpServer } from './HttpServer';
+import { MediaService } from './MediaService';
 import { SecretsService } from './SecretsService';
 import { ShareExportService } from './ShareExportService';
 import { SillyTavernCore } from './SillyTavernCore';
@@ -30,6 +31,7 @@ export class BackendService {
   private directories: DataDirectories;
   private store: FileStore;
   private core: SillyTavernCore;
+  private media: MediaService;
   private crypto: CryptoUtils;
   private secrets: SecretsService;
   private users: UsersService;
@@ -45,6 +47,7 @@ export class BackendService {
     this.directories.initialize();
     this.shareExports = new ShareExportService(context as common.UIAbilityContext, this.store, this.directories.exportRoot);
     this.core = new SillyTavernCore(this.store, this.directories, this.shareExports);
+    this.media = new MediaService(this.store, this.directories, this.crypto);
     this.secrets = new SecretsService(this.store, this.directories.defaultUser, this.crypto);
     this.users = new UsersService(this.store, this.directories, this.crypto, this.shareExports);
     this.extensions = new ExtensionsService(this.store, this.directories, context.resourceManager);
@@ -86,7 +89,7 @@ export class BackendService {
     this.server.route('GET', '/health', async () => this.core.health());
     this.server.route('GET', '/csrf-token', async () => this.core.csrfToken());
     this.server.route('GET', '/version', async () => this.core.version());
-    this.server.route('GET', '/thumbnail', async (request) => this.core.getDataFile(request));
+    this.server.route('GET', '/thumbnail', async (request) => await this.media.getDataFile(request));
 
     this.server.route('POST', '/api/ping', async () => this.core.ping());
 
@@ -133,11 +136,58 @@ export class BackendService {
     this.server.route('POST', '/api/groups/edit', async (request) => this.core.editGroup(request));
     this.server.route('POST', '/api/groups/delete', async (request) => this.core.deleteGroup(request));
 
-    this.server.route('POST', '/api/backgrounds/all', async () => this.core.listBackgrounds());
-    this.server.route('POST', '/api/backgrounds/folders', async () => this.core.listBackgroundFolders());
-    this.server.route('POST', '/api/image-metadata/all', async () => this.core.imageMetadataAll());
+    this.server.route('POST', '/api/backgrounds/all', async () => await this.media.listBackgrounds());
+    this.server.route('POST', '/api/backgrounds/folders', async () => this.media.listBackgroundFolders());
+    this.server.route('POST', '/api/backgrounds/delete', async (request) => this.media.deleteBackground(request));
+    this.server.route('POST', '/api/backgrounds/rename', async (request) => await this.media.renameBackground(request));
+    this.server.route('POST', '/api/backgrounds/upload', async (request) => await this.media.uploadBackground(request));
+    this.server.route('POST', '/getbackgrounds', async () => await this.media.listBackgrounds());
+    this.server.route('POST', '/delbackground', async (request) => this.media.deleteBackground(request));
+    this.server.route('POST', '/renamebackground', async (request) => await this.media.renameBackground(request));
+    this.server.route('POST', '/downloadbackground', async (request) => await this.media.uploadBackground(request));
 
-    this.server.route('POST', '/api/avatars/get', async () => this.core.listAvatars());
+    this.server.route('POST', '/api/avatars/get', async () => this.media.listAvatars());
+    this.server.route('POST', '/api/avatars/delete', async (request) => this.media.deleteAvatar(request));
+    this.server.route('POST', '/api/avatars/upload', async (request) => await this.media.uploadAvatar(request));
+    this.server.route('POST', '/getuseravatars', async () => this.media.listAvatars());
+    this.server.route('POST', '/deleteuseravatar', async (request) => this.media.deleteAvatar(request));
+    this.server.route('POST', '/uploaduseravatar', async (request) => await this.media.uploadAvatar(request));
+
+    this.server.route('POST', '/api/images/upload', async (request) => await this.media.uploadImage(request));
+    this.server.route('POST', '/api/images/list', async (request) => this.media.listImages(request));
+    this.server.route('POST', '/api/images/folders', async () => this.media.imageFolders());
+    this.server.route('POST', '/api/images/delete', async (request) => this.media.deleteImage(request));
+    this.server.route('POST', '/uploadimage', async (request) => await this.media.uploadImage(request));
+    this.server.route('POST', '/listimgfiles', async (request) => this.media.listImages(request));
+
+    this.server.route('POST', '/api/files/sanitize-filename',
+      async (request) => this.media.sanitizeUploadedFileName(request));
+    this.server.route('POST', '/api/files/upload', async (request) => this.media.uploadFile(request));
+    this.server.route('POST', '/api/files/delete', async (request) => this.media.deleteFile(request));
+    this.server.route('POST', '/api/files/verify', async (request) => this.media.verifyFiles(request));
+
+    this.server.route('GET', '/api/sprites/get', async (request) => this.media.spritesGet(request));
+    this.server.route('POST', '/api/sprites/delete', async (request) => this.media.spritesDelete(request));
+    this.server.route('POST', '/api/sprites/upload', async (request) => this.media.spritesUpload(request));
+    this.server.route('POST', '/api/sprites/upload-zip', async (request) => await this.media.spritesUploadZip(request));
+
+    this.server.route('POST', '/api/image-metadata/all', async (request) => this.media.imageMetadataAll(request));
+    this.server.route('POST', '/api/image-metadata', async (request) => await this.media.imageMetadata(request));
+    this.server.route('POST', '/api/image-metadata/folders/get',
+      async () => this.media.imageMetadataFoldersGet());
+    this.server.route('POST', '/api/image-metadata/folders/create',
+      async (request) => this.media.imageMetadataFoldersCreate(request));
+    this.server.route('POST', '/api/image-metadata/folders/update',
+      async (request) => this.media.imageMetadataFoldersUpdate(request));
+    this.server.route('POST', '/api/image-metadata/folders/delete',
+      async (request) => this.media.imageMetadataFoldersDelete(request));
+    this.server.route('POST', '/api/image-metadata/folders/set-thumbnails',
+      async (request) => this.media.imageMetadataFoldersSetThumbnails(request));
+    this.server.route('POST', '/api/image-metadata/folders/assign',
+      async (request) => this.media.imageMetadataFoldersAssign(request));
+    this.server.route('POST', '/api/image-metadata/folders/unassign',
+      async (request) => this.media.imageMetadataFoldersUnassign(request));
+    this.server.route('POST', '/api/image-metadata/cleanup', async () => this.media.imageMetadataCleanup());
 
     this.server.route('POST', '/api/secrets/settings', async () => this.secrets.settings());
     this.server.route('POST', '/api/secrets/write', async (request) => this.secrets.write(request));
@@ -197,12 +247,19 @@ export class BackendService {
     this.server.route('POST', '/api/openai/generate', async () => this.core.notImplemented('OpenAI proxy'));
 
     this.server.fallback(async (request) => {
+      if (request.method === 'POST' && request.path.startsWith('/api/images/list/')) {
+        return this.media.listImages(request);
+      }
+      if (request.method === 'POST' && request.path.startsWith('/listimgfiles/')) {
+        return this.media.listImages(request);
+      }
       if (request.path.startsWith('/scripts/extensions/third-party/')) {
         return this.extensions.serveThirdPartyFile(request);
       }
       if (request.path.startsWith('/characters/') || request.path.startsWith('/User Avatars/') ||
-        request.path.startsWith('/backgrounds/')) {
-        return this.core.getDataFile(request);
+        request.path.startsWith('/backgrounds/') || request.path.startsWith('/user/images/') ||
+        request.path.startsWith('/user/files/')) {
+        return await this.media.getDataFile(request);
       }
       return this.staticFiles.serve(request);
     });

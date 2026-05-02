@@ -1826,7 +1826,9 @@ type CreateGroupRequest = {
 { "ok": true }
 ```
 
-## 11. 背景、头像、缩略图和数据文件
+## 11. 背景、头像、图片、文件、sprites 和缩略图
+
+本阶段已把媒体相关接口从 `SillyTavernCore` 拆到 `MediaService.ets`。图片解码、裁剪、缩放、打包、缩略图和平均色计算使用 Harmony 官方 `@kit.ImageKit`；sprite zip 解包使用 Harmony 官方 `@kit.BasicServicesKit` 的 `zlib.decompressFile`。MediaKit 当前未接入，因为本阶段没有音视频播放、录制或转码，只需要按原版保存和列出媒体文件。
 
 ### 11.1 `POST /api/backgrounds/all`
 
@@ -1836,16 +1838,7 @@ type CreateGroupRequest = {
 data/default-user/backgrounds/
 ```
 
-支持扩展名：
-
-- `.png`
-- `.jpg`
-- `.jpeg`
-- `.gif`
-- `.webp`
-- `.bmp`
-
-响应：
+支持原版常用图片扩展，包括 `.png`、`.jpg`、`.jpeg`、`.gif`、`.webp`、`.bmp`、`.jfif`、`.tif`、`.tiff`、`.apng`。返回背景文件名、动画标记和缩略图配置：
 
 ```json
 {
@@ -1862,9 +1855,18 @@ data/default-user/backgrounds/
 }
 ```
 
-### 11.2 `POST /api/backgrounds/folders`
+### 11.2 背景增删改
 
-当前固定返回：
+已对齐原版接口和旧路由重定向目标：
+
+- `POST /api/backgrounds/upload` / `POST /downloadbackground`
+- `POST /api/backgrounds/delete` / `POST /delbackground`
+- `POST /api/backgrounds/rename` / `POST /renamebackground`
+- `POST /api/backgrounds/folders`
+
+上传使用 multipart 字段 `avatar`，返回上传后的文件名文本。删除和重命名会同步清理或迁移 `image-metadata.json`，并让对应缩略图缓存失效。
+
+`POST /api/backgrounds/folders` 读取 `image-metadata.json`，返回虚拟文件夹列表和 `imageFolderMap`：
 
 ```json
 {
@@ -1873,66 +1875,103 @@ data/default-user/backgrounds/
 }
 ```
 
-### 11.3 `POST /api/image-metadata/all`
+### 11.3 用户头像
 
-当前固定返回：
+已实现：
+
+- `POST /api/avatars/get` / `POST /getuseravatars`
+- `POST /api/avatars/upload` / `POST /uploaduseravatar`
+- `POST /api/avatars/delete` / `POST /deleteuseravatar`
+
+上传使用 multipart 字段 `avatar`，支持 `overwrite_name`，支持 query `crop`。裁剪和 resize 行为按原版 `applyAvatarCropResize()` 对齐：无 crop 时保留原图尺寸并转 PNG；有 crop 时先裁剪，`want_resize=true` 时输出标准 `512x768`，否则输出裁剪尺寸。删除会清理 persona 缩略图缓存。
+
+### 11.4 聊天图片和媒体文件
+
+已实现：
+
+- `POST /api/images/upload` / `POST /uploadimage`
+- `POST /api/images/list`
+- `POST /api/images/list/:folder`
+- `POST /listimgfiles/:folder`
+- `POST /api/images/folders`
+- `POST /api/images/delete`
+- `GET /user/images/<folder>/<file>`
+
+上传请求保持原版 JSON base64 形态：
 
 ```json
 {
-  "version": 1,
-  "images": {},
-  "folders": []
+  "image": "<base64>",
+  "format": "png",
+  "filename": "optional.png",
+  "ch_name": "optional-character-folder"
 }
 ```
 
-注意：虽然初始化创建了 `image-metadata.json`，当前接口还没有读取该文件。
+`format` 使用原版 `MEDIA_EXTENSIONS`：`bmp`、`png`、`jpg`、`webp`、`jpeg`、`jfif`、`gif`、`mp4`、`avi`、`mov`、`wmv`、`flv`、`webm`、`3gp`、`mkv`、`mpg`、`mp3`、`wav`、`ogg`、`flac`、`aac`、`m4a`、`aiff`。列表接口支持原版 bit flag：图片 `1`，视频 `2`，音频 `4`。
 
-### 11.4 `POST /api/avatars/get`
+### 11.5 通用文件附件
 
-扫描：
+已实现：
 
-```text
-data/default-user/User Avatars/
-```
+- `POST /api/files/sanitize-filename`
+- `POST /api/files/upload`
+- `POST /api/files/delete`
+- `POST /api/files/verify`
+- `GET /user/files/<file>`
 
-支持扩展名同背景。响应是文件名数组：
+上传使用原版 JSON 字段 `{ "name": "...", "data": "<base64>" }`，文件名校验对齐 `assets.validateAssetFileName()` 的核心规则：只允许字母数字、`_`、`-`、`.`，拒绝不安全扩展和点开头文件名。`verify` 对空 `urls: []` 返回 `{}`。
 
-```json
-[
-  "persona.png"
-]
-```
+### 11.6 Sprites
 
-### 11.5 `GET /thumbnail?type=<type>&file=<file>`
+已实现：
 
-当前不生成缩略图，只直接返回源文件。
+- `GET /api/sprites/get?name=<character-or-subfolder>`
+- `POST /api/sprites/upload`
+- `POST /api/sprites/upload-zip`
+- `POST /api/sprites/delete`
+- `GET /characters/<character>/<sprite-file>`
 
-映射：
+单张 sprite 上传使用 multipart 字段 `avatar`，body 包含 `name`、`label`、可选 `spriteName`。zip 上传会使用 Harmony `zlib.decompressFile` 解包，递归收集图片，忽略 `__MACOSX`，并按原版逻辑用同 basename 覆盖旧 sprite。
 
-- `type=avatar`：`characters/<file>`
-- `type=persona`：`User Avatars/<file>`
-- `type=bg`：`backgrounds/<file>`
+### 11.7 `GET /thumbnail?type=<type>&file=<file>`
 
-文件不存在或 type 不支持返回 `404` 空 body。
+已实现真实缩略图生成和缓存，尺寸与原版默认值一致：
 
-响应 content type：
+- `type=bg`：源文件 `backgrounds/<file>`，缩略图目录 `thumbnails/bg`，目标面积 `160x90`
+- `type=avatar`：源文件 `characters/<file>`，缩略图目录 `thumbnails/avatar`，固定 `96x144`
+- `type=persona`：源文件 `User Avatars/<file>`，缩略图目录 `thumbnails/persona`，固定 `96x144`
 
-- `.png`：`image/png`
-- `.jpg` / `.jpeg`：`image/jpeg`
-- `.gif`：`image/gif`
-- `.webp`：`image/webp`
-- `.svg`：`image/svg+xml`
-- 其他：`application/octet-stream`
+GIF、APNG、动画 WebP 和视频类扩展跳过缩略图生成，按原版回退到源文件。源文件 mtime 新于缓存 ctime 时会重新生成。
 
-### 11.6 数据文件 fallback
+### 11.8 图片元数据
+
+已实现并读写 `data/default-user/image-metadata.json`：
+
+- `POST /api/image-metadata/all`
+- `POST /api/image-metadata`
+- `POST /api/image-metadata/cleanup`
+- `POST /api/image-metadata/folders/get`
+- `POST /api/image-metadata/folders/create`
+- `POST /api/image-metadata/folders/update`
+- `POST /api/image-metadata/folders/delete`
+- `POST /api/image-metadata/folders/assign`
+- `POST /api/image-metadata/folders/unassign`
+- `POST /api/image-metadata/folders/set-thumbnails`
+
+metadata 包含 `hash`、`aspectRatio`、`isAnimated`、`dominantColor`、`folderIds`、`addedTimestamp`、`thumbnailResolution`、`mtime`。`hash` 使用 Harmony crypto 侧封装的 SHA-256；尺寸、动画判断和平均色由 ImageKit 及文件头检测完成。
+
+### 11.9 数据文件 fallback
 
 以下路径会从 `data/default-user/` 返回真实文件：
 
 - `GET /characters/<file>` -> `characters/<file>`
 - `GET /User Avatars/<file>` -> `User Avatars/<file>`
 - `GET /backgrounds/<file>` -> `backgrounds/<file>`
+- `GET /user/images/<path>` -> `user/images/<path>`
+- `GET /user/files/<path>` -> `user/files/<path>`
 
-文件名经过安全化处理。不存在返回 `404`。
+路径会拒绝空段、`..` 和空字符。不存在返回 `404`。
 
 ## 12. Secrets、账号和扩展接口
 
@@ -2432,17 +2471,16 @@ UI 截图：
 当前实现目标是“让 SillyTavern 前端先在手机 WebView 中跑起来”，不是完整后端替代。已知限制：
 
 - 已有本地账号兼容 API 和密码校验，但不支持真实多用户会话、cookie-session、当前用户切换、权限中间件和真实 CSRF。
-- multipart 解析已支持，角色卡 JSON/PNG 导入已接入；头像上传、背景上传、聊天导入、世界书导入等 multipart 接口仍需补。
+- multipart 解析已支持，角色卡 JSON/PNG 导入、头像上传、背景上传、sprites 上传、聊天导入已接入；世界书导入等 multipart 接口仍需补。
 - 不支持真实模型代理，底部仍显示“未连接到 API!”。
 - 不支持真实 OpenAI / chat-completions 生成。
 - 不支持真实 tokenizer，仅按 UTF-8 字节数估算。
-- `image-metadata/all` 暂不读取 `image-metadata.json`。
+- 背景、头像、聊天图片、附件、sprites、缩略图和 `image-metadata` 已接入本地文件实现；其中图片处理依赖 Harmony `ImageKit`，与 Node/Jimp 在极端格式上的像素级结果可能存在细微差异。
 - `extensions/discover` 已扫描 rawfile 系统扩展和本地/全局第三方扩展目录，但扩展安装/更新不支持 Git，manifest 解析也未对齐原版。
 - `users/backup` 已使用 Harmony zlib 生成 zip 并调用 ShareKit；扩展页新入口已适配 OHOS JSON/ShareKit 结果，但 rawfile `user.js` 账号弹窗里的备份按钮仍保留浏览器 blob 下载逻辑。
 - `users/restore-data` 已有 zip 解压和覆盖恢复逻辑，但真实覆盖恢复尚未在模拟器上执行；目前只验证了坏包和非 data 包不会覆盖。
 - `settings/get` 的预设内容目前是解析后的 JSON 对象，后续可能需要按 Node 版调整为字符串。
 - `characters/chats` 的 `last_mes` 当前不是 `send_date`，后续需要与 Node 版 `getChatInfo()` 完全对齐。
-- `thumbnail` 当前直接返回源图，不生成或缓存缩略图。
 - 静态前端资源内的 `global.d.ts` 被 rawfile 打包会触发 hvigor source warning，但不影响运行。
 
 ## 17. 缺失接口和功能清单
@@ -2470,9 +2508,9 @@ UI 截图：
 
 仍缺失：
 
-- 创建角色时上传头像、裁剪、resize
-- 编辑角色时的真实 crop/resize/格式转换；当前 `edit-avatar` 只支持上传 PNG bytes 作为新底图
-- 完整缩略图生成与重建；当前仅删除 `thumbnails/avatar/<avatar>` 触发后续重新请求
+- 创建角色时直接上传角色卡头像、裁剪、resize
+- 编辑角色卡头像时的真实 crop/resize/格式转换；当前 `edit-avatar` 只支持上传 PNG bytes 作为新底图
+- 角色卡缩略图重建接口；当前已能在 `GET /thumbnail` 请求时生成缓存，但还没有单独的批量重建/清理入口
 - 完整 Tavern Card V1/V2/V3 校验器；当前 `merge-attributes` 只做最小结构校验
 - Risu sprites 导入
 - CharX 附带资产导入
@@ -2510,7 +2548,7 @@ avatar
 
 建议优先实现顺序：
 
-1. 完整图片处理：头像上传、裁剪、resize、JPEG/WebP 转 PNG。
+1. 角色卡创建/编辑头像的完整图片处理：create/edit-avatar 路径里的裁剪、resize、JPEG/WebP 转 PNG。
 2. 完整 Tavern Card 校验器。
 3. `yaml`、`charx`、`byaf`。
 4. 缩略图生成、重建和缓存对齐。
@@ -2561,64 +2599,62 @@ avatar
 - `POST /api/chats/export` 已按 OHOS 要求改为 ShareKit 分享，不再返回大段 `result` 供浏览器下载。
 - `POST /api/chats/group/info` 已返回基础摘要，但还没有完整复刻原版 `getChatInfo()` 的 metadata 与损坏文件处理。
 
-### 17.3 背景、头像、图片和文件
+### 17.3 背景、头像、图片、文件和 sprites
 
 当前 ArkTS 已实现：
 
 - `POST /api/backgrounds/all`
 - `POST /api/backgrounds/folders`
+- `POST /api/backgrounds/upload`
+- `POST /api/backgrounds/delete`
+- `POST /api/backgrounds/rename`
 - `POST /api/avatars/get`
+- `POST /api/avatars/upload`
+- `POST /api/avatars/delete`
+- `POST /api/images/upload`
+- `POST /api/images/delete`
+- `POST /api/images/folders`
+- `POST /api/images/list`
+- `POST /api/images/list/:folder`
+- `POST /listimgfiles/:folder`
+- `POST /api/files/upload`
+- `POST /api/files/delete`
+- `POST /api/files/verify`
+- `POST /api/files/sanitize-filename`
 - `POST /api/image-metadata/all`
+- `POST /api/image-metadata`
+- `POST /api/image-metadata/cleanup`
+- `POST /api/image-metadata/folders/get`
+- `POST /api/image-metadata/folders/create`
+- `POST /api/image-metadata/folders/update`
+- `POST /api/image-metadata/folders/delete`
+- `POST /api/image-metadata/folders/assign`
+- `POST /api/image-metadata/folders/unassign`
+- `POST /api/image-metadata/folders/set-thumbnails`
+- `GET /api/sprites/get`
+- `POST /api/sprites/upload`
+- `POST /api/sprites/upload-zip`
+- `POST /api/sprites/delete`
 - `GET /thumbnail`
 - `GET /characters/*`
 - `GET /User Avatars/*`
 - `GET /backgrounds/*`
+- `GET /user/images/*`
+- `GET /user/files/*`
 
 仍缺失：
 
-- 背景：
-  - `POST /api/backgrounds/upload`
-  - `POST /api/backgrounds/delete`
-  - `POST /api/backgrounds/rename`
-- 用户头像：
-  - `POST /api/avatars/upload`
-  - `POST /api/avatars/delete`
-- 用户图片：
-  - `POST /api/images/upload`
-  - `POST /api/images/delete`
-  - `POST /api/images/folders`
-  - `POST /api/images/list/:folder?`
-- 通用文件：
-  - `POST /api/files/upload`
-  - `POST /api/files/delete`
-  - `POST /api/files/verify`
-  - `POST /api/files/sanitize-filename`
-- 缩略图：
-  - 真实生成缩略图
-  - 写入 `thumbnails/bg`
-  - 写入 `thumbnails/avatar`
-  - 写入 `thumbnails/persona`
-  - 缩略图缓存失效
-- 图片元数据：
-  - `POST /api/image-metadata/`
-  - `POST /api/image-metadata/cleanup`
-  - `POST /api/image-metadata/folders/get`
-  - `POST /api/image-metadata/folders/create`
-  - `POST /api/image-metadata/folders/update`
-  - `POST /api/image-metadata/folders/delete`
-  - `POST /api/image-metadata/folders/assign`
-  - `POST /api/image-metadata/folders/unassign`
-  - `POST /api/image-metadata/folders/set-thumbnails`
 - 资产：
   - `POST /api/assets/get`
   - `POST /api/assets/download`
   - `POST /api/assets/delete`
   - `POST /api/assets/character`
-- sprites：
-  - `GET /api/sprites/get`
-  - `POST /api/sprites/upload`
-  - `POST /api/sprites/upload-zip`
-  - `POST /api/sprites/delete`
+
+兼容差异和后续增强：
+
+- 头像上传、背景缩略图、persona 缩略图和 metadata 平均色已用 ImageKit 实现；极端格式的解码/缩放结果可能不与 Jimp 像素级完全一致。
+- GIF、APNG、动画 WebP 和视频类缩略图按原版跳过处理并回退源文件。
+- MediaKit 暂未接入。当前媒体阶段只保存、列出、读取音视频文件；音视频转码、录制、播放不是原版这些后端接口的职责。
 
 ### 17.4 设置、预设、主题和 UI 配置
 
@@ -2878,7 +2914,7 @@ avatar
    - 已完成：edit-attribute
    - 已完成：merge-attributes 基础版
    - 已完成：edit-avatar 基础版
-   - 待补：头像 crop/resize/格式转换
+   - 待补：角色卡头像 create/edit-avatar 的完整 crop/resize/格式转换
    - 待补：完整 Tavern Card 校验器
 3. 聊天管理阶段：
    - 已完成：delete
@@ -2893,19 +2929,23 @@ avatar
    - 已完成：扩展发现扫描本地/全局/rawfile，扩展移动/删除/版本占位
    - 待补：真实 session、当前用户切换、Git 安装/更新、manifest 完整解析
 5. 媒体上传阶段：
-   - avatars upload/delete
-   - backgrounds upload/delete/rename
-   - thumbnails 生成和缓存
-5. 设置与预设阶段：
+   - 已完成：avatars upload/delete
+   - 已完成：backgrounds upload/delete/rename
+   - 已完成：images upload/list/delete/folders，含旧路由兼容
+   - 已完成：files upload/delete/verify/sanitize
+   - 已完成：sprites upload/upload-zip/delete/get
+   - 已完成：thumbnails 生成和缓存
+   - 已完成：image-metadata 与背景虚拟文件夹
+6. 设置与预设阶段：
    - presets
    - themes
    - quick replies
    - moving UI
    - settings snapshots
-6. 模型连接最小阶段：
+7. 模型连接最小阶段：
    - 先实现一个可配置的 OpenAI-compatible chat completions proxy
    - 支持非流式，再支持流式
-7. 高级能力阶段：
+8. 高级能力阶段：
    - vectors
    - tokenizer 真实实现
    - 图片、语音、翻译、搜索等外部能力
