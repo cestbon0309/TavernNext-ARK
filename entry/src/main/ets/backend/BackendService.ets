@@ -313,6 +313,10 @@ export class BackendService {
       async (request) => await this.modelProxy.chatCompletionStatus(request));
     this.server.route('POST', '/api/backends/chat-completions/generate',
       async (request) => await this.modelProxy.chatCompletionsGenerate(request));
+    this.server.route('POST', '/api/backends/chat-completions/cancel-stream',
+      async (request) => await this.modelProxy.cancelChatCompletionStream(request));
+    this.server.route('POST', '/api/backends/chat-completions/cancel-generation',
+      async (request) => await this.modelProxy.cancelChatCompletionGeneration(request));
     this.server.route('POST', '/api/openai/generate', async (request) => await this.modelProxy.openAiGenerate(request));
     this.server.route('POST', '/api/backends/text-completions/status',
       async (request) => await this.modelProxy.textCompletionStatus(request));

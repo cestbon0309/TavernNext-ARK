@@ -2,17 +2,22 @@ import { HttpRequest, HttpResponse, JsonArray, JsonRecord, emptyJsonRecord } fro
 import { bodyAsRecord, parseJsonRecord } from '../JsonUtils';
 import { proxyErrorResponse } from '../RemoteHttpClient';
 import { SecretsService } from '../SecretsService';
+import { CancellationToken } from '../CancellationToken';
 import { ChatCompletionConfigResolver } from './ChatCompletionConfigResolver';
 import { ChatCompletionApiConfig, ChatCompletionSource } from './ChatCompletionTypes';
 import { ChatCompletionRepository } from './http/ChatCompletionRepository';
 import { PayloadBuilderRegistry } from './payload/PayloadBuilderRegistry';
 import { parseChatCompletionSource } from './SourceRegistry';
 import { asBooleanValue } from './JsonHelpers';
+import { PromptCachingService } from './PromptCaching';
 
 export class ChatCompletionService {
   private configResolver: ChatCompletionConfigResolver;
   private payloadBuilders: PayloadBuilderRegistry = new PayloadBuilderRegistry();
   private repository: ChatCompletionRepository = new ChatCompletionRepository();
+  private promptCaching: PromptCachingService = new PromptCachingService();
+  private activeStreams: Record<string, CancellationToken | null> = {};
+  private activeGenerations: Record<string, CancellationToken | null> = {};
 
   constructor(secrets: SecretsService) {
     this.configResolver = new ChatCompletionConfigResolver(secrets);
@@ -35,22 +40,53 @@ export class ChatCompletionService {
     }
     try {
       const built = this.payloadBuilders.build(source, body);
+      config = this.promptCaching.apply(source, config, built.endpointPath, built.body, body);
+      this.logRequest(source, config, built.endpointPath, built.body);
       if (asBooleanValue(body['stream'])) {
+        const streamId = this.requestId(body, 'stream_id');
+        const cancelToken = this.register(this.activeStreams, streamId);
         const response = HttpResponse.stream('text/event-stream; charset=utf-8', async (send) => {
           try {
-            await this.repository.generateStream(source, config, built.endpointPath, built.body, send);
+            await this.repository.generateStream(source, config, built.endpointPath, built.body, send, cancelToken);
           } catch (err) {
-            const message = err instanceof Error ? err.message : JSON.stringify(err);
-            await send(`event: error\ndata: ${JSON.stringify(this.errorFromText(message))}\n\n`);
+            if (!cancelToken.isCancelled()) {
+              const message = err instanceof Error ? err.message : JSON.stringify(err);
+              await send(`event: error\ndata: ${JSON.stringify(this.errorFromText(message))}\n\n`);
+            }
+          } finally {
+            this.complete(this.activeStreams, streamId);
           }
         });
         response.headers['x-accel-buffering'] = 'no';
         return response;
       }
-      return await this.repository.generate(source, config, built.endpointPath, built.body);
+      const requestId = this.requestId(body, 'request_id');
+      const cancelToken = this.register(this.activeGenerations, requestId);
+      try {
+        if (cancelToken.isCancelled()) {
+          return HttpResponse.json(this.errorFromText('Generation cancelled by user'), 200);
+        }
+        return await this.repository.generate(source, config, built.endpointPath, built.body);
+      } finally {
+        this.complete(this.activeGenerations, requestId);
+      }
     } catch (err) {
       return proxyErrorResponse(err instanceof Error ? err.message : JSON.stringify(err), 502);
     }
+  }
+
+  cancelStream(request: HttpRequest): HttpResponse {
+    const body = bodyAsRecord(request);
+    const id = this.requestId(body, 'stream_id');
+    const cancelled = this.cancel(this.activeStreams, id);
+    return this.cancelResponse(cancelled);
+  }
+
+  cancelGeneration(request: HttpRequest): HttpResponse {
+    const body = bodyAsRecord(request);
+    const id = this.requestId(body, 'request_id');
+    const cancelled = this.cancel(this.activeGenerations, id);
+    return this.cancelResponse(cancelled);
   }
 
   async status(request: HttpRequest): Promise<HttpResponse> {
@@ -116,5 +152,59 @@ export class ChatCompletionService {
     error['message'] = text.length > 0 ? text : 'Unknown error';
     value['error'] = error;
     return value;
+  }
+
+  private requestId(body: JsonRecord, key: string): string {
+    const value = `${body[key] ?? ''}`.trim();
+    if (value.length === 0 || value.length > 128) {
+      return '';
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const ok = (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) ||
+        value.charAt(index) === '-' || value.charAt(index) === '_';
+      if (!ok) {
+        return '';
+      }
+    }
+    return value;
+  }
+
+  private register(registry: Record<string, CancellationToken | null>, id: string): CancellationToken {
+    const token = new CancellationToken();
+    if (id.length > 0) {
+      registry[id] = token;
+    }
+    return token;
+  }
+
+  private cancel(registry: Record<string, CancellationToken | null>, id: string): boolean {
+    if (id.length === 0 || registry[id] === undefined || registry[id] === null) {
+      return false;
+    }
+    const token = registry[id];
+    if (token !== null) {
+      token.cancel();
+    }
+    return true;
+  }
+
+  private complete(registry: Record<string, CancellationToken | null>, id: string): void {
+    if (id.length > 0) {
+      registry[id] = null;
+    }
+  }
+
+  private cancelResponse(cancelled: boolean): HttpResponse {
+    const response = emptyJsonRecord();
+    response['cancelled'] = cancelled;
+    return HttpResponse.json(response);
+  }
+
+  private logRequest(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string,
+    payload: JsonRecord): void {
+    const model = `${payload['model'] ?? ''}`;
+    const stream = asBooleanValue(payload['stream']);
+    console.info(`[LLM] source=${source} endpoint=${endpointPath} model=${model} stream=${stream} base=${config.baseUrl}`);
   }
 }

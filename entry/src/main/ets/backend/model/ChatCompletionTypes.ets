@@ -1,3 +1,4 @@
+import { CancellationToken } from '../CancellationToken';
 import { HttpResponse, HttpStreamSend, JsonArray, JsonRecord } from '../HttpTypes';
 
 export type ChatJsonValue = Object | string | number | boolean | null | JsonArray;
@@ -39,7 +40,7 @@ export interface ChatCompletionTransport {
   generate(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string,
     payload: JsonRecord): Promise<HttpResponse>;
   generateStream(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string,
-    payload: JsonRecord, send: ChatStreamSend): Promise<void>;
+    payload: JsonRecord, send: ChatStreamSend, cancelToken?: CancellationToken): Promise<void>;
 }
 
 export class ChatProviderError extends Error {

@@ -1,4 +1,5 @@
 import { HttpResponse, JsonArray, JsonRecord, emptyJsonRecord } from '../../HttpTypes';
+import { CancellationToken } from '../../CancellationToken';
 import { parseJsonRecord } from '../../JsonUtils';
 import { RemoteHttpClient } from '../../RemoteHttpClient';
 import { ChatCompletionApiConfig, ChatCompletionSource, ChatStreamSend } from '../ChatCompletionTypes';
@@ -10,6 +11,7 @@ import {
   normalizeGeminiResponse,
   normalizeOpenAiResponsesResponse,
 } from './ResponseNormalizers';
+import { GeminiInteractionsStreamNormalizer, OpenAiResponsesStreamNormalizer } from './StreamNormalizers';
 
 export class ChatCompletionRepository {
   private http: RemoteHttpClient = new RemoteHttpClient();
@@ -41,11 +43,7 @@ export class ChatCompletionRepository {
     const headers = this.headers(source, config, endpointPath, 'application/json');
     const result = await this.http.postJson(url, payload, headers);
     if (result.statusCode < 200 || result.statusCode >= 300) {
-      const error = emptyJsonRecord();
-      const message = emptyJsonRecord();
-      message['message'] = result.text.length > 0 ? result.text : `HTTP ${result.statusCode}`;
-      error['error'] = message;
-      return HttpResponse.json(error, 200);
+      return HttpResponse.json(this.providerError(source, result.statusCode, result.text), 200);
     }
     const parsed = parseJsonRecord(result.text);
     if (source === 'claude' || endpointPath === '/messages') {
@@ -67,10 +65,24 @@ export class ChatCompletionRepository {
   }
 
   async generateStream(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string,
-    payload: JsonRecord, send: ChatStreamSend): Promise<void> {
+    payload: JsonRecord, send: ChatStreamSend, cancelToken?: CancellationToken): Promise<void> {
     const url = this.urlForGenerate(source, config, endpointPath);
     const headers = this.headers(source, config, endpointPath, 'text/event-stream');
-    await this.http.streamPostJson(url, payload, headers, send, 300000);
+    if (endpointPath === '/responses') {
+      const normalizer = new OpenAiResponsesStreamNormalizer(asStringValue(payload['model']));
+      await this.http.streamPostJsonEvents(url, payload, headers, async (event: string): Promise<void> => {
+        await normalizer.handleEvent(event, send);
+      }, 300000, cancelToken);
+      return;
+    }
+    if (endpointPath === '/interactions') {
+      const normalizer = new GeminiInteractionsStreamNormalizer(asStringValue(payload['model']));
+      await this.http.streamPostJsonEvents(url, payload, headers, async (event: string): Promise<void> => {
+        await normalizer.handleEvent(event, send);
+      }, 300000, cancelToken);
+      return;
+    }
+    await this.http.streamPostJson(url, payload, headers, send, 300000, cancelToken);
   }
 
   private async listGeminiModels(config: ChatCompletionApiConfig): Promise<HttpResponse> {
@@ -183,5 +195,52 @@ export class ChatCompletionRepository {
     const value = emptyJsonRecord();
     value['error'] = true;
     return value;
+  }
+
+  private providerError(source: ChatCompletionSource, statusCode: number, rawText: string): JsonRecord {
+    const value = emptyJsonRecord();
+    const error = emptyJsonRecord();
+    error['message'] = this.providerErrorMessage(source, statusCode, rawText);
+    error['status'] = statusCode;
+    value['error'] = error;
+    return value;
+  }
+
+  private providerErrorMessage(source: ChatCompletionSource, statusCode: number, rawText: string): string {
+    const extracted = this.extractErrorMessage(rawText);
+    if (statusCode === 401 || statusCode === 403) {
+      return extracted.length > 0 ? extracted : `${source} authentication failed`;
+    }
+    if (statusCode === 400) {
+      return extracted.length > 0 ? extracted : `${source} rejected the request`;
+    }
+    if (statusCode === 429) {
+      return extracted.length > 0 ? extracted : `${source} rate limit exceeded`;
+    }
+    if (statusCode >= 500) {
+      return extracted.length > 0 ? extracted : `${source} endpoint failed with HTTP ${statusCode}`;
+    }
+    return extracted.length > 0 ? extracted : `HTTP ${statusCode}`;
+  }
+
+  private extractErrorMessage(rawText: string): string {
+    if (rawText.length === 0) {
+      return '';
+    }
+    try {
+      const parsed = JSON.parse(rawText) as Object;
+      if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+        return rawText;
+      }
+      const record = parsed as JsonRecord;
+      if (typeof record['error'] === 'string') {
+        return record['error'] as string;
+      }
+      const error = asRecordValue(record['error']);
+      const message = asStringValue(error['message']) || asStringValue(record['message']);
+      return message.length > 0 ? message : rawText;
+    } catch (_err) {
+      return rawText;
+    }
   }
 }

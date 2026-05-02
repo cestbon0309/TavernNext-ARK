@@ -1085,3 +1085,28 @@ entry/src/main/ets/backend/model/
 
 - 使用 `DEVECO_SDK_HOME=E:\Huawei\DevEco Studio\sdk`、`OHOS_SDK_HOME=E:\Huawei\DevEco Studio\sdk\default\openharmony` 执行 `hvigorw.bat assembleHap --mode module -p module=entry@default -p product=default`，构建通过。
 - 构建仍会输出项目既有 warning：部分旧文件的异常处理提示，以及 `rawfile/public/global.d.ts` 被打包的 source code warning；这些不是本轮 provider 分层新增错误。
+
+## 21. 行为等价补齐进度
+
+目标：继续以 TauriTavern 为参照，把 provider 层从“结构等价/基础可用”补到“常用行为尽量等价”。本节作为连续迁移日志，后续每完成一块都更新，避免上下文压缩后丢失状态。
+
+当前任务拆分：
+
+- [ ] 行为基线：为关键 provider 建立可对照的 payload/stream 样例和验证入口。
+- [x] Prompt post processing：迁移 `none/merge/merge_tools/semi/semi_tools/strict/strict_tools/single`。
+- [x] Claude：补 model contract、assistant prefill、sampling/thinking/output effort、messages/tools/validation。
+- [ ] Gemini/Vertex：补多模态 parts、function call/result、thinkingBudget/thinkingLevel、Vertex full OAuth。
+- [x] OpenAI Responses / Gemini Interactions：补原生 SSE 到 OpenAI chat chunk 的流式转换。
+- [x] Prompt caching：补 Claude/OpenRouter/NanoGPT cache plan、digest、cache_control 插入和 usage 记录。
+- [x] 取消、日志、错误映射：补 generation/stream cancel registry、LLM API readable logs、上游错误分类。
+
+迁移日志：
+
+- 2026-05-03：已提交 `54bcaff Add ArkTS chat completion provider layer`，作为 provider 分层第一版基线。
+- 2026-05-03：开始补齐行为等价，优先迁移 prompt post processing。
+- 2026-05-03：完成 `PromptPostProcessing.ets`，在 `PayloadBuilderRegistry` 中按 TauriTavern 行为对非 DeepSeek provider 统一应用；支持 merge/semi/strict/single、tools 保留开关、example name 前缀、多媒体 token 暂存/恢复。HAP 构建通过。
+- 2026-05-03：Claude builder 拆分为 `payload/claude/*`，补齐 model contract、assistant prefill 与 reasoning_effort 互斥校验、legacy/adaptive thinking、output_config.effort、sampling 参数限制、messages/tools/validation。HAP 构建通过。
+- 2026-05-03：Gemini/Vertex builder 对齐 TauriTavern 常用行为：前置 systemInstruction 提取、tool call/result name 回填、OpenAI tools 到 `function_declarations`、custom Google tools、web search、data URL 图片/视频/音频 parts、Gemini 2.5/3 thoughtSignature 处理、thinkingBudget/thinkingLevel、image generation response modalities/imageConfig、Vertex 额外 safetySettings。HAP 构建通过。剩余：Vertex full service account OAuth 仍未做真实 JWT/OAuth 换 token。
+- 2026-05-03：新增 `RemoteHttpClient.streamPostJsonEvents()` 和 `http/StreamNormalizers.ets`；`/responses`、`/interactions` 流式响应现在会解析上游 SSE `data:` 事件并转换为 OpenAI chat completion chunk，支持文本 delta、reasoning_content、tool_calls、finish_reason、`[DONE]`。普通 OpenAI-compatible provider 仍走原始 SSE 透传。HAP 构建通过。
+- 2026-05-03：新增 `PromptCaching.ets` 并接入 `ChatCompletionService`。Claude、OpenRouter Claude、NanoGPT Claude、custom `claude_messages` 在请求前会计算 digest、维护进程内 snapshot，并插入根级和 system/pre-history/last-common block 级 `cache_control: { type: "ephemeral", ttl: "5m" }`；custom Claude 会把 `anthropic-beta` 限制为 prompt caching 模式。HAP 构建通过。剩余：snapshot 目前是进程内内存，未持久化到 data 目录；cache usage 仅靠上游响应字段归一化，未做专门日志统计。
+- 2026-05-03：新增 `CancellationToken.ets`，`ChatCompletionService` 维护 `request_id/stream_id` registry，`RemoteHttpClient` 在 token 取消时调用 HarmonyOS HTTP request destroy，并在流式回调中停止后续输出；新增 `/api/backends/chat-completions/cancel-stream` 和 `/api/backends/chat-completions/cancel-generation`。同时 repository 对上游 400/401/403/429/5xx 做分类错误 message，服务层输出 `[LLM] source/endpoint/model/stream/base` 轻量日志。HAP 构建通过。限制：HarmonyOS HTTP 已进入系统不可中断阶段时，取消可能只能停止后续输出，不能保证立即终止底层网络。

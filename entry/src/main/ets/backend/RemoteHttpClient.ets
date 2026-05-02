@@ -1,6 +1,9 @@
 import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
+import { CancellationToken } from './CancellationToken';
 import { HttpResponse, HttpStreamSend, statusTextFor } from './HttpTypes';
+
+export type RemoteSseDataHandler = (payload: string) => Promise<void>;
 
 export class RemoteHttpResult {
   statusCode: number = 0;
@@ -23,9 +26,15 @@ export class RemoteHttpClient {
   }
 
   async streamPostJson(url: string, value: Object, headers: Record<string, string>, send: HttpStreamSend,
-    timeoutMs: number = 300000): Promise<void> {
+    timeoutMs: number = 300000, cancelToken?: CancellationToken): Promise<void> {
     const nextHeaders = this.withHeader(headers, 'Content-Type', 'application/json');
-    await this.streamRequest(url, 'POST', JSON.stringify(value), nextHeaders, timeoutMs, send);
+    await this.streamRequest(url, 'POST', JSON.stringify(value), nextHeaders, timeoutMs, send, cancelToken);
+  }
+
+  async streamPostJsonEvents(url: string, value: Object, headers: Record<string, string>,
+    onEvent: RemoteSseDataHandler, timeoutMs: number = 300000, cancelToken?: CancellationToken): Promise<void> {
+    const nextHeaders = this.withHeader(headers, 'Content-Type', 'application/json');
+    await this.streamEventRequest(url, 'POST', JSON.stringify(value), nextHeaders, timeoutMs, onEvent, cancelToken);
   }
 
   async postText(url: string, value: string, headers: Record<string, string> = {},
@@ -96,8 +105,11 @@ export class RemoteHttpClient {
   }
 
   private async streamRequest(url: string, method: string, body: string, headers: Record<string, string>,
-    timeoutMs: number, send: HttpStreamSend): Promise<void> {
+    timeoutMs: number, send: HttpStreamSend, cancelToken?: CancellationToken): Promise<void> {
     const request = http.createHttp();
+    cancelToken?.onCancel(() => {
+      request.destroy();
+    });
     let queue: Promise<void> = Promise.resolve();
     let sawChunk = false;
     let resolveDataEnd: () => void = () => {};
@@ -130,12 +142,93 @@ export class RemoteHttpClient {
       const statusCode = Number(await request.requestInStream(url, options));
       await dataEnd;
       await queue;
+      if (cancelToken?.isCancelled()) {
+        return;
+      }
       if (!sawChunk && (statusCode < 200 || statusCode >= 300)) {
         await send(`event: error\ndata: {"error":{"message":"HTTP ${statusCode}"}}\n\n`);
       }
     } finally {
       request.destroy();
     }
+  }
+
+  private async streamEventRequest(url: string, method: string, body: string, headers: Record<string, string>,
+    timeoutMs: number, onEvent: RemoteSseDataHandler, cancelToken?: CancellationToken): Promise<void> {
+    const request = http.createHttp();
+    cancelToken?.onCancel(() => {
+      request.destroy();
+    });
+    let queue: Promise<void> = Promise.resolve();
+    let sawChunk = false;
+    let textBuffer = '';
+    const accumulator = new RemoteSseAccumulator();
+    let resolveDataEnd: () => void = () => {};
+    const dataEnd = new Promise<void>((resolve: () => void) => {
+      resolveDataEnd = resolve;
+    });
+    request.on('dataReceive', (data: ArrayBuffer) => {
+      sawChunk = true;
+      const chunk = this.decoder.decodeToString(new Uint8Array(data));
+      queue = queue.then(async () => {
+        textBuffer += chunk;
+        textBuffer = await this.forwardSseText(textBuffer, accumulator, onEvent);
+      });
+    });
+    request.on('dataEnd', () => {
+      resolveDataEnd();
+    });
+    try {
+      const options: http.HttpRequestOptions = {
+        method: method === 'GET' ? http.RequestMethod.GET : http.RequestMethod.POST,
+        header: headers,
+        readTimeout: timeoutMs,
+        connectTimeout: timeoutMs,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER,
+      };
+      if (method !== 'GET') {
+        options.extraData = body;
+      }
+      const statusCode = Number(await request.requestInStream(url, options));
+      await dataEnd;
+      await queue;
+      if (cancelToken?.isCancelled()) {
+        return;
+      }
+      if (textBuffer.length > 0) {
+        await accumulator.onLine(this.stripTrailingCr(textBuffer), onEvent);
+      }
+      await accumulator.finish(onEvent);
+      if (!sawChunk && (statusCode < 200 || statusCode >= 300)) {
+        const value: Record<string, Object | string | number | boolean | null> = {};
+        const error: Record<string, Object | string | number | boolean | null> = {};
+        error['message'] = `HTTP ${statusCode}`;
+        value['error'] = error;
+        await onEvent(JSON.stringify(value));
+      }
+    } finally {
+      request.destroy();
+    }
+  }
+
+  private async forwardSseText(buffer: string, accumulator: RemoteSseAccumulator,
+    onEvent: RemoteSseDataHandler): Promise<string> {
+    let lineStart = 0;
+    let consumed = 0;
+    for (let index = 0; index < buffer.length; index += 1) {
+      if (buffer.charAt(index) !== '\n') {
+        continue;
+      }
+      const line = this.stripTrailingCr(buffer.slice(lineStart, index));
+      await accumulator.onLine(line, onEvent);
+      consumed = index + 1;
+      lineStart = consumed;
+    }
+    return consumed > 0 ? buffer.slice(consumed) : buffer;
+  }
+
+  private stripTrailingCr(value: string): string {
+    return value.endsWith('\r') ? value.slice(0, value.length - 1) : value;
   }
 
   private headersToRecord(value: Object): Record<string, string> {
@@ -158,6 +251,46 @@ export class RemoteHttpClient {
     });
     next[name] = value;
     return next;
+  }
+}
+
+class RemoteSseAccumulator {
+  private data: string = '';
+
+  async onLine(line: string, onEvent: RemoteSseDataHandler): Promise<void> {
+    if (line.length === 0) {
+      await this.dispatch(onEvent);
+      return;
+    }
+    if (line.startsWith(':')) {
+      return;
+    }
+    const index = line.indexOf(':');
+    const field = index >= 0 ? line.slice(0, index) : line;
+    if (field !== 'data') {
+      return;
+    }
+    let value = index >= 0 ? line.slice(index + 1) : '';
+    while (value.startsWith(' ') || value.startsWith('\t')) {
+      value = value.slice(1);
+    }
+    if (this.data.length > 0) {
+      this.data += '\n';
+    }
+    this.data += value;
+  }
+
+  async finish(onEvent: RemoteSseDataHandler): Promise<void> {
+    await this.dispatch(onEvent);
+  }
+
+  private async dispatch(onEvent: RemoteSseDataHandler): Promise<void> {
+    if (this.data.length === 0) {
+      return;
+    }
+    const payload = this.data;
+    this.data = '';
+    await onEvent(payload);
   }
 }
 

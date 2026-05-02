@@ -37,6 +37,14 @@ export class ModelProxyService {
     return this.chatCompletions.status(request);
   }
 
+  async cancelChatCompletionStream(request: HttpRequest): Promise<HttpResponse> {
+    return this.chatCompletions.cancelStream(request);
+  }
+
+  async cancelChatCompletionGeneration(request: HttpRequest): Promise<HttpResponse> {
+    return this.chatCompletions.cancelGeneration(request);
+  }
+
   async textCompletionStatus(request: HttpRequest): Promise<HttpResponse> {
     const body = bodyAsRecord(request);
     let apiServer = asString(body['api_server']) || asString(body['server']) || asString(body['url']);
