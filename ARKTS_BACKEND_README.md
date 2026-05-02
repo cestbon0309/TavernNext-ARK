@@ -78,10 +78,27 @@ data/
 - `POST /api/characters/get`
 - `POST /api/characters/create`
 - `POST /api/characters/edit`
+- `POST /api/characters/edit-avatar`
+- `POST /api/characters/edit-attribute`
+- `POST /api/characters/merge-attributes`
+- `POST /api/characters/duplicate`
+- `POST /api/characters/rename`
 - `POST /api/characters/delete`
 - `POST /api/characters/chats`
+- `POST /api/characters/import`
+- `POST /api/characters/export`
 - `POST /api/chats/get`
 - `POST /api/chats/save`
+- `POST /api/chats/delete`
+- `POST /api/chats/rename`
+- `POST /api/chats/import`
+- `POST /api/chats/export`
+- `POST /api/chats/search`
+- `POST /api/chats/group/get`
+- `POST /api/chats/group/save`
+- `POST /api/chats/group/delete`
+- `POST /api/chats/group/import`
+- `POST /api/chats/group/info`
 - `POST /api/chats/recent`
 - `POST /api/worldinfo/list`
 - `POST /api/worldinfo/get`
@@ -103,12 +120,47 @@ data/
 - `POST /api/avatars/get`
 - `POST /api/secrets/settings`
 - `POST /api/secrets/read`
+- `POST /api/secrets/write`
+- `POST /api/secrets/delete`
+- `POST /api/secrets/find`
+- `POST /api/secrets/view`
+- `POST /api/secrets/rotate`
+- `POST /api/secrets/rename`
+- `POST /api/users/list`
+- `POST /api/users/login`
+- `POST /api/users/recover-step1`
+- `POST /api/users/recover-step2`
+- `GET /api/users/me`
+- `POST /api/users/get`
+- `POST /api/users/logout`
+- `POST /api/users/create`
+- `POST /api/users/delete`
+- `POST /api/users/enable`
+- `POST /api/users/disable`
+- `POST /api/users/promote`
+- `POST /api/users/demote`
+- `POST /api/users/slugify`
+- `POST /api/users/change-avatar`
+- `POST /api/users/change-password`
+- `POST /api/users/backup`
+- `POST /api/users/restore-data`
+- `POST /api/users/reset-settings`
+- `POST /api/users/change-name`
+- `POST /api/users/reset-step1`
+- `POST /api/users/reset-step2`
 - `GET /api/extensions/discover`
 - `POST /api/extensions/discover`
+- `POST /api/extensions/install`
+- `POST /api/extensions/update`
+- `POST /api/extensions/branches`
+- `POST /api/extensions/switch`
+- `POST /api/extensions/move`
+- `POST /api/extensions/version`
+- `POST /api/extensions/delete`
 - `POST /api/tokenizers/encode`
 - `POST /api/tokenizers/*/encode`
 
-第一版仍是 `enableUserAccounts=false` 的默认单用户模型，`/csrf-token` 返回 `disabled`。
+当前仍是默认用户优先的本地兼容模型，`/csrf-token` 返回 `disabled`。账号 API 已能满足本地弹窗和密码校验基础流程，但还没有真实 session、cookie-session、当前用户切换和权限中间件。
 
 ## 前端移植状态
 
@@ -126,6 +178,8 @@ SillyTavern/dist/_webpack/d2f8920b496f6d16/output/lib.js
 
 页面入口 `entry/src/main/ets/pages/Index.ets` 使用 `Web` 组件加载 `http://127.0.0.1:8000`，并开启 JavaScript、DOM storage、database、图片加载、mixed mode 和 online cache。错误浮层只在主框架加载失败时显示，避免子资源 404 误报为整页失败。
 
+扩展抽屉中新增了 `数据导出/恢复` 折叠栏：导出会调用 `POST /api/users/backup`，使用 Harmony `zlib.compressFile` 压缩 `<context.filesDir>/data` 并唤起 ShareKit；导入会选择 zip，弹窗确认覆盖后调用 `POST /api/users/restore-data`，使用 Harmony `zlib.decompressFile` 解压并覆盖 data 目录。
+
 ## 已验证
 
 在 DevEco 模拟器中已验证：
@@ -138,13 +192,18 @@ SillyTavern/dist/_webpack/d2f8920b496f6d16/output/lib.js
 - WebView 中 SillyTavern 前端已进入 `app_initialized` / `app_ready` 后的欢迎页。
 - 手机截图确认首页、角色列表页、角色创建页可以打开。
 - `POST /api/chats/recent` 返回最近聊天数组，当前空数据目录返回 `[]`。
-- `GET /api/extensions/discover` 返回 `[]`，用于消除前端扩展发现阶段的 404。
+- `GET /api/extensions/discover` 可返回 rawfile 系统扩展，并扫描本地/全局第三方扩展目录。
 - `POST /api/ping` 返回 `{ "ok": true }`，避免空 body 在端口转发链路中被部分客户端识别为 empty reply。
 - 已用 HTTP API 做过临时角色创建、列表读取、删除测试；角色卡落盘为 SillyTavern 兼容 PNG 元数据格式，删除后文件不残留。
+- `POST /api/users/create`、`POST /api/users/login` 已通过 HTTP API 验证，正确密码返回 `200`，错误密码返回 `403`。
+- `POST /api/secrets/write`、`POST /api/secrets/read`、`POST /api/secrets/delete` 已通过 HTTP API 验证。
+- `POST /api/users/backup` 已通过 HTTP API 验证，能够生成 data zip 并通过 ShareKit 返回分享结果。
+- `POST /api/users/restore-data` 已通过非破坏性 HTTP API 验证，坏 zip 和非 data zip 都会返回 `400`，不会覆盖当前 `data/`。
+- 扩展抽屉的 `数据导出/恢复` 折叠栏已能在 rawfile HTML 中加载。
 
 ## 暂缓接口
 
-模型代理、tokenizer、向量索引、图片处理、导入导出和复杂媒体接口暂时返回 `501 not_implemented`，便于前端识别缺口。
+模型代理、真实 tokenizer、向量索引、图片处理、媒体上传、预设/主题细节、内容管理器和复杂外部服务接口仍未完整实现。部分导入导出已经接入 ShareKit 或 zlib：角色导入/导出、聊天导入/导出、data zip 导出/恢复。
 
 ## 构建与调试
 
@@ -171,6 +230,16 @@ curl.exe -i http://127.0.0.1:8000/health
 curl.exe -i -X POST http://127.0.0.1:8000/api/ping
 curl.exe -i http://127.0.0.1:8000/api/extensions/discover
 curl.exe -i -X POST http://127.0.0.1:8000/api/chats/recent -H "Content-Type: application/json" -d "{\"max\":10,\"pinned\":[]}"
+
+$json = '{"handle":"default-user"}'
+$path = Join-Path $env:TEMP 'tavernnext-backup.json'
+Set-Content -LiteralPath $path -Value $json -NoNewline -Encoding ascii
+curl.exe -i -H "Content-Type: application/json" --data-binary "@$path" http://127.0.0.1:8000/api/users/backup
+
+$badZip = Join-Path $env:TEMP 'tavernnext-bad.zip'
+Set-Content -LiteralPath $badZip -Value 'bad zip' -NoNewline -Encoding ascii
+curl.exe -i -F "archive=@$badZip;type=application/zip" http://127.0.0.1:8000/api/users/restore-data
+
 & 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' shell uitest uiInput click 680 1340
 & 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' shell snapshot_display -f /data/local/tmp/tavernnext.jpeg
 & 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' file recv /data/local/tmp/tavernnext.jpeg .\tavernnext.jpeg

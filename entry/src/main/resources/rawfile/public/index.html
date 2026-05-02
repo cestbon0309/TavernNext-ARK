@@ -5716,6 +5716,28 @@
                         </div>
                     </div>
                     <div id="extensions_settings" class="flex1 wide50p">
+                        <div id="data_export_restore_container" class="inline-drawer wide100p flexFlowColumn">
+                            <div class="inline-drawer-toggle inline-drawer-header">
+                                <b class="flex-container alignitemscenter flexNoGap">
+                                    <i class="fa-solid fa-database fa-fw"></i>
+                                    <span>数据导出/恢复</span>
+                                </b>
+                                <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                            </div>
+                            <div class="inline-drawer-content">
+                                <div class="flex-container alignitemscenter">
+                                    <div id="data_export_button" class="menu_button menu_button_icon" title="导出 data 压缩包">
+                                        <i class="fa-solid fa-file-zipper"></i>
+                                        <span>导出 data 压缩包</span>
+                                    </div>
+                                    <div id="data_restore_button" class="menu_button menu_button_icon" title="导入 data 压缩包">
+                                        <i class="fa-solid fa-file-import"></i>
+                                        <span>导入 data 压缩包</span>
+                                    </div>
+                                    <input id="data_restore_file" type="file" accept=".zip,application/zip,application/x-zip-compressed" hidden>
+                                </div>
+                            </div>
+                        </div>
                         <div id="assets_container" class="extension_container"></div>
                         <div id="typing_indicator_container" class="extension_container"></div>
                         <div id="expressions_container" class="extension_container"></div>

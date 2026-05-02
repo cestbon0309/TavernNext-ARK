@@ -247,6 +247,53 @@ export class UsersService {
     return await this.shareExports.shareHttpResponse(file, 'TavernNext data backup');
   }
 
+  async restoreData(request: HttpRequest): Promise<HttpResponse> {
+    const file = request.file('archive') ?? request.file('file') ?? (request.files.length > 0 ? request.files[0] : null);
+    if (file === null) {
+      return HttpResponse.json(this.error('Missing backup file'), 400);
+    }
+    if (!file.fileName.toLowerCase().endsWith('.zip')) {
+      return HttpResponse.json(this.error('Backup file must be a zip archive'), 400);
+    }
+
+    const restoreId = this.timestampWithMs();
+    const restoreRoot = joinPath(this.dirs.restoreRoot, `restore-${restoreId}`);
+    const uploadPath = joinPath(restoreRoot, 'upload.zip');
+    const unpackRoot = joinPath(restoreRoot, 'unpacked');
+    const previousDataRoot = joinPath(this.dirs.restoreRoot, `previous-data-${restoreId}`);
+    this.store.ensureDir(restoreRoot);
+    this.store.ensureDir(unpackRoot);
+    this.store.writeBytes(uploadPath, file.bytes);
+
+    try {
+      await zlib.decompressFile(uploadPath, unpackRoot);
+    } catch (_err) {
+      this.store.deleteDirectory(restoreRoot);
+      return HttpResponse.json(this.error('Failed to decompress backup zip'), 400);
+    }
+
+    const candidate = this.restoreCandidatePath(unpackRoot);
+    if (candidate.length === 0) {
+      this.store.deleteDirectory(restoreRoot);
+      return HttpResponse.json(this.error('The zip archive does not look like a TavernNext data backup'), 400);
+    }
+
+    if (!this.replaceDataDirectory(candidate, previousDataRoot)) {
+      this.store.deleteDirectory(restoreRoot);
+      return HttpResponse.json(this.error('Failed to restore data directory'), 500);
+    }
+
+    this.dirs.initialize();
+    this.store.deleteDirectory(previousDataRoot);
+    this.store.deleteDirectory(restoreRoot);
+
+    const response = emptyJsonRecord();
+    response['ok'] = true;
+    response['restored'] = true;
+    response['message'] = 'Data directory restored.';
+    return HttpResponse.json(response);
+  }
+
   resetSettings(request: HttpRequest): HttpResponse {
     const user = this.ensureDefaultUser();
     const password = this.asString(this.bodyAsRecord(request)['password']);
@@ -477,6 +524,44 @@ export class UsersService {
     return text.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   }
 
+  private restoreCandidatePath(unpackRoot: string): string {
+    const nestedDataRoot = joinPath(unpackRoot, 'data');
+    if (this.isDataDirectory(nestedDataRoot)) {
+      return nestedDataRoot;
+    }
+    if (this.isDataDirectory(unpackRoot)) {
+      return unpackRoot;
+    }
+    return '';
+  }
+
+  private isDataDirectory(path: string): boolean {
+    return this.store.exists(joinPath(path, 'default-user')) ||
+      this.store.exists(joinPath(path, '_storage')) ||
+      this.store.exists(joinPath(path, 'cookie-secret.txt'));
+  }
+
+  private replaceDataDirectory(source: string, previousDataRoot: string): boolean {
+    const hadDataRoot = this.store.exists(this.dirs.dataRoot);
+    if (hadDataRoot && !this.store.moveDirectory(this.dirs.dataRoot, previousDataRoot)) {
+      return false;
+    }
+
+    if (this.store.exists(this.dirs.dataRoot)) {
+      this.store.deleteDirectory(this.dirs.dataRoot);
+    }
+
+    if (this.store.copyDirectory(source, this.dirs.dataRoot)) {
+      return true;
+    }
+
+    this.store.deleteDirectory(this.dirs.dataRoot);
+    if (hadDataRoot) {
+      this.store.moveDirectory(previousDataRoot, this.dirs.dataRoot);
+    }
+    return false;
+  }
+
   private bodyAsRecord(request: HttpRequest): JsonRecord {
     if (request.body === null || Array.isArray(request.body)) {
       return emptyJsonRecord();
@@ -530,6 +615,10 @@ export class UsersService {
       `${date.getSeconds()}`.padStart(2, '0'),
     ];
     return `${parts[0]}${parts[1]}${parts[2]}-${parts[3]}${parts[4]}${parts[5]}`;
+  }
+
+  private timestampWithMs(): string {
+    return `${this.timestamp()}-${Date.now() % 1000000}`;
   }
 
   private contentTypeForFile(path: string): string {

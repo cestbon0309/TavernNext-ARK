@@ -19,12 +19,13 @@
 http://127.0.0.1:8000
 ```
 
-前端通过 OHOS `Web` 组件加载这个地址。当前模型是本机单用户、无登录、无真实 CSRF 校验：
+前端通过 OHOS `Web` 组件加载这个地址。当前模型仍以本机默认用户数据为主，但已经补入本地账号兼容 API：
 
 - 固定用户目录：`data/default-user/`
 - `GET /csrf-token` 固定返回 `{ "token": "disabled" }`
 - `enable_accounts` 固定为 `false`
-- 当前不实现多用户 session、cookie-session、账号接口和权限中间件
+- `SillyTavernCore` 的角色、聊天、设置等核心数据接口仍固定读写 `data/default-user/`
+- `/api/users/*` 已实现本地账号 CRUD、密码校验、头像记录和备份等兼容接口，但还没有真实 session、cookie-session、当前用户切换和权限中间件
 
 `HttpServer.start()` 已做单飞保护：Ability 和页面重复调用启动时会复用同一个 `startPromise`，避免监听竞态。
 
@@ -190,9 +191,19 @@ data/
 ```text
 <context.filesDir>/exports/
   characters/
+  chats/
+  users/
 ```
 
 这个 `exports/` 是应用私有目录，专门用于 ShareKit 分享中转，不属于 SillyTavern `data/` 兼容结构。
+
+当前 data 恢复流程的上传 zip、解压目录和旧数据临时备份统一写入：
+
+```text
+<context.filesDir>/_restore/
+```
+
+这个 `_restore/` 同样是应用私有临时目录，不属于 SillyTavern `data/` 兼容结构。恢复成功后会清理本次临时目录和旧数据临时备份；恢复失败时会尽量回滚当前 `data/`。
 
 ## 4. 静态资源接口
 
@@ -1923,7 +1934,7 @@ data/default-user/User Avatars/
 
 文件名经过安全化处理。不存在返回 `404`。
 
-## 12. Secrets 和扩展接口
+## 12. Secrets、账号和扩展接口
 
 ### 12.1 `POST /api/secrets/settings`
 
@@ -1937,25 +1948,361 @@ data/default-user/User Avatars/
 
 ### 12.2 `POST /api/secrets/read`
 
-当前固定返回：
+读取并返回 `data/default-user/secrets.json` 中的密钥状态。当前 ArkTS 版使用 SillyTavern 新版多值结构：
+
+- 每个 key 的值为 `null` 或 `SecretValue[]`。
+- `SecretValue` 字段包括 `id`、`value`、`label`、`active`。
+- `allowKeysExposure=false` 时，普通密钥会被遮罩，只保留末尾 3 个字符。
+- `libre_url`、`lingva_url`、`oneringtranslator_url`、`deeplx_url` 属于可导出 URL key，读取状态时直接返回明文。
+- 如果发现旧版平铺 `secrets.json`，会迁移为数组结构，并将旧文件复制到 `default-user/backups/secrets_migration_<timestamp>.json`。
+
+示例响应片段：
 
 ```json
-{}
+{
+  "api_key_openai": [
+    {
+      "id": "4fc14470-5603-45a1-8fd6-e6183efd5c57",
+      "value": "*******lue",
+      "label": "Codex",
+      "active": true
+    }
+  ],
+  "libre_url": null
+}
 ```
 
-不会读取 `secrets.json`。
+### 12.3 `POST /api/secrets/write`
 
-### 12.3 `GET /api/extensions/discover`
-
-### 12.4 `POST /api/extensions/discover`
-
-当前固定返回：
+请求：
 
 ```json
-[]
+{
+  "key": "api_key_openai",
+  "value": "sk-...",
+  "label": "Default"
+}
 ```
 
-这是为了满足前端 `public/scripts/extensions.js` 的 GET 请求。暂不扫描 `default-user/extensions/`。
+行为：
+- `key` 不能为空，`value` 必须是字符串。
+- 同一个 key 下已有值会被标记为 `active=false`。
+- 新值生成本地 UUID，写入 `data/default-user/secrets.json`，并设为 active。
+
+成功响应：
+
+```json
+{
+  "id": "<uuid>"
+}
+```
+
+### 12.4 `POST /api/secrets/delete`
+
+请求：
+
+```json
+{
+  "key": "api_key_openai",
+  "id": "optional-secret-id"
+}
+```
+
+行为：
+- `key` 不能为空。
+- 传 `id` 时删除指定值；不传 `id` 时删除 active 值。
+- 删除后如果仍有其他值但没有 active，会把第一个值设为 active。
+- key 下没有剩余值时，会从 `secrets.json` 中移除该 key。
+
+成功返回 `204 No Content`。
+
+### 12.5 `POST /api/secrets/find`
+
+请求：
+
+```json
+{
+  "key": "libre_url",
+  "id": "optional-secret-id"
+}
+```
+
+行为：
+- `key` 不能为空。
+- `allowKeysExposure=false` 时，只允许查找 `libre_url`、`lingva_url`、`oneringtranslator_url`、`deeplx_url`。
+- 不传 `id` 时返回 active 值。
+
+成功响应：
+
+```json
+{
+  "value": "https://example.invalid"
+}
+```
+
+普通非导出密钥在当前配置下返回 `403`。
+
+### 12.6 `POST /api/secrets/view`
+
+在 `allowKeysExposure=false` 时固定返回 `403`。如果后续允许密钥暴露，会返回所有 active 密钥明文。
+
+### 12.7 `POST /api/secrets/rotate`
+
+请求：
+
+```json
+{
+  "key": "api_key_openai",
+  "id": "<secret-id>"
+}
+```
+
+行为：将同一个 key 下指定 `id` 的值设为 active，其他值设为 inactive。成功返回 `204 No Content`。
+
+### 12.8 `POST /api/secrets/rename`
+
+请求：
+
+```json
+{
+  "key": "api_key_openai",
+  "id": "<secret-id>",
+  "label": "New Label"
+}
+```
+
+行为：修改指定 secret 的 `label`。成功返回 `204 No Content`。
+
+### 12.9 账号数据存储与密码算法
+
+账号记录写入 `<context.filesDir>/data/_storage/`，key 格式为：
+
+```text
+user:<handle>
+avatar:<handle>
+```
+
+实际文件名为 key 的 SHA-256 hex，因此兼容前端的 local database 用法，同时不把账号索引文件放进 `data/default-user/`。SHA-256、随机 salt、scrypt 密码派生均使用 Harmony 官方 `cryptoFramework`：
+
+- SHA-256：`cryptoFramework.createMd('SHA256')`
+- scrypt：`cryptoFramework.createKdf('SCRYPT')`
+- 参数：`N=16384`、`r=8`、`p=1`、`keySize=64`、`maxMemory=32 MiB`
+
+### 12.10 `POST /api/users/list`
+
+返回所有启用用户的公开视图：
+
+```json
+[
+  {
+    "handle": "default-user",
+    "name": "User",
+    "created": 1777682705836,
+    "avatar": "/img/default-user.png",
+    "password": false
+  }
+]
+```
+
+### 12.11 `POST /api/users/login`
+
+请求：
+
+```json
+{
+  "handle": "default-user",
+  "password": "optional"
+}
+```
+
+行为：
+- 用户不存在或密码不匹配返回 `403`。
+- 用户未设置密码时，只校验 handle。
+- 密码使用 SillyTavern 兼容 scrypt 派生值比较。
+
+成功响应：
+
+```json
+{
+  "handle": "default-user"
+}
+```
+
+注意：当前没有建立 session，也不会改变后续核心数据接口使用的 `default-user` 目录。
+
+### 12.12 `GET /api/users/me`
+
+返回默认用户公开视图，并附加 `admin` 字段。当前固定代表 `default-user`。
+
+### 12.13 管理员用户接口
+
+当前注册并实现：
+
+- `POST /api/users/get`：返回所有用户的管理员视图，包含 `admin`、`enabled`。
+- `POST /api/users/create`：创建用户，handle 会 slugify，密码可选。
+- `POST /api/users/delete`：删除用户记录；`purge=true` 时删除对应 `data/<handle>/` 目录。不能删除 `default-user`。
+- `POST /api/users/enable`
+- `POST /api/users/disable`：不能禁用 `default-user`。
+- `POST /api/users/promote`
+- `POST /api/users/demote`：不能降权 `default-user`。
+- `POST /api/users/slugify`
+
+新建用户时会创建一套 SillyTavern 用户目录结构，但当前核心角色、聊天、设置接口仍固定使用 `default-user`。
+
+### 12.14 用户资料接口
+
+当前注册并实现：
+
+- `POST /api/users/logout`：返回 `204`，不清理 session。
+- `POST /api/users/change-avatar`：记录头像 data URL；空字符串表示清除。暂不处理 multipart 上传。
+- `POST /api/users/change-name`
+- `POST /api/users/change-password`
+- `POST /api/users/reset-settings`：校验默认用户密码后重置 `default-user/settings.json` 为 `{}`。
+- `POST /api/users/reset-step1`：生成本地 4 位重置码并直接返回，供 OHOS 本地恢复流程使用。
+- `POST /api/users/reset-step2`：校验重置码和密码后清空并重建 `data/default-user/` 的基础文件。
+- `POST /api/users/recover-step1`：为指定用户生成本地 4 位恢复码并直接返回。
+- `POST /api/users/recover-step2`：用恢复码为指定用户设置新密码。
+
+恢复码和重置码只存在内存中，进程重启后失效。
+
+### 12.15 `POST /api/users/backup`
+
+用途：导出整个 SillyTavern `data/` 目录。
+
+请求：
+
+```json
+{
+  "handle": "default-user"
+}
+```
+
+行为：
+- 校验 handle 对应用户存在。
+- 使用 Harmony 官方 `@kit.BasicServicesKit` 的 `zlib.compressFile(...)` 压缩目录。
+- 输入目录固定为 `<context.filesDir>/data`。
+- 输出写入 `<context.filesDir>/exports/users/tavernnext-data-<timestamp>.zip`。
+- 压缩完成后通过 ShareKit 打开系统分享面板。
+
+成功响应：
+
+```json
+{
+  "ok": true,
+  "shared": true,
+  "file_name": "tavernnext-data-20260502-085214.zip",
+  "path": "/data/storage/el2/base/haps/entry/files/exports/users/tavernnext-data-20260502-085214.zip",
+  "uri": "file://com.esoteric.tavernnext/data/storage/el2/base/haps/entry/files/exports/users/tavernnext-data-20260502-085214.zip",
+  "content_type": "application/zip"
+}
+```
+
+与原 Node 后端差异：原前端期望浏览器下载 zip blob；OHOS 版后端压缩私有文件后唤起 ShareKit。当前新增的扩展页“数据导出/恢复”入口已经适配为读取 JSON 结果并提示用户；rawfile `user.js` 中账号弹窗自带的备份按钮仍保留原 blob 下载逻辑，后续如果继续使用那处入口也需要改成 OHOS JSON/ShareKit 结果处理。
+
+### 12.16 `POST /api/users/restore-data`
+
+用途：从 zip 恢复整个 SillyTavern `data/` 目录。
+
+请求为 `multipart/form-data`，文件字段优先读取：
+
+```text
+archive
+```
+
+兼容字段：
+
+```text
+file
+```
+
+行为：
+- 只接受文件名以 `.zip` 结尾的上传。
+- 使用 Harmony 官方 `@kit.BasicServicesKit` 的 `zlib.decompressFile(...)` 解压。
+- 上传 zip 和解压目录写入 `<context.filesDir>/_restore/restore-<timestamp>/`。
+- 支持两种 zip 结构：
+  - 解压后直接是 `default-user/`、`_storage/`、`cookie-secret.txt` 等 data 内容。
+  - 解压后包含一层 `data/` 目录。
+- 只有检测到 `default-user`、`_storage` 或 `cookie-secret.txt` 之一时，才认为是可恢复的 TavernNext/SillyTavern data 备份。
+- 替换前先把当前 `<context.filesDir>/data` 移到 `<context.filesDir>/_restore/previous-data-<timestamp>`。
+- 新 data 复制失败时会删除残缺 data 并尝试把旧 data 移回原位置。
+- 恢复成功后调用 `DataDirectories.initialize()` 补齐基础目录和基础文件，然后清理本次临时目录与旧数据临时备份。
+
+成功响应：
+
+```json
+{
+  "ok": true,
+  "restored": true,
+  "message": "Data directory restored."
+}
+```
+
+当前前端入口：扩展抽屉内新增 `数据导出/恢复` 折叠栏，包含：
+
+- `导出 data 压缩包`：调用 `POST /api/users/backup`。
+- `导入 data 压缩包`：选择 zip 后先弹窗提醒“会覆盖当前 data 目录”，用户确认后再调用 `POST /api/users/restore-data`。
+
+已验证的非破坏性错误路径：
+
+- 非 zip 内容上传会返回 `400 {"error":"Failed to decompress backup zip"}`。
+- 可解压但不是 data 备份的 zip 会返回 `400 {"error":"The zip archive does not look like a TavernNext data backup"}`。
+
+尚未在模拟器上做真实覆盖恢复测试，避免覆盖当前调试机里的实际 `data/`。
+
+### 12.17 `GET /api/extensions/discover`
+
+### 12.18 `POST /api/extensions/discover`
+
+扫描扩展目录并返回可用扩展。当前来源包括：
+
+- rawfile 内置系统扩展：`public/scripts/extensions/<name>`
+- 用户本地扩展：`data/default-user/extensions/<name>`，返回为 `third-party/<name>`
+- 应用私有全局扩展：`<context.filesDir>/extensions/global/<name>`，返回为 `third-party/<name>`
+- rawfile 第三方扩展：`public/scripts/extensions/third-party/<name>`
+
+示例响应：
+
+```json
+[
+  {
+    "type": "system",
+    "name": "quick-reply"
+  },
+  {
+    "type": "local",
+    "name": "third-party/my-extension"
+  }
+]
+```
+
+### 12.19 第三方扩展静态资源
+
+fallback 会优先为以下路径提供本地/全局/rawfile 第三方扩展文件：
+
+```text
+GET /scripts/extensions/third-party/<extension>/<file>
+```
+
+查找顺序：
+1. `data/default-user/extensions/<extension>/<file>`
+2. `<context.filesDir>/extensions/global/<extension>/<file>`
+3. `public/scripts/extensions/third-party/<extension>/<file>`
+
+路径会拒绝空路径、`.`、`..` 和空字符。
+
+### 12.20 扩展管理接口
+
+当前注册并实现了最小本地兼容行为：
+
+- `POST /api/extensions/version`：本地目录存在时返回空 branch/commit，`isUpToDate=true`。
+- `POST /api/extensions/update`：本地目录存在时返回 up-to-date；不执行 Git。
+- `POST /api/extensions/branches`：本地目录存在时返回 `[]`。
+- `POST /api/extensions/move`：在 `default-user/extensions` 和 `<filesDir>/extensions/global` 之间移动目录。
+- `POST /api/extensions/delete`：删除本地或全局扩展目录。
+- `POST /api/extensions/install`：校验 `url` 后返回 `501 git_unavailable`。
+- `POST /api/extensions/switch`：校验参数和目录后返回 `501 git_unavailable`。
+
+当前不支持 Git clone、Git pull、Git checkout、远程分支查询，也不解析扩展 manifest。
 
 ## 13. Tokenizer 接口
 
@@ -2032,10 +2379,15 @@ tokens = ceil(utf8ByteLength(text) / 3.35)
 - `GET /health` 可从宿主机通过 `hdc fport tcp:8000 tcp:8000` 访问。
 - SillyTavern 前端 rawfile 资源可加载。
 - WebView 进入欢迎页，角色列表页和角色创建页可打开。
-- `GET /api/extensions/discover` 返回 `[]`。
+- `GET /api/extensions/discover` 可返回 rawfile 系统扩展，并扫描本地/全局第三方扩展目录。
 - `POST /api/chats/recent` 在空数据目录返回 `[]`。
 - `POST /api/ping` 返回 `{ "ok": true }`。
 - 临时角色创建、列表读取、删除流程已通过 HTTP API 验证。
+- `POST /api/users/create`、`POST /api/users/login` 已通过 HTTP API 验证，正确密码返回 `200`，错误密码返回 `403`。
+- `POST /api/secrets/write`、`POST /api/secrets/read`、`POST /api/secrets/delete` 已通过 HTTP API 验证。
+- `POST /api/users/backup` 已通过 HTTP API 验证，能够调用 Harmony `zlib.compressFile` 生成 zip，并通过 ShareKit 返回分享结果。
+- `POST /api/users/restore-data` 已通过非破坏性 HTTP API 验证，坏 zip 和非 data zip 都会返回 `400`，不会覆盖当前 `data/`。
+- 扩展抽屉的 `数据导出/恢复` 折叠栏已能在 rawfile HTML 中加载，导出调用 `users/backup`，导入会在上传前要求用户确认覆盖。
 
 常用验证命令：
 
@@ -2051,6 +2403,15 @@ $env:DEVECO_SDK_HOME='E:\Huawei\DevEco Studio\sdk'
 curl.exe -i http://127.0.0.1:8000/health
 curl.exe -i -X POST http://127.0.0.1:8000/api/ping
 curl.exe -i http://127.0.0.1:8000/api/extensions/discover
+
+$json = '{"handle":"default-user"}'
+$path = Join-Path $env:TEMP 'tavernnext-backup.json'
+Set-Content -LiteralPath $path -Value $json -NoNewline -Encoding ascii
+curl.exe -i -H "Content-Type: application/json" --data-binary "@$path" http://127.0.0.1:8000/api/users/backup
+
+$badZip = Join-Path $env:TEMP 'tavernnext-bad.zip'
+Set-Content -LiteralPath $badZip -Value 'bad zip' -NoNewline -Encoding ascii
+curl.exe -i -F "archive=@$badZip;type=application/zip" http://127.0.0.1:8000/api/users/restore-data
 ```
 
 UI 截图：
@@ -2070,13 +2431,15 @@ UI 截图：
 
 当前实现目标是“让 SillyTavern 前端先在手机 WebView 中跑起来”，不是完整后端替代。已知限制：
 
-- 不支持账号、登录、多用户、session 和真实 CSRF。
+- 已有本地账号兼容 API 和密码校验，但不支持真实多用户会话、cookie-session、当前用户切换、权限中间件和真实 CSRF。
 - multipart 解析已支持，角色卡 JSON/PNG 导入已接入；头像上传、背景上传、聊天导入、世界书导入等 multipart 接口仍需补。
 - 不支持真实模型代理，底部仍显示“未连接到 API!”。
 - 不支持真实 OpenAI / chat-completions 生成。
 - 不支持真实 tokenizer，仅按 UTF-8 字节数估算。
 - `image-metadata/all` 暂不读取 `image-metadata.json`。
-- `extensions/discover` 暂不扫描扩展目录。
+- `extensions/discover` 已扫描 rawfile 系统扩展和本地/全局第三方扩展目录，但扩展安装/更新不支持 Git，manifest 解析也未对齐原版。
+- `users/backup` 已使用 Harmony zlib 生成 zip 并调用 ShareKit；扩展页新入口已适配 OHOS JSON/ShareKit 结果，但 rawfile `user.js` 账号弹窗里的备份按钮仍保留浏览器 blob 下载逻辑。
+- `users/restore-data` 已有 zip 解压和覆盖恢复逻辑，但真实覆盖恢复尚未在模拟器上执行；目前只验证了坏包和非 data 包不会覆盖。
 - `settings/get` 的预设内容目前是解析后的 JSON 对象，后续可能需要按 Node 版调整为字符串。
 - `characters/chats` 的 `last_mes` 当前不是 `send_date`，后续需要与 Node 版 `getChatInfo()` 完全对齐。
 - `thumbnail` 当前直接返回源图，不生成或缓存缩略图。
@@ -2330,43 +2693,66 @@ avatar
 
 - `POST /api/secrets/settings`
 - `POST /api/secrets/read`
+- `POST /api/secrets/write`
+- `POST /api/secrets/delete`
+- `POST /api/secrets/find`
+- `POST /api/secrets/view`
+- `POST /api/secrets/rename`
+- `POST /api/secrets/rotate`
+- `POST /api/users/list`
+- `POST /api/users/login`
+- `POST /api/users/recover-step1`
+- `POST /api/users/recover-step2`
+- `GET /api/users/me`
+- `POST /api/users/get`
+- `POST /api/users/logout`
+- `POST /api/users/create`
+- `POST /api/users/delete`
+- `POST /api/users/enable`
+- `POST /api/users/disable`
+- `POST /api/users/promote`
+- `POST /api/users/demote`
+- `POST /api/users/slugify`
+- `POST /api/users/change-avatar`
+- `POST /api/users/change-name`
+- `POST /api/users/change-password`
+- `POST /api/users/backup`，使用 Harmony `zlib.compressFile` 压缩 `<filesDir>/data`，再通过 ShareKit 分享
+- `POST /api/users/restore-data`，使用 Harmony `zlib.decompressFile` 解压 zip，确认是 data 备份后覆盖 `<filesDir>/data`
+- `POST /api/users/reset-settings`
+- `POST /api/users/reset-step1`
+- `POST /api/users/reset-step2`
 - `GET /api/extensions/discover`
 - `POST /api/extensions/discover`
+- `POST /api/extensions/version`
+- `POST /api/extensions/install`，当前返回 `501 git_unavailable`
+- `POST /api/extensions/update`，本地目录存在时返回 up-to-date，不执行 Git
+- `POST /api/extensions/delete`
+- `POST /api/extensions/move`
+- `POST /api/extensions/switch`，当前返回 `501 git_unavailable`
+- `POST /api/extensions/branches`
+- 扫描 rawfile 系统扩展、`default-user/extensions`、`<filesDir>/extensions/global`
+- 提供 `/scripts/extensions/third-party/*` 的本地/全局/rawfile fallback 静态资源
 
 仍缺失：
 
 - secrets：
-  - `POST /api/secrets/write`
-  - `POST /api/secrets/delete`
-  - `POST /api/secrets/find`
-  - `POST /api/secrets/view`
-  - `POST /api/secrets/rename`
-  - `POST /api/secrets/rotate`
+  - 真实密钥暴露开关配置；当前 `allowKeysExposure=false`
+  - `view` 和非导出 key 的 `find` 在当前配置下固定受限
+  - 更完整的错误格式与原版日志细节
 - extensions：
-  - `POST /api/extensions/version`
-  - `POST /api/extensions/install`
-  - `POST /api/extensions/update`
-  - `POST /api/extensions/delete`
-  - `POST /api/extensions/move`
-  - `POST /api/extensions/switch`
-  - `POST /api/extensions/branches`
-  - 扫描 `default-user/extensions`
   - 解析 manifest
   - 第三方扩展安装和更新
+  - Git clone、Git pull、Git checkout、远程分支查询
+  - 扩展版本、远端 URL、commit hash 的真实状态
 - 用户账号：
-  - `POST /api/users/list`
-  - `POST /api/users/login`
-  - `POST /api/users/recover-step1`
-  - `POST /api/users/recover-step2`
-  - `GET /api/users/me`
-  - `POST /api/users/logout`
-  - `POST /api/users/change-avatar`
-  - `POST /api/users/change-name`
-  - `POST /api/users/change-password`
-  - `POST /api/users/reset-settings`
-  - 管理员用户创建、删除、启用、禁用、升降权等接口
+  - 真实登录 session、cookie-session、当前用户切换和权限中间件
+  - `enable_accounts=true` 模式下的完整前端流程
+  - 核心角色、聊天、设置接口按登录用户切换目录；当前仍固定使用 `default-user`
+  - 头像 multipart 上传和裁剪；当前只记录 data URL
+  - 通过邮件或外部通道恢复密码；当前恢复码只在本地响应中直接返回
+  - `user.js` 账号弹窗里的 `users/backup` 前端 OHOS JSON/ShareKit 结果适配；扩展页新入口已经适配
 
-当前设计仍是单用户模式，所以账号相关可以后置。
+当前设计仍是默认用户优先的本地兼容模式；账号接口用于满足前端账号弹窗和数据备份流程，还不是完整多用户运行模型。
 
 ### 17.8 Tokenizer 和向量
 
@@ -2453,6 +2839,12 @@ avatar
 
 ### 17.10 统计、备份、数据维护和内容导入
 
+当前 ArkTS 已实现：
+
+- `POST /api/users/backup`：压缩整个 `<filesDir>/data` 并通过 ShareKit 导出。
+- `POST /api/users/restore-data`：上传 zip，解压到私有临时目录，校验 data 结构后覆盖 `<filesDir>/data`。
+- 扩展抽屉新增 `数据导出/恢复` 折叠栏，提供 data 导出和 data zip 导入恢复入口。
+
 仍缺失：
 
 - stats：
@@ -2469,7 +2861,7 @@ avatar
   - `POST /api/content-manager/importUUID`
 - backups：
   - 聊天备份读取、下载、删除
-- master import/export 相关能力
+- master import/export 相关能力；当前只覆盖整个 `data/` zip 导出/恢复，不覆盖原版内容管理器的细粒度导入导出
 
 ### 17.11 建议阶段划分
 
@@ -2489,12 +2881,18 @@ avatar
    - 待补：头像 crop/resize/格式转换
    - 待补：完整 Tavern Card 校验器
 3. 聊天管理阶段：
-   - delete
-   - rename
-   - export
-   - import
-   - group chat get/save/delete
-4. 媒体上传阶段：
+   - 已完成：delete
+   - 已完成：rename
+   - 已完成：export
+   - 已完成：import 基础版
+   - 已完成：group chat get/save/delete/import/info 基础版
+4. 账号、密钥和扩展本地兼容阶段：
+   - 已完成：secrets 多值结构、write/read/delete/find/rotate/rename 基础版
+   - 已完成：users 本地 CRUD、密码校验、重置/恢复码基础版
+   - 已完成：data zip 导出和恢复，使用 Harmony zlib 与 ShareKit
+   - 已完成：扩展发现扫描本地/全局/rawfile，扩展移动/删除/版本占位
+   - 待补：真实 session、当前用户切换、Git 安装/更新、manifest 完整解析
+5. 媒体上传阶段：
    - avatars upload/delete
    - backgrounds upload/delete/rename
    - thumbnails 生成和缓存

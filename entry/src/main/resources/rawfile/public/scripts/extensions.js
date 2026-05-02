@@ -1853,6 +1853,63 @@ export async function openThirdPartyExtensionMenu(suggestUrl = '') {
     await installExtension(url, global, branchName);
 }
 
+async function exportDataArchive() {
+    try {
+        const response = await fetch('/api/users/backup', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ handle: 'default-user' }),
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            toastr.error(data.error || data.message || '导出 data 压缩包失败');
+            return;
+        }
+
+        toastr.success(data.shared ? 'data 压缩包已导出' : 'data 压缩包已生成');
+    } catch (error) {
+        console.error('Failed to export data archive', error);
+        toastr.error('导出 data 压缩包失败');
+    }
+}
+
+async function importDataArchive(file) {
+    const confirmation = await callGenericPopup(
+        '<h3>恢复 data 目录？</h3><p>导入压缩包会解压并覆盖当前 data 目录，现有角色、聊天、设置和密钥都可能被替换。是否继续？</p>',
+        POPUP_TYPE.CONFIRM,
+        '',
+        { okButton: '继续导入', cancelButton: '取消', wide: false, large: false },
+    );
+
+    if (confirmation !== POPUP_RESULT.AFFIRMATIVE) {
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('archive', file, file.name);
+
+    try {
+        const response = await fetch('/api/users/restore-data', {
+            method: 'POST',
+            headers: getRequestHeaders({ omitContentType: true }),
+            body: formData,
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+            toastr.error(data.error || data.message || '恢复 data 目录失败');
+            return;
+        }
+
+        toastr.success('data 目录已恢复，正在刷新页面');
+        setTimeout(() => window.location.reload(), 1000);
+    } catch (error) {
+        console.error('Failed to import data archive', error);
+        toastr.error('恢复 data 目录失败');
+    }
+}
+
 export async function initExtensions() {
     await addExtensionsButtonAndMenu();
     $('#extensionsMenuButton').css('display', 'flex');
@@ -1874,4 +1931,14 @@ export async function initExtensions() {
      * @listens #third_party_extension_button#click - The click event of the '#third_party_extension_button' element.
      */
     $('#third_party_extension_button').on('click', () => openThirdPartyExtensionMenu());
+    $('#data_export_button').on('click', exportDataArchive);
+    $('#data_restore_button').on('click', () => $('#data_restore_file').trigger('click'));
+    $('#data_restore_file').on('change', async function () {
+        const file = this.files?.[0];
+        this.value = '';
+        if (!file) {
+            return;
+        }
+        await importDataArchive(file);
+    });
 }
