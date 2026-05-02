@@ -1874,7 +1874,7 @@ async function exportDataArchive() {
     }
 }
 
-async function importDataArchive(file) {
+async function importDataArchive() {
     const confirmation = await callGenericPopup(
         '<h3>恢复 data 目录？</h3><p>导入压缩包会解压并覆盖当前 data 目录，现有角色、聊天、设置和密钥都可能被替换。是否继续？</p>',
         POPUP_TYPE.CONFIRM,
@@ -1886,17 +1886,17 @@ async function importDataArchive(file) {
         return;
     }
 
-    const formData = new FormData();
-    formData.append('archive', file, file.name);
-
     try {
-        const response = await fetch('/api/users/restore-data', {
+        const response = await fetch('/api/users/restore-data-picker', {
             method: 'POST',
-            headers: getRequestHeaders({ omitContentType: true }),
-            body: formData,
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ handle: 'default-user' }),
         });
 
         const data = await response.json();
+        if (data.cancelled) {
+            return;
+        }
         if (!response.ok) {
             toastr.error(data.error || data.message || '恢复 data 目录失败');
             return;
@@ -1932,13 +1932,5 @@ export async function initExtensions() {
      */
     $('#third_party_extension_button').on('click', () => openThirdPartyExtensionMenu());
     $('#data_export_button').on('click', exportDataArchive);
-    $('#data_restore_button').on('click', () => $('#data_restore_file').trigger('click'));
-    $('#data_restore_file').on('change', async function () {
-        const file = this.files?.[0];
-        this.value = '';
-        if (!file) {
-            return;
-        }
-        await importDataArchive(file);
-    });
+    $('#data_restore_button').on('click', () => importDataArchive());
 }

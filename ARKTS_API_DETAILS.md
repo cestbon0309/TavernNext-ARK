@@ -11,6 +11,8 @@
 - 首次启动按原版默认内容初始化 `data/default-user/`，只在 `content.log` 为空时执行一次。
 - settings、角色、聊天、群聊、世界书、groups、QuickReplies、secrets、users、extensions、data zip 导出/恢复、媒体上传等本地 API 已覆盖主要前端流程。
 - 媒体相关处理已尽量使用 Harmony 官方 API：图片尺寸/裁剪/缩略图/平均色使用 `ImageKit`，zip 压缩/解压使用 `zlib`。
+- data 恢复的前端入口已切换为后端唤起 Harmony 文件选择器，避免 50MB 级 zip 先从 WebView 上传到 ArkTS HTTP 后端再落盘；HTTP multipart 恢复接口仍保留用于调试。
+- 扩展发现和第三方扩展静态资源已兼容导入备份里的 `extensions/third-party/<name>`、`public/scripts/extensions/third-party/<name>` 等结构；`/version` 返回 SillyTavern 兼容 agent 以满足第三方扩展版本门槛。
 - OpenAI chat-completions 支持 `openai` 和 `custom` 来源，支持 `/models` 状态检查、`/chat/completions` 非流式生成和流式 SSE 生成。
 - 流式生成已改为 Harmony `requestInStream()` + `dataReceive` 转发，并通过虚拟机、hdc 端口映射、慢速 mock OpenAI 服务确认分块即时到达。
 
@@ -19,6 +21,7 @@
 - 模型 provider 暂缓：OpenRouter、Claude、Gemini、NovelAI、Kobold/TextGen、Horde、Stable Diffusion 等还未完整实现。
 - Tokenizer 暂缓：当前只有估算/占位接口，尚未接入 MikTik/OHOS native tokenizer。
 - Vector 暂缓：embedding 调用、本地向量索引、insert/query/delete/list/purge 仍未完成。
+- Git 暂缓：第三方扩展 install/update/branch/status 目前只有本地占位兼容，计划用 native `.so` + `libgit2` 经 ArkTS NAPI 接入。
 - settings snapshots、presets、themes、moving UI、assets/content-manager、聊天备份等管理类接口仍需后续补齐。
 
 代码入口：
@@ -320,8 +323,8 @@ public/<request path without leading slash>
 
 ```json
 {
-  "agent": "TavernNext-OHOS",
-  "pkgVersion": "1.0.0-ohos",
+  "agent": "SillyTavern:1.17.0:TavernNext-OHOS",
+  "pkgVersion": "1.17.0-ohos",
   "gitRevision": "",
   "gitBranch": "arkts-port",
   "commitDate": "",
@@ -2279,10 +2282,11 @@ file
 - 只接受文件名以 `.zip` 结尾的上传。
 - 使用 Harmony 官方 `@kit.BasicServicesKit` 的 `zlib.decompressFile(...)` 解压。
 - 上传 zip 和解压目录写入 `<context.filesDir>/_restore/restore-<timestamp>/`。
-- 支持两种 zip 结构：
+- 支持三种 zip 结构：
   - 解压后直接是 `default-user/`、`_storage/`、`cookie-secret.txt` 等 data 内容。
   - 解压后包含一层 `data/` 目录。
-- 只有检测到 `default-user`、`_storage` 或 `cookie-secret.txt` 之一时，才认为是可恢复的 TavernNext/SillyTavern data 备份。
+  - 解压后直接是某个用户根目录，例如包含 `settings.json`、`characters/`、`chats/`、`extensions/`、`User Avatars/` 等；此时会被归一化为 `data/default-user/`。
+- 只有检测到 data 根目录或用户根目录特征时，才认为是可恢复的 TavernNext/SillyTavern 备份。
 - 替换前先把当前 `<context.filesDir>/data` 移到 `<context.filesDir>/_restore/previous-data-<timestamp>`。
 - 新 data 复制失败时会删除残缺 data 并尝试把旧 data 移回原位置。
 - 恢复成功后调用 `DataDirectories.initialize()` 补齐基础目录和基础文件，然后清理本次临时目录与旧数据临时备份。
@@ -2300,14 +2304,34 @@ file
 当前前端入口：扩展抽屉内新增 `数据导出/恢复` 折叠栏，包含：
 
 - `导出 data 压缩包`：调用 `POST /api/users/backup`。
-- `导入 data 压缩包`：选择 zip 后先弹窗提醒“会覆盖当前 data 目录”，用户确认后再调用 `POST /api/users/restore-data`。
+- `导入 data 压缩包`：先弹窗提醒“会覆盖当前 data 目录”，用户确认后调用 `POST /api/users/restore-data-picker`，由 ArkTS 后端唤起 Harmony 文件选择器选择 zip。
+
+### 12.16.1 `POST /api/users/restore-data-picker`
+
+用途：OHOS 前端真实入口。避免让大 zip 通过 WebView `<input type=file>` 和 HTTP multipart 传给本地后端。
+
+请求：
+
+```json
+{
+  "handle": "default-user"
+}
+```
+
+当前实现不依赖请求体中的 handle，只恢复当前默认 `data/`。
+
+行为：
+- ArkTS 后端使用 `@kit.CoreFileKit` 的 `picker.DocumentViewPicker` 唤起系统文件选择器。
+- 只允许选择一个 `.zip` 文件。
+- 使用 `fileIo` 分块复制所选文件到 `<context.filesDir>/_restore/restore-<timestamp>/upload.zip`。
+- 后续解压、识别、归一化、覆盖、回滚逻辑与 `POST /api/users/restore-data` 共用。
+- 用户取消选择时返回 `{ "ok": false, "cancelled": true }`。
 
 已验证的非破坏性错误路径：
 
 - 非 zip 内容上传会返回 `400 {"error":"Failed to decompress backup zip"}`。
 - 可解压但不是 data 备份的 zip 会返回 `400 {"error":"The zip archive does not look like a TavernNext data backup"}`。
-
-尚未在模拟器上做真实覆盖恢复测试，避免覆盖当前调试机里的实际 `data/`。
+- 已在模拟器里用 50MB 级 SillyTavern data 备份验证：后端 picker 选择文件后可恢复，避免了前端传输造成的卡死/闪退。
 
 ### 12.17 `GET /api/extensions/discover`
 
@@ -2317,8 +2341,14 @@ file
 
 - rawfile 内置系统扩展：`public/scripts/extensions/<name>`
 - 用户本地扩展：`data/default-user/extensions/<name>`，返回为 `third-party/<name>`
+- 用户本地第三方容器：`data/default-user/extensions/third-party/<name>`，返回为 `third-party/<name>`
+- 用户根目录兼容路径：`data/default-user/public/scripts/extensions/third-party/<name>`、`data/default-user/scripts/extensions/third-party/<name>`
+- data 根目录兼容路径：`data/extensions/<name>`、`data/extensions/third-party/<name>`、`data/public/scripts/extensions/third-party/<name>`、`data/scripts/extensions/third-party/<name>`
 - 应用私有全局扩展：`<context.filesDir>/extensions/global/<name>`，返回为 `third-party/<name>`
+- 应用私有全局兼容路径：`<context.filesDir>/data/globalExtensions/<name>`
 - rawfile 第三方扩展：`public/scripts/extensions/third-party/<name>`
+
+扫描时会跳过没有 `manifest.json` 的 `third-party` 容器目录，避免把容器本身当成插件。
 
 示例响应：
 
@@ -2344,8 +2374,8 @@ GET /scripts/extensions/third-party/<extension>/<file>
 ```
 
 查找顺序：
-1. `data/default-user/extensions/<extension>/<file>`
-2. `<context.filesDir>/extensions/global/<extension>/<file>`
+1. 本地扩展兼容根：`data/default-user/extensions`、`data/default-user/extensions/third-party`、`data/default-user/public/scripts/extensions/third-party`、`data/default-user/scripts/extensions/third-party`、`data/extensions`、`data/extensions/third-party`、`data/public/scripts/extensions/third-party`、`data/scripts/extensions/third-party`
+2. 全局扩展兼容根：`<context.filesDir>/extensions/global`、`data/globalExtensions`、`data/public/scripts/extensions/third-party`
 3. `public/scripts/extensions/third-party/<extension>/<file>`
 
 路径会拒绝空路径、`.`、`..` 和空字符。
@@ -2362,7 +2392,12 @@ GET /scripts/extensions/third-party/<extension>/<file>
 - `POST /api/extensions/install`：校验 `url` 后返回 `501 git_unavailable`。
 - `POST /api/extensions/switch`：校验参数和目录后返回 `501 git_unavailable`。
 
-当前不支持 Git clone、Git pull、Git checkout、远程分支查询，也不解析扩展 manifest。
+当前不支持 Git clone、Git pull、Git checkout、远程分支查询，也不解析扩展 manifest。下一步推荐实现路线：
+
+- 用 C/C++ 或 Rust 编译 OHOS native `.so`，内部接 `libgit2`。
+- 通过 ArkTS NAPI 暴露最小 Git API：`clone(url, targetPath, branch?)`、`fetch(repoPath)`、`pullFastForward(repoPath)`、`listBranches(repoPath)`、`checkoutBranch(repoPath, branch)`、`getStatus(repoPath)`。
+- ArkTS `ExtensionsService` 继续负责路径校验、请求/响应兼容、local/global 目录选择和错误格式；native 层只负责 Git 操作。
+- 第一阶段只支持 HTTPS 公共仓库和 fast-forward 更新，路径必须限制在扩展目录内；私有仓库、认证凭据、submodule、merge 冲突和 hook 执行先暂缓。
 
 ## 13. Tokenizer 接口
 

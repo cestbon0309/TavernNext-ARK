@@ -1,10 +1,12 @@
+import { common } from '@kit.AbilityKit';
+import { zlib } from '@kit.BasicServicesKit';
+import { fileIo, picker } from '@kit.CoreFileKit';
 import { CryptoUtils } from './CryptoUtils';
 import { DataDirectories, UserDirectories } from './DataDirectories';
 import { FileStore } from './FileStore';
 import { emptyJsonRecord, HttpRequest, HttpResponse, JsonArray, JsonRecord } from './HttpTypes';
 import { joinPath, sanitizeFileName } from './PathUtils';
 import { ShareExportService } from './ShareExportService';
-import { zlib } from '@kit.BasicServicesKit';
 
 type JsonValue = Object | string | number | boolean | null | JsonArray;
 
@@ -18,6 +20,20 @@ class TavernUser {
   admin: boolean = false;
 }
 
+class RestorePaths {
+  restoreRoot: string;
+  uploadPath: string;
+  unpackRoot: string;
+  previousDataRoot: string;
+
+  constructor(restoreRoot: string, uploadPath: string, unpackRoot: string, previousDataRoot: string) {
+    this.restoreRoot = restoreRoot;
+    this.uploadPath = uploadPath;
+    this.unpackRoot = unpackRoot;
+    this.previousDataRoot = previousDataRoot;
+  }
+}
+
 export class UsersService {
   private static readonly keyPrefix: string = 'user:';
   private static readonly avatarPrefix: string = 'avatar:';
@@ -26,14 +42,17 @@ export class UsersService {
   private dirs: DataDirectories;
   private crypto: CryptoUtils;
   private shareExports: ShareExportService;
+  private context: common.UIAbilityContext;
   private resetCodes: Map<string, string> = new Map<string, string>();
   private recoverCodes: Map<string, string> = new Map<string, string>();
 
-  constructor(store: FileStore, dirs: DataDirectories, crypto: CryptoUtils, shareExports: ShareExportService) {
+  constructor(store: FileStore, dirs: DataDirectories, crypto: CryptoUtils, shareExports: ShareExportService,
+    context: common.UIAbilityContext) {
     this.store = store;
     this.dirs = dirs;
     this.crypto = crypto;
     this.shareExports = shareExports;
+    this.context = context;
     this.ensureDefaultUser();
   }
 
@@ -256,23 +275,58 @@ export class UsersService {
       return HttpResponse.json(this.error('Backup file must be a zip archive'), 400);
     }
 
-    const restoreId = this.timestampWithMs();
-    const restoreRoot = joinPath(this.dirs.restoreRoot, `restore-${restoreId}`);
-    const uploadPath = joinPath(restoreRoot, 'upload.zip');
-    const unpackRoot = joinPath(restoreRoot, 'unpacked');
-    const previousDataRoot = joinPath(this.dirs.restoreRoot, `previous-data-${restoreId}`);
-    this.store.ensureDir(restoreRoot);
-    this.store.ensureDir(unpackRoot);
-    this.store.writeBytes(uploadPath, file.bytes);
+    const paths = this.createRestorePaths();
+    this.store.ensureDir(paths.restoreRoot);
+    this.store.ensureDir(paths.unpackRoot);
+    this.store.writeBytes(paths.uploadPath, file.bytes);
+    return await this.restorePreparedZip(paths);
+  }
+
+  async restoreDataWithPicker(): Promise<HttpResponse> {
+    let selectedFiles: string[] = [];
+    try {
+      const documentPicker = new picker.DocumentViewPicker(this.context);
+      const options: picker.DocumentSelectOptions = {
+        maxSelectNumber: 1,
+        fileSuffixFilters: ['ZIP archive|.zip'],
+      };
+      selectedFiles = await documentPicker.select(options);
+    } catch (_err) {
+      return HttpResponse.json(this.error('Failed to open file picker'), 500);
+    }
+
+    if (selectedFiles.length === 0 || selectedFiles[0].length === 0) {
+      const response = emptyJsonRecord();
+      response['ok'] = false;
+      response['cancelled'] = true;
+      response['message'] = 'File selection cancelled.';
+      return HttpResponse.json(response);
+    }
+
+    const paths = this.createRestorePaths();
+    this.store.ensureDir(paths.restoreRoot);
+    this.store.ensureDir(paths.unpackRoot);
+    if (!this.copySelectedFile(selectedFiles[0], paths.uploadPath)) {
+      this.store.deleteDirectory(paths.restoreRoot);
+      return HttpResponse.json(this.error('Failed to read selected backup file'), 400);
+    }
+
+    return await this.restorePreparedZip(paths);
+  }
+
+  private async restorePreparedZip(paths: RestorePaths): Promise<HttpResponse> {
+    const restoreRoot = paths.restoreRoot;
+    const unpackRoot = paths.unpackRoot;
+    const previousDataRoot = paths.previousDataRoot;
 
     try {
-      await zlib.decompressFile(uploadPath, unpackRoot);
+      await zlib.decompressFile(paths.uploadPath, unpackRoot);
     } catch (_err) {
       this.store.deleteDirectory(restoreRoot);
       return HttpResponse.json(this.error('Failed to decompress backup zip'), 400);
     }
 
-    const candidate = this.restoreCandidatePath(unpackRoot);
+    const candidate = this.restoreCandidatePath(unpackRoot, restoreRoot);
     if (candidate.length === 0) {
       this.store.deleteDirectory(restoreRoot);
       return HttpResponse.json(this.error('The zip archive does not look like a TavernNext data backup'), 400);
@@ -524,13 +578,91 @@ export class UsersService {
     return text.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   }
 
-  private restoreCandidatePath(unpackRoot: string): string {
-    const nestedDataRoot = joinPath(unpackRoot, 'data');
+  private createRestorePaths(): RestorePaths {
+    const restoreId = this.timestampWithMs();
+    const restoreRoot = joinPath(this.dirs.restoreRoot, `restore-${restoreId}`);
+    return new RestorePaths(restoreRoot, joinPath(restoreRoot, 'upload.zip'), joinPath(restoreRoot, 'unpacked'),
+      joinPath(this.dirs.restoreRoot, `previous-data-${restoreId}`));
+  }
+
+  private copySelectedFile(sourceUri: string, targetPath: string): boolean {
+    this.store.ensureParentDir(targetPath);
+    let source: fileIo.File | null = null;
+    let target: fileIo.File | null = null;
+    try {
+      source = fileIo.openSync(sourceUri, fileIo.OpenMode.READ_ONLY);
+      target = fileIo.openSync(targetPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC | fileIo.OpenMode.READ_WRITE);
+      const chunkSize = 1024 * 1024;
+      const buffer = new ArrayBuffer(chunkSize);
+      while (true) {
+        const readLength = fileIo.readSync(source.fd, buffer, { length: chunkSize });
+        if (readLength <= 0) {
+          break;
+        }
+        fileIo.writeSync(target.fd, buffer, { length: readLength });
+      }
+      return this.store.exists(targetPath);
+    } catch (_err) {
+      this.store.deleteFile(targetPath);
+      return false;
+    } finally {
+      if (source !== null) {
+        try {
+          fileIo.closeSync(source);
+        } catch (_err) {
+        }
+      }
+      if (target !== null) {
+        try {
+          fileIo.closeSync(target);
+        } catch (_err) {
+        }
+      }
+    }
+  }
+
+  private restoreCandidatePath(unpackRoot: string, restoreRoot: string): string {
+    const directDataRoot = this.findDataRootCandidate(unpackRoot);
+    if (directDataRoot.length > 0) {
+      return directDataRoot;
+    }
+
+    const directUserRoot = this.findUserRootCandidate(unpackRoot);
+    if (directUserRoot.length > 0) {
+      return this.wrapUserBackupAsDataRoot(directUserRoot, restoreRoot);
+    }
+
+    for (const entry of this.store.list(unpackRoot)) {
+      if (!entry.isDirectory) {
+        continue;
+      }
+      const nestedDataRoot = this.findDataRootCandidate(entry.path);
+      if (nestedDataRoot.length > 0) {
+        return nestedDataRoot;
+      }
+      const nestedUserRoot = this.findUserRootCandidate(entry.path);
+      if (nestedUserRoot.length > 0) {
+        return this.wrapUserBackupAsDataRoot(nestedUserRoot, restoreRoot);
+      }
+    }
+
+    return '';
+  }
+
+  private findDataRootCandidate(root: string): string {
+    const nestedDataRoot = joinPath(root, 'data');
     if (this.isDataDirectory(nestedDataRoot)) {
       return nestedDataRoot;
     }
-    if (this.isDataDirectory(unpackRoot)) {
-      return unpackRoot;
+    if (this.isDataDirectory(root)) {
+      return root;
+    }
+    return '';
+  }
+
+  private findUserRootCandidate(root: string): string {
+    if (this.isUserDirectory(root)) {
+      return root;
     }
     return '';
   }
@@ -539,6 +671,27 @@ export class UsersService {
     return this.store.exists(joinPath(path, 'default-user')) ||
       this.store.exists(joinPath(path, '_storage')) ||
       this.store.exists(joinPath(path, 'cookie-secret.txt'));
+  }
+
+  private isUserDirectory(path: string): boolean {
+    return this.store.exists(joinPath(path, 'settings.json')) ||
+      this.store.exists(joinPath(path, 'characters')) ||
+      this.store.exists(joinPath(path, 'chats')) ||
+      this.store.exists(joinPath(path, 'group chats')) ||
+      this.store.exists(joinPath(path, 'extensions')) ||
+      this.store.exists(joinPath(path, 'User Avatars'));
+  }
+
+  private wrapUserBackupAsDataRoot(userRoot: string, restoreRoot: string): string {
+    const normalizedRoot = joinPath(restoreRoot, 'normalized-data');
+    const normalizedUserRoot = joinPath(normalizedRoot, 'default-user');
+    this.store.deleteDirectory(normalizedRoot);
+    this.store.ensureDir(normalizedRoot);
+    if (!this.store.copyDirectory(userRoot, normalizedUserRoot)) {
+      this.store.deleteDirectory(normalizedRoot);
+      return '';
+    }
+    return normalizedRoot;
   }
 
   private replaceDataDirectory(source: string, previousDataRoot: string): boolean {

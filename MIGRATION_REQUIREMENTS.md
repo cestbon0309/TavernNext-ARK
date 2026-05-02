@@ -53,6 +53,14 @@
 - `HttpServer` 只做 HTTP 解析、路由分发和 multipart/json 解析，不塞业务规则。
 - OHOS 适配代码不应污染 SillyTavern 数据结构。
 
+## 3.1 Git 能力边界
+
+- ArkTS 后端不手写 Git 协议，也不假设设备里存在系统 `git` 命令。
+- 第三方扩展安装、更新、分支切换、版本状态查询应走 native `.so` + `libgit2` 路线。
+- ArkTS 只负责 SillyTavern HTTP API 兼容、路径校验、local/global 目录策略和错误响应；native 层只暴露 clone/fetch/pull/checkout/status 等受限能力。
+- Git 操作的目标路径必须限制在扩展目录内，不能写入 `data/default-user/` 之外的任意位置，也不能执行仓库 hooks。
+- 第一阶段只要求 HTTPS 公共仓库和 fast-forward 更新；私有仓库认证、submodule、merge 冲突处理可以后置。
+
 ## 4. 工程与调试要求
 
 - 基于用户用 DevEco Studio 创建的空项目继续开发，项目目录为：

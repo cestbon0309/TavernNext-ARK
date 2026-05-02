@@ -22,6 +22,8 @@ export class ExtensionsService {
     this.store.ensureDir(this.dirs.defaultUser.extensions);
     this.store.ensureDir(this.dirs.globalExtensionsRoot);
     const extensions: JsonRecord[] = [];
+    const localRoots = this.localExtensionRoots();
+    const globalRoots = this.globalExtensionRoots();
 
     for (const name of this.rawDirectoryNames(ExtensionsService.rawSystemRoot)) {
       if (name === 'third-party') {
@@ -33,7 +35,7 @@ export class ExtensionsService {
       extensions.push(row);
     }
 
-    const localNames = this.localExtensionNames(this.dirs.defaultUser.extensions);
+    const localNames = this.localExtensionNames(localRoots);
     for (const name of localNames) {
       const row = emptyJsonRecord();
       row['type'] = 'local';
@@ -42,7 +44,7 @@ export class ExtensionsService {
     }
 
     const rawGlobalNames = this.rawDirectoryNames(`${ExtensionsService.rawSystemRoot}/third-party`);
-    const privateGlobalNames = this.localExtensionNames(this.dirs.globalExtensionsRoot);
+    const privateGlobalNames = this.localExtensionNames(globalRoots);
     const globalNames = [...rawGlobalNames, ...privateGlobalNames];
     const seen = new Set<string>();
     for (const name of globalNames) {
@@ -184,16 +186,20 @@ export class ExtensionsService {
       return HttpResponse.empty(404);
     }
 
-    const localPath = joinPath(this.dirs.defaultUser.extensions, relative);
-    const localBytes = this.store.readBytes(localPath);
-    if (localBytes !== null) {
-      return HttpResponse.bytes(localBytes, 200, this.contentTypeForFile(localPath));
+    for (const root of this.localExtensionRoots()) {
+      const localPath = joinPath(root, relative);
+      const localBytes = this.store.readBytes(localPath);
+      if (localBytes !== null) {
+        return HttpResponse.bytes(localBytes, 200, this.contentTypeForFile(localPath));
+      }
     }
 
-    const globalPath = joinPath(this.dirs.globalExtensionsRoot, relative);
-    const globalBytes = this.store.readBytes(globalPath);
-    if (globalBytes !== null) {
-      return HttpResponse.bytes(globalBytes, 200, this.contentTypeForFile(globalPath));
+    for (const root of this.globalExtensionRoots()) {
+      const globalPath = joinPath(root, relative);
+      const globalBytes = this.store.readBytes(globalPath);
+      if (globalBytes !== null) {
+        return HttpResponse.bytes(globalBytes, 200, this.contentTypeForFile(globalPath));
+      }
     }
 
     try {
@@ -224,14 +230,42 @@ export class ExtensionsService {
     }
   }
 
-  private localExtensionNames(path: string): string[] {
+  private localExtensionNames(paths: string[]): string[] {
     const names: string[] = [];
-    for (const entry of this.store.list(path)) {
-      if (entry.isDirectory) {
-        names.push(entry.name);
+    const seen = new Set<string>();
+    for (const path of paths) {
+      for (const entry of this.store.list(path)) {
+        if (entry.name === 'third-party' && !this.store.exists(joinPath(entry.path, 'manifest.json'))) {
+          continue;
+        }
+        if (entry.isDirectory && !seen.has(entry.name)) {
+          seen.add(entry.name);
+          names.push(entry.name);
+        }
       }
     }
     return names.sort();
+  }
+
+  private localExtensionRoots(): string[] {
+    return [
+      this.dirs.defaultUser.extensions,
+      joinPath(this.dirs.defaultUser.extensions, 'third-party'),
+      joinPath(this.dirs.defaultUser.root, 'public', 'scripts', 'extensions', 'third-party'),
+      joinPath(this.dirs.defaultUser.root, 'scripts', 'extensions', 'third-party'),
+      joinPath(this.dirs.dataRoot, 'extensions'),
+      joinPath(this.dirs.dataRoot, 'extensions', 'third-party'),
+      joinPath(this.dirs.dataRoot, 'public', 'scripts', 'extensions', 'third-party'),
+      joinPath(this.dirs.dataRoot, 'scripts', 'extensions', 'third-party'),
+    ].filter((path: string, index: number, paths: string[]): boolean => paths.indexOf(path) === index);
+  }
+
+  private globalExtensionRoots(): string[] {
+    return [
+      this.dirs.globalExtensionsRoot,
+      joinPath(this.dirs.dataRoot, 'globalExtensions'),
+      joinPath(this.dirs.dataRoot, 'public', 'scripts', 'extensions', 'third-party'),
+    ].filter((path: string, index: number, paths: string[]): boolean => paths.indexOf(path) === index);
   }
 
   private extensionPath(extensionName: string, global: boolean): string {

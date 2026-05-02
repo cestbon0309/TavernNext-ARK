@@ -15,7 +15,8 @@ http://127.0.0.1:8000
 - settings、角色卡、聊天、群聊、世界书、groups、QuickReplies、Comfy workflow 列表等本地数据 API 的基础兼容。
 - 角色卡 PNG `tEXt/chara` 元数据读写，JSON/PNG 角色导入导出，聊天导入导出，data zip 导出/恢复。
 - 背景、头像、聊天图片、附件、sprites 和 image-metadata 等媒体上传接口；图片处理已接入 Harmony `ImageKit`，zip 压缩/解压已接入 Harmony `zlib`。
-- secrets、users、extensions 的本地兼容接口；目前仍是默认用户优先，不启用真实多用户 session。
+- secrets、users、extensions 的本地兼容接口；目前仍是默认用户优先，不启用真实多用户 session。扩展发现已兼容导入备份里常见的 `extensions/third-party/<name>` 和 `public/scripts/extensions/third-party/<name>` 结构，第三方扩展静态资源也会从这些位置优先读取。
+- `/version` 现在返回 SillyTavern 兼容 agent，例如 `SillyTavern:1.17.0:TavernNext-OHOS`，用于通过第三方扩展的 `minimum_client_version` 检查。
 - OpenAI chat-completions 最小可用代理：支持 `openai` 和 `custom` 两种来源，`status` 请求 `/v1/models`，`generate` 请求 `/v1/chat/completions`，支持非流式 JSON 和流式 `text/event-stream` 透传。
 
 本次确认的模型调用状态：
@@ -28,6 +29,7 @@ http://127.0.0.1:8000
 - 模型 provider 暂缓：OpenRouter、Claude、Gemini、NovelAI、Kobold/TextGen、Horde、Stable Diffusion 等真实代理还未完整对齐；目前只完成 OpenAI/OpenAI-compatible 最小链路。
 - Tokenizer 仍是估算接口：尚未接入 MikTik/native tokenizer，也没有完整 OpenAI/Claude/Llama/Qwen/Gemma 等 encode/decode/count。
 - Vector 仍未完成：向量 insert/query/delete/list/purge、embedding 调用和本地持久化索引都还需要后续实现。
+- 第三方扩展 Git 能力仍未接入：`install/update/branches/switch/version` 目前是本地占位兼容。下一阶段采用 native `.so` + `libgit2` 路线，通过 ArkTS NAPI 暴露 clone/fetch/pull/checkout/status 等能力，避免在 ArkTS 里手写 Git 协议。
 - settings snapshots、presets、themes、moving UI、assets/content-manager、聊天备份等管理类接口仍有缺口。
 
 ## 数据目录兼容
@@ -197,6 +199,7 @@ data/
 - `POST /api/users/change-password`
 - `POST /api/users/backup`
 - `POST /api/users/restore-data`
+- `POST /api/users/restore-data-picker`
 - `POST /api/users/reset-settings`
 - `POST /api/users/change-name`
 - `POST /api/users/reset-step1`
@@ -247,7 +250,7 @@ SillyTavern/dist/_webpack/d2f8920b496f6d16/output/lib.js
 
 页面入口 `entry/src/main/ets/pages/Index.ets` 使用 `Web` 组件加载 `http://127.0.0.1:8000`，并开启 JavaScript、DOM storage、database、图片加载、mixed mode 和 online cache。错误浮层只在主框架加载失败时显示，避免子资源 404 误报为整页失败。
 
-扩展抽屉中新增了 `数据导出/恢复` 折叠栏：导出会调用 `POST /api/users/backup`，使用 Harmony `zlib.compressFile` 压缩 `<context.filesDir>/data` 并唤起 ShareKit；导入会选择 zip，弹窗确认覆盖后调用 `POST /api/users/restore-data`，使用 Harmony `zlib.decompressFile` 解压并覆盖 data 目录。
+扩展抽屉中新增了 `数据导出/恢复` 折叠栏：导出会调用 `POST /api/users/backup`，使用 Harmony `zlib.compressFile` 压缩 `<context.filesDir>/data` 并唤起 ShareKit；导入不再由前端读取 zip 后上传，而是弹窗确认覆盖后调用 `POST /api/users/restore-data-picker`，由 ArkTS 后端唤起 Harmony `DocumentViewPicker` 选择 zip，再使用 `zlib.decompressFile` 解压并覆盖 data 目录。保留 `POST /api/users/restore-data` 作为 HTTP multipart 调试兼容入口。
 
 ## 已验证
 
@@ -268,7 +271,9 @@ SillyTavern/dist/_webpack/d2f8920b496f6d16/output/lib.js
 - `POST /api/secrets/write`、`POST /api/secrets/read`、`POST /api/secrets/delete` 已通过 HTTP API 验证。
 - `POST /api/users/backup` 已通过 HTTP API 验证，能够生成 data zip 并通过 ShareKit 返回分享结果。
 - `POST /api/users/restore-data` 已通过非破坏性 HTTP API 验证，坏 zip 和非 data zip 都会返回 `400`，不会覆盖当前 `data/`。
+- `POST /api/users/restore-data-picker` 已在虚拟机中验证可由后端唤起文件选择器，并可恢复导入的 SillyTavern data/user-root 备份；导入后的 `extensions/third-party` 插件能被发现和加载。
 - 扩展抽屉的 `数据导出/恢复` 折叠栏已能在 rawfile HTML 中加载。
+- `GET /api/extensions/discover` 已验证能发现导入备份中的 `third-party/JS-Slash-Runner` 和 `third-party/ST-Prompt-Template`；`/scripts/extensions/third-party/.../manifest.json`、`dist/index.js`、`dist/index.css` 静态资源可正常返回；`JS-Slash-Runner` 的 `minimum_client_version=1.12.13` 可通过当前 `/version` 响应启用。
 - 媒体上传回归已通过 hdc 端口映射和 curl 验证：背景上传/列表/缩略图/删除、用户头像上传裁剪/缩略图/删除、聊天图片上传/列表/旧路由兼容/静态读取/删除、附件上传/verify/读取/删除、sprites 单张上传/zip 上传/读取/删除、`image-metadata` 文件夹创建/assign/delete/cleanup，以及 `m4a` 音频媒体列表。
 - OpenAI chat-completions 最小代理已通过本机 mock OpenAI 服务验证：状态检查、非流式生成、流式 SSE 生成均可用，且上游请求体不会包含 `reverse_proxy`、`proxy_password`、`custom_*` 等内部字段。
 

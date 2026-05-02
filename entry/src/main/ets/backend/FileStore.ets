@@ -132,12 +132,19 @@ export class FileStore {
   }
 
   copyFile(source: string, target: string): boolean {
-    const bytes = this.readBytes(source);
-    if (bytes === null) {
+    if (!this.exists(source)) {
       return false;
     }
-    this.writeBytes(target, bytes);
-    return this.exists(target);
+    this.ensureParentDir(target);
+    if (this.exists(target)) {
+      this.deleteFile(target);
+    }
+    try {
+      fileIo.copyFileSync(source, target);
+      return this.exists(target);
+    } catch (_err) {
+      return false;
+    }
   }
 
   copyDirectory(source: string, target: string): boolean {

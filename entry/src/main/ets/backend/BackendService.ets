@@ -58,7 +58,8 @@ export class BackendService {
     this.core = new SillyTavernCore(this.store, this.directories, this.shareExports);
     this.media = new MediaService(this.store, this.directories, this.crypto);
     this.secrets = new SecretsService(this.store, this.directories.defaultUser, this.crypto);
-    this.users = new UsersService(this.store, this.directories, this.crypto, this.shareExports);
+    this.users = new UsersService(this.store, this.directories, this.crypto, this.shareExports,
+      context as common.UIAbilityContext);
     this.extensions = new ExtensionsService(this.store, this.directories, context.resourceManager);
     this.modelProxy = new ModelProxyService(this.directories, this.secrets);
     this.tokenizers = new TokenizerService();
@@ -236,6 +237,7 @@ export class BackendService {
     this.server.route('POST', '/api/users/change-password', async (request) => this.users.changePassword(request));
     this.server.route('POST', '/api/users/backup', async (request) => await this.users.backup(request));
     this.server.route('POST', '/api/users/restore-data', async (request) => await this.users.restoreData(request));
+    this.server.route('POST', '/api/users/restore-data-picker', async () => await this.users.restoreDataWithPicker());
     this.server.route('POST', '/api/users/reset-settings', async (request) => this.users.resetSettings(request));
     this.server.route('POST', '/api/users/change-name', async (request) => this.users.changeName(request));
     this.server.route('POST', '/api/users/reset-step1', async () => this.users.resetStep1());
