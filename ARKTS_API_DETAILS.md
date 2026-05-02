@@ -13,6 +13,7 @@
 - 媒体相关处理已尽量使用 Harmony 官方 API：图片尺寸/裁剪/缩略图/平均色使用 `ImageKit`，zip 压缩/解压使用 `zlib`。
 - data 恢复的前端入口已切换为后端唤起 Harmony 文件选择器，避免 50MB 级 zip 先从 WebView 上传到 ArkTS HTTP 后端再落盘；HTTP multipart 恢复接口仍保留用于调试。
 - 扩展发现和第三方扩展静态资源已兼容导入备份里的 `extensions/third-party/<name>`、`public/scripts/extensions/third-party/<name>` 等结构；`/version` 返回 SillyTavern 兼容 agent 以满足第三方扩展版本门槛。
+- 第三方扩展 Git 第一阶段已接入 native `.so` + `libgit2`：支持 HTTPS 公共仓库安装、版本状态、分支列表、分支切换和 fast-forward 更新。
 - OpenAI chat-completions 支持 `openai` 和 `custom` 来源，支持 `/models` 状态检查、`/chat/completions` 非流式生成和流式 SSE 生成。
 - 流式生成已改为 Harmony `requestInStream()` + `dataReceive` 转发，并通过虚拟机、hdc 端口映射、慢速 mock OpenAI 服务确认分块即时到达。
 
@@ -21,7 +22,7 @@
 - 模型 provider 暂缓：OpenRouter、Claude、Gemini、NovelAI、Kobold/TextGen、Horde、Stable Diffusion 等还未完整实现。
 - Tokenizer 暂缓：当前只有估算/占位接口，尚未接入 MikTik/OHOS native tokenizer。
 - Vector 暂缓：embedding 调用、本地向量索引、insert/query/delete/list/purge 仍未完成。
-- Git 暂缓：第三方扩展 install/update/branch/status 目前只有本地占位兼容，计划用 native `.so` + `libgit2` 经 ArkTS NAPI 接入。
+- Git 后续增强：私有仓库认证、SSH、submodule、非 fast-forward merge 冲突处理、hooks 执行仍暂缓。
 - settings snapshots、presets、themes、moving UI、assets/content-manager、聊天备份等管理类接口仍需后续补齐。
 
 代码入口：
@@ -2382,22 +2383,34 @@ GET /scripts/extensions/third-party/<extension>/<file>
 
 ### 12.20 扩展管理接口
 
-当前注册并实现了最小本地兼容行为：
+当前已接入 native `.so` + `libgit2`，ArkTS 负责 SillyTavern HTTP API 兼容、路径选择和错误响应，native 层负责受限 Git 操作。native module 名为 `libtavern_git.so`，由 `entry/src/main/cpp/git_native.cpp` 导出，当前编译进 HAP 的 ABI 包括 `arm64-v8a` 和 `x86_64`。
 
-- `POST /api/extensions/version`：本地目录存在时返回空 branch/commit，`isUpToDate=true`。
-- `POST /api/extensions/update`：本地目录存在时返回 up-to-date；不执行 Git。
-- `POST /api/extensions/branches`：本地目录存在时返回 `[]`。
+- `POST /api/extensions/install`：按 URL basename 生成扩展目录名，clone 到本地或全局扩展目录，读取 `manifest.json` 后返回 `version`、`author`、`display_name`、`extensionPath`、`folderName`。默认 `depth=1`，支持请求体里的 `branch`。
+- `POST /api/extensions/version`：打开仓库，fetch origin，返回 `currentBranchName`、`currentCommitHash`、`isUpToDate`、`remoteUrl`。如果目录不是 Git 仓库，会按原版兼容返回空 branch/commit 且 `isUpToDate=true`。
+- `POST /api/extensions/update`：fetch origin 并只执行 fast-forward 更新，返回 `shortCommitHash`、`currentCommitHash`、`currentBranchName`、`extensionPath`、`isUpToDate`、`remoteUrl`。
+- `POST /api/extensions/branches`：必要时 unshallow，并把 origin fetch refspec 扩展为全部远程分支，然后返回本地和 `origin/*` 分支数组。
+- `POST /api/extensions/switch`：支持切换本地分支；传入 `origin/<branch>` 时，如果本地分支不存在，会从远程分支创建同名本地分支后 checkout。
 - `POST /api/extensions/move`：在 `default-user/extensions` 和 `<filesDir>/extensions/global` 之间移动目录。
 - `POST /api/extensions/delete`：删除本地或全局扩展目录。
-- `POST /api/extensions/install`：校验 `url` 后返回 `501 git_unavailable`。
-- `POST /api/extensions/switch`：校验参数和目录后返回 `501 git_unavailable`。
 
-当前不支持 Git clone、Git pull、Git checkout、远程分支查询，也不解析扩展 manifest。下一步推荐实现路线：
+TLS 处理：
 
-- 用 C/C++ 或 Rust 编译 OHOS native `.so`，内部接 `libgit2`。
-- 通过 ArkTS NAPI 暴露最小 Git API：`clone(url, targetPath, branch?)`、`fetch(repoPath)`、`pullFastForward(repoPath)`、`listBranches(repoPath)`、`checkoutBranch(repoPath, branch)`、`getStatus(repoPath)`。
-- ArkTS `ExtensionsService` 继续负责路径校验、请求/响应兼容、local/global 目录选择和错误格式；native 层只负责 Git 操作。
-- 第一阶段只支持 HTTPS 公共仓库和 fast-forward 更新，路径必须限制在扩展目录内；私有仓库、认证凭据、submodule、merge 冲突和 hook 执行先暂缓。
+- `libgit2` 使用 mbedTLS 编译，应用内打包 `rawfile/certs/cacert.pem`。
+- 后端启动时把证书复制到 `<context.filesDir>/_certs/cacert.pem`，所有 Git fetch/clone/status 操作都会把该路径传给 native 层，默认不关闭证书校验。
+
+已验证：
+
+- `hvigor assembleHap --mode module -p module=entry@default -p product=default` 构建成功。
+- `hdc install -r` 可安装到 x86_64 DevEco 模拟器，`GET /health` 正常。
+- 使用 `hdc fport` 后，通过 HTTP API 验证 `Extension-Blip` 的 `discover`、`version`、`branches`、`update` 和 `switch` 均可用，`version` 返回 GitHub remote 和真实 commit。
+
+仍暂缓：
+
+- 私有仓库认证和 credential helper。
+- SSH remote。
+- submodule。
+- 非 fast-forward merge、rebase、冲突处理。
+- 执行 Git hooks。
 
 ## 13. Tokenizer 接口
 
@@ -2819,13 +2832,13 @@ avatar
 - `POST /api/users/reset-step2`
 - `GET /api/extensions/discover`
 - `POST /api/extensions/discover`
-- `POST /api/extensions/version`
-- `POST /api/extensions/install`，当前返回 `501 git_unavailable`
-- `POST /api/extensions/update`，本地目录存在时返回 up-to-date，不执行 Git
+- `POST /api/extensions/version`，native `libgit2` 查询 branch、commit、remote 和 up-to-date 状态
+- `POST /api/extensions/install`，native `libgit2` clone HTTPS 公共仓库并读取 manifest
+- `POST /api/extensions/update`，native `libgit2` fetch 并执行 fast-forward 更新
 - `POST /api/extensions/delete`
 - `POST /api/extensions/move`
-- `POST /api/extensions/switch`，当前返回 `501 git_unavailable`
-- `POST /api/extensions/branches`
+- `POST /api/extensions/switch`，切换本地分支或从 `origin/<branch>` 创建本地分支
+- `POST /api/extensions/branches`，列出本地和远程分支
 - 扫描 rawfile 系统扩展、`default-user/extensions`、`<filesDir>/extensions/global`
 - 提供 `/scripts/extensions/third-party/*` 的本地/全局/rawfile fallback 静态资源
 
@@ -2837,9 +2850,8 @@ avatar
   - 更完整的错误格式与原版日志细节
 - extensions：
   - 解析 manifest
-  - 第三方扩展安装和更新
-  - Git clone、Git pull、Git checkout、远程分支查询
-  - 扩展版本、远端 URL、commit hash 的真实状态
+  - 私有 Git 仓库认证、SSH、submodule
+  - 非 fast-forward merge 冲突处理
 - 用户账号：
   - 真实登录 session、cookie-session、当前用户切换和权限中间件
   - `enable_accounts=true` 模式下的完整前端流程
@@ -2998,8 +3010,9 @@ avatar
    - 已完成：secrets 多值结构、write/read/delete/find/rotate/rename 基础版
    - 已完成：users 本地 CRUD、密码校验、重置/恢复码基础版
    - 已完成：data zip 导出和恢复，使用 Harmony zlib 与 ShareKit
-   - 已完成：扩展发现扫描本地/全局/rawfile，扩展移动/删除/版本占位
-   - 待补：真实 session、当前用户切换、Git 安装/更新、manifest 完整解析
+   - 已完成：扩展发现扫描本地/全局/rawfile，扩展移动/删除
+   - 已完成：第三方扩展 Git 安装、版本、更新、分支列表、分支切换，使用 native `libgit2`
+   - 待补：真实 session、当前用户切换、私有 Git 仓库认证、manifest 完整解析
 5. 媒体上传阶段：
    - 已完成：avatars upload/delete
    - 已完成：backgrounds upload/delete/rename

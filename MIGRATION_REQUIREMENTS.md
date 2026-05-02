@@ -59,7 +59,9 @@
 - 第三方扩展安装、更新、分支切换、版本状态查询应走 native `.so` + `libgit2` 路线。
 - ArkTS 只负责 SillyTavern HTTP API 兼容、路径校验、local/global 目录策略和错误响应；native 层只暴露 clone/fetch/pull/checkout/status 等受限能力。
 - Git 操作的目标路径必须限制在扩展目录内，不能写入 `data/default-user/` 之外的任意位置，也不能执行仓库 hooks。
-- 第一阶段只要求 HTTPS 公共仓库和 fast-forward 更新；私有仓库认证、submodule、merge 冲突处理可以后置。
+- 第一阶段已按该路线接入 `libtavern_git.so`，支持 HTTPS 公共仓库 clone/fetch/status/branch/checkout 和 fast-forward 更新。
+- private credential、SSH、submodule、merge 冲突处理和 hooks 执行仍后置。
+- `libgit2` 使用 mbedTLS，应用内打包 CA bundle，启动时复制到 `<context.filesDir>/_certs/cacert.pem` 后显式传给 native Git；默认不得关闭 TLS 证书校验。
 
 ## 4. 工程与调试要求
 

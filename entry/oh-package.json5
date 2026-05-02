@@ -5,6 +5,8 @@
   "main": "",
   "author": "",
   "license": "",
-  "dependencies": {}
+  "dependencies": {
+    "libtavern_git.so": "file:./src/main/cpp/types/libtavern_git"
+  }
 }
 

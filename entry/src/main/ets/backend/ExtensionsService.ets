@@ -1,6 +1,7 @@
 import { resourceManager } from '@kit.LocalizationKit';
 import { DataDirectories } from './DataDirectories';
 import { FileEntry, FileStore } from './FileStore';
+import { GitBranchInfo, GitService, GitUpdateResult, GitVersionResult } from './GitService';
 import { emptyJsonRecord, HttpRequest, HttpResponse, JsonArray, JsonRecord } from './HttpTypes';
 import { joinPath, sanitizeFileName } from './PathUtils';
 
@@ -11,11 +12,13 @@ export class ExtensionsService {
   private store: FileStore;
   private dirs: DataDirectories;
   private manager: resourceManager.ResourceManager;
+  private git: GitService;
 
-  constructor(store: FileStore, dirs: DataDirectories, manager: resourceManager.ResourceManager) {
+  constructor(store: FileStore, dirs: DataDirectories, manager: resourceManager.ResourceManager, git: GitService) {
     this.store = store;
     this.dirs = dirs;
     this.manager = manager;
+    this.git = git;
   }
 
   discover(): HttpResponse {
@@ -61,15 +64,44 @@ export class ExtensionsService {
     return HttpResponse.json(extensions);
   }
 
-  install(request: HttpRequest): HttpResponse {
+  async install(request: HttpRequest): Promise<HttpResponse> {
     const body = this.bodyAsRecord(request);
-    if (this.asString(body['url']).length === 0) {
+    const url = this.asString(body['url']).trim();
+    if (url.length === 0) {
       return HttpResponse.text('Bad Request: URL is required in the request body.', 400);
     }
-    return HttpResponse.json(this.gitUnavailable('install', 'Git clone is not available inside the OHOS ArkTS runtime.'), 501);
+    const folderName = this.git.folderNameFromUrl(url);
+    if (folderName.length === 0) {
+      return HttpResponse.text('Bad Request: URL does not contain a valid extension folder name.', 400);
+    }
+
+    const global = body['global'] === true;
+    const branch = this.asString(body['branch']).trim();
+    const targetPath = this.extensionPath(folderName, global);
+    if (this.store.exists(targetPath)) {
+      return HttpResponse.text(`Directory already exists at ${targetPath}`, 409);
+    }
+
+    try {
+      this.store.ensureDir(global ? this.dirs.globalExtensionsRoot : this.dirs.defaultUser.extensions);
+      await this.git.clone(url, targetPath, { branch, depth: 1 });
+      const manifest = this.git.readManifest(targetPath);
+      const response = emptyJsonRecord();
+      response['version'] = this.asString(manifest['version']) || '0.0.0';
+      response['author'] = this.asString(manifest['author']) || 'Unknown';
+      response['display_name'] = this.asString(manifest['display_name']) || folderName;
+      response['extensionPath'] = targetPath;
+      response['folderName'] = folderName;
+      return HttpResponse.json(response);
+    } catch (err) {
+      if (this.store.exists(targetPath)) {
+        this.store.deleteDirectory(targetPath);
+      }
+      return HttpResponse.text(`Server Error: ${this.errorMessage(err)}`, 500);
+    }
   }
 
-  update(request: HttpRequest): HttpResponse {
+  async update(request: HttpRequest): Promise<HttpResponse> {
     const body = this.bodyAsRecord(request);
     const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
     if (extensionName.length === 0) {
@@ -79,16 +111,14 @@ export class ExtensionsService {
     if (!this.store.exists(path)) {
       return HttpResponse.text(`Directory does not exist at ${path}`, 404);
     }
-    const response = emptyJsonRecord();
-    response['shortCommitHash'] = '';
-    response['extensionPath'] = path;
-    response['isUpToDate'] = true;
-    response['remoteUrl'] = '';
-    response['message'] = 'Local OHOS extension directory is treated as up-to-date; Git pull is unavailable.';
-    return HttpResponse.json(response);
+    try {
+      return HttpResponse.json(this.gitUpdateToJson(await this.git.update(path)));
+    } catch (err) {
+      return HttpResponse.text(`Internal Server Error. ${this.errorMessage(err)}`, 500);
+    }
   }
 
-  branches(request: HttpRequest): HttpResponse {
+  async branches(request: HttpRequest): Promise<HttpResponse> {
     const body = this.bodyAsRecord(request);
     const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
     if (extensionName.length === 0) {
@@ -98,10 +128,21 @@ export class ExtensionsService {
     if (!this.store.exists(path)) {
       return HttpResponse.text(`Directory does not exist at ${path}`, 404);
     }
-    return HttpResponse.json([]);
+    try {
+      return HttpResponse.json((await this.git.branches(path)).map((branch: GitBranchInfo): JsonRecord => {
+        const row = emptyJsonRecord();
+        row['name'] = branch.name;
+        row['commit'] = branch.commit;
+        row['current'] = branch.current;
+        row['label'] = branch.label;
+        return row;
+      }));
+    } catch (err) {
+      return HttpResponse.text(`Internal Server Error. ${this.errorMessage(err)}`, 500);
+    }
   }
 
-  switchBranch(request: HttpRequest): HttpResponse {
+  async switchBranch(request: HttpRequest): Promise<HttpResponse> {
     const body = this.bodyAsRecord(request);
     const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
     const branch = this.asString(body['branch']);
@@ -112,7 +153,12 @@ export class ExtensionsService {
     if (!this.store.exists(path)) {
       return HttpResponse.text(`Directory does not exist at ${path}`, 404);
     }
-    return HttpResponse.json(this.gitUnavailable('switch', 'Git checkout is not available inside the OHOS ArkTS runtime.'), 501);
+    try {
+      await this.git.switchBranch(path, branch);
+      return HttpResponse.empty(204);
+    } catch (err) {
+      return HttpResponse.text(`Internal Server Error. ${this.errorMessage(err)}`, 500);
+    }
   }
 
   move(request: HttpRequest): HttpResponse {
@@ -141,7 +187,7 @@ export class ExtensionsService {
     return HttpResponse.empty(204);
   }
 
-  version(request: HttpRequest): HttpResponse {
+  async version(request: HttpRequest): Promise<HttpResponse> {
     const body = this.bodyAsRecord(request);
     const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
     if (extensionName.length === 0) {
@@ -151,12 +197,16 @@ export class ExtensionsService {
     if (!this.store.exists(path)) {
       return HttpResponse.text(`Directory does not exist at ${path}`, 404);
     }
-    const response = emptyJsonRecord();
-    response['currentBranchName'] = '';
-    response['currentCommitHash'] = '';
-    response['isUpToDate'] = true;
-    response['remoteUrl'] = '';
-    return HttpResponse.json(response);
+    try {
+      return HttpResponse.json(this.gitVersionToJson(await this.git.version(path)));
+    } catch (_err) {
+      const response = emptyJsonRecord();
+      response['currentBranchName'] = '';
+      response['currentCommitHash'] = '';
+      response['isUpToDate'] = true;
+      response['remoteUrl'] = '';
+      return HttpResponse.json(response);
+    }
   }
 
   delete(request: HttpRequest): HttpResponse {
@@ -297,14 +347,6 @@ export class ExtensionsService {
     return parts.map((part: string): string => sanitizeFileName(part)).join('/');
   }
 
-  private gitUnavailable(operation: string, message: string): JsonRecord {
-    const response = emptyJsonRecord();
-    response['error'] = 'git_unavailable';
-    response['operation'] = operation;
-    response['message'] = message;
-    return response;
-  }
-
   private bodyAsRecord(request: HttpRequest): JsonRecord {
     if (request.body === null || Array.isArray(request.body)) {
       return emptyJsonRecord();
@@ -317,6 +359,36 @@ export class ExtensionsService {
       return '';
     }
     return `${value}`;
+  }
+
+  private gitUpdateToJson(result: GitUpdateResult): JsonRecord {
+    const response = emptyJsonRecord();
+    response['shortCommitHash'] = result.shortCommitHash;
+    response['currentCommitHash'] = result.currentCommitHash;
+    response['currentBranchName'] = result.currentBranchName;
+    response['extensionPath'] = result.extensionPath;
+    response['isUpToDate'] = result.isUpToDate;
+    response['remoteUrl'] = result.remoteUrl;
+    return response;
+  }
+
+  private gitVersionToJson(result: GitVersionResult): JsonRecord {
+    const response = emptyJsonRecord();
+    response['currentBranchName'] = result.currentBranchName;
+    response['currentCommitHash'] = result.currentCommitHash;
+    response['isUpToDate'] = result.isUpToDate;
+    response['remoteUrl'] = result.remoteUrl;
+    return response;
+  }
+
+  private errorMessage(err: Object | null | undefined): string {
+    if (err === undefined || err === null) {
+      return 'Unknown error';
+    }
+    if (typeof err === 'string') {
+      return err;
+    }
+    return JSON.stringify(err);
   }
 
   private contentTypeForFile(path: string): string {

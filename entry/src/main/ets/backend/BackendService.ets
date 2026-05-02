@@ -4,9 +4,11 @@ import { CryptoUtils } from './CryptoUtils';
 import { DefaultContentSeeder } from './DefaultContentSeeder';
 import { ExtensionsService } from './ExtensionsService';
 import { FileStore } from './FileStore';
+import { GitService } from './GitService';
 import { HttpServer } from './HttpServer';
 import { MediaService } from './MediaService';
 import { ModelProxyService } from './ModelProxyService';
+import { joinPath } from './PathUtils';
 import { SecretsService } from './SecretsService';
 import { ShareExportService } from './ShareExportService';
 import { SillyTavernCore } from './SillyTavernCore';
@@ -39,6 +41,7 @@ export class BackendService {
   private crypto: CryptoUtils;
   private secrets: SecretsService;
   private users: UsersService;
+  private git: GitService;
   private extensions: ExtensionsService;
   private modelProxy: ModelProxyService;
   private tokenizers: TokenizerService;
@@ -60,7 +63,8 @@ export class BackendService {
     this.secrets = new SecretsService(this.store, this.directories.defaultUser, this.crypto);
     this.users = new UsersService(this.store, this.directories, this.crypto, this.shareExports,
       context as common.UIAbilityContext);
-    this.extensions = new ExtensionsService(this.store, this.directories, context.resourceManager);
+    this.git = new GitService(this.store, this.prepareGitCaBundle(context));
+    this.extensions = new ExtensionsService(this.store, this.directories, context.resourceManager, this.git);
     this.modelProxy = new ModelProxyService(this.directories, this.secrets);
     this.tokenizers = new TokenizerService();
     this.vectors = new VectorService(this.store, this.directories, this.secrets);
@@ -276,6 +280,16 @@ export class BackendService {
       }
       return this.staticFiles.serve(request);
     });
+  }
+
+  private prepareGitCaBundle(context: Context): string {
+    const caBundlePath = joinPath(context.filesDir, '_certs', 'cacert.pem');
+    try {
+      this.store.writeBytes(caBundlePath, context.resourceManager.getRawFileContentSync('certs/cacert.pem'));
+      return caBundlePath;
+    } catch (_err) {
+      return '';
+    }
   }
 
   private registerTokenizerRoutes(): void {
