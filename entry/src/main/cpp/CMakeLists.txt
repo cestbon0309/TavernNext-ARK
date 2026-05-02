@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5.0)
-project(tavern_git)
+project(tavern_native)
 
 set(NATIVERENDER_ROOT_PATH ${CMAKE_CURRENT_SOURCE_DIR})
 set(REPO_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../..)
@@ -42,3 +42,40 @@ target_include_directories(tavern_git PRIVATE
 )
 target_link_libraries(tavern_git PRIVATE libgit2package mbedtls mbedx509 mbedcrypto libace_napi.z.so)
 target_compile_features(tavern_git PRIVATE cxx_std_17)
+
+find_program(CARGO_EXECUTABLE cargo)
+if(NOT CARGO_EXECUTABLE)
+    message(FATAL_ERROR "cargo is required to build tavern_tokenizer native module")
+endif()
+
+if(OHOS_ARCH STREQUAL "x86_64")
+    set(RUST_OHOS_TARGET "x86_64-unknown-linux-ohos")
+elseif(OHOS_ARCH STREQUAL "arm64-v8a")
+    set(RUST_OHOS_TARGET "aarch64-unknown-linux-ohos")
+else()
+    message(FATAL_ERROR "Unsupported OHOS_ARCH for tavern_tokenizer: ${OHOS_ARCH}")
+endif()
+
+set(TAVERN_TOKENIZER_FFI_DIR "${REPO_ROOT}/native/tavern_tokenizer_ffi")
+set(TAVERN_TOKENIZER_FFI_LIB
+    "${TAVERN_TOKENIZER_FFI_DIR}/target/${RUST_OHOS_TARGET}/release/libtavern_tokenizer_ffi.a")
+
+add_custom_command(
+    OUTPUT "${TAVERN_TOKENIZER_FFI_LIB}"
+    COMMAND ${CARGO_EXECUTABLE} build --manifest-path "${TAVERN_TOKENIZER_FFI_DIR}/Cargo.toml"
+        --target ${RUST_OHOS_TARGET} --release
+    WORKING_DIRECTORY "${REPO_ROOT}"
+    DEPENDS
+        "${TAVERN_TOKENIZER_FFI_DIR}/Cargo.toml"
+        "${TAVERN_TOKENIZER_FFI_DIR}/src/lib.rs"
+        "${REPO_ROOT}/third_party/miktik/Cargo.toml"
+    COMMENT "Building Rust MikTik tokenizer bridge for ${RUST_OHOS_TARGET}"
+    VERBATIM
+)
+
+add_custom_target(tavern_tokenizer_ffi DEPENDS "${TAVERN_TOKENIZER_FFI_LIB}")
+
+add_library(tavern_tokenizer SHARED tokenizer_native.cpp)
+add_dependencies(tavern_tokenizer tavern_tokenizer_ffi)
+target_link_libraries(tavern_tokenizer PRIVATE "${TAVERN_TOKENIZER_FFI_LIB}" libace_napi.z.so)
+target_compile_features(tavern_tokenizer PRIVATE cxx_std_17)

@@ -108,5 +108,5 @@ entry/build/default/outputs/default/entry-default-signed.hap
 
 - 目标是尽可能先让 SillyTavern 前端在手机/模拟器上跑起来。
 - 优先补齐前端启动、角色、聊天、设置等本地数据接口。
-- 真实模型代理、真实 tokenizer、向量索引、外部服务可以后置。
+- OpenAI/OpenAI-compatible chat-completions、OpenAI/tiktoken native tokenizer、第三方扩展 Git 和 vector 最小索引已有可用路径；非 OpenAI tokenizer、完整 provider 适配、原版等价向量索引和复杂外部服务可以继续分阶段后置。
 - 所有后续实现必须继续遵守 `data/` 结构兼容和 ShareKit 导出规则。

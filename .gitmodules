@@ -4,3 +4,6 @@
 [submodule "third_party/mbedtls"]
 	path = third_party/mbedtls
 	url = https://github.com/Mbed-TLS/mbedtls.git
+[submodule "third_party/miktik"]
+	path = third_party/miktik
+	url = https://github.com/Darkatse/MikTik.git

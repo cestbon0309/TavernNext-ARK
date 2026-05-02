@@ -15,8 +15,9 @@
 - OpenAI `generate` 支持非流式 JSON 响应和流式 `text/event-stream` 透传；请求体会清理 SillyTavern 内部字段，只转发 OpenAI 接受的字段。
 - 2026-05-03 已验证流式链路：前端打开 OpenAI/Chat Completion 的 `Streaming` 后会发送 `stream: true`；ArkTS 后端使用 Harmony `requestInStream()` 监听 `dataReceive`，SSE 分块可以即时到达前端。
 - text-completions、NovelAI、Horde、Stable Diffusion 已有基础代理/查询路由；OpenRouter/DeepSeek/Groq/Mistral 等 OpenAI-compatible provider 目前应通过 `custom` 端点使用，专门 source 尚未逐项放行和验证。
+- OpenAI/tiktoken tokenizer 已按推荐路线落地：MikTik 作为 Rust FFI staticlib 编译到 OHOS native module，ArkTS 通过 NAPI 调用真实 encode/decode/count。
 - Vector 已有最小 ArkTS 实现：本地 JSON 索引、insert/list/delete/query/query-multi/purge、部分 embedding provider 调用和 hash fallback；还不是原版 `vectra.LocalIndex` 等价实现。
-- Claude、Gemini、真实 tokenizer 仍暂缓，后续按阶段补齐。
+- Claude、Gemini、非 OpenAI tokenizer 仍暂缓，后续按阶段补齐。
 
 ## 0. 当前落地结论
 
@@ -376,12 +377,19 @@ MikTik 当前是 Rust library crate，不是 ArkTS 可直接 import 的 `.so`。
 - `x86_64-unknown-linux-ohos`
 - `aarch64-unknown-linux-ohos`
 
-OpenAI/tiktoken 最小功能已能通过 OHOS target 编译检查：
+OpenAI/tiktoken 最小功能已经落地到当前 OHOS 工程：
 
 ```powershell
-cargo check --target x86_64-unknown-linux-ohos --no-default-features --features openai
-cargo check --target aarch64-unknown-linux-ohos --no-default-features --features openai
+cargo build --manifest-path native\tavern_tokenizer_ffi\Cargo.toml --target x86_64-unknown-linux-ohos --release
+cargo build --manifest-path native\tavern_tokenizer_ffi\Cargo.toml --target aarch64-unknown-linux-ohos --release
 ```
+
+已验证 `entry` HAP 构建、模拟器安装和 HTTP 接口：
+
+- `POST /api/tokenizers/openai/encode?model=gpt-4o`：`Hello world` 返回真实 token ids `[13225,2375]`。
+- `POST /api/tokenizers/openai/decode?model=gpt-4o`：可还原 `Hello world`。
+- `POST /api/tokenizers/openai/count?model=gpt-4o`：按原版 OpenAI chat message overhead 计数。
+- `POST /api/backends/chat-completions/bias?model=gpt-4o`：普通文本和 `[1,2]` 原始 token 数组均可映射。
 
 ### 3.2 仍需解决的问题
 
@@ -400,23 +408,31 @@ MikTik `full` feature 会启用：
 - 设置 `CC_aarch64_unknown_linux_ohos`、`CXX_aarch64_unknown_linux_ohos`、`AR_aarch64_unknown_linux_ohos`。
 - 或者研究 `tokenizers` 是否能禁用 `onig` feature，改用不依赖 oniguruma 的 tokenizer 构建。
 
-### 3.3 推荐桥接结构
+### 3.3 已采用桥接结构
 
 ```text
 ArkTS TokenizerService
   -> OHOS NAPI native module
-    -> Rust cdylib bridge crate
+    -> Rust staticlib FFI bridge crate
       -> MikTik TokenizerRegistry
 ```
 
-Rust bridge 需要导出：
+当前文件位置：
 
-- `encode(model, text) -> { ids, count, chunks }`
-- `decode(model, ids) -> { text, chunks }`
-- `countOpenAi(model, messages) -> { token_count }`
-- `registerModelBytes/registerModelFile`，用于后续加载 tokenizer 资源。
+- `third_party/miktik`：MikTik submodule。
+- `native/tavern_tokenizer_ffi`：Rust FFI staticlib，只启用 MikTik `openai` feature。
+- `entry/src/main/cpp/tokenizer_native.cpp`：C++ NAPI wrapper，导出 `resolveModel/encode/decode/count`。
+- `entry/src/main/ets/backend/TokenizerService.ets`：ArkTS 路由层，保持 SillyTavern HTTP 响应形状。
 
-第一阶段只启用 `openai` feature，先替换 `/api/tokenizers/openai/*`，确认 ArkTS 调 native `.so` 的链路稳定。
+Rust bridge 当前导出：
+
+- `tavern_tokenizer_resolve_model(model)`
+- `tavern_tokenizer_encode(model, text)`
+- `tavern_tokenizer_decode(model, ids)`
+- `tavern_tokenizer_count(model, text)`
+- 对应的 ids/bytes/string 释放函数。
+
+第一阶段只启用 `openai` feature，已经替换 `/api/tokenizers/openai/*`，并确认 ArkTS 调 native `.so` 的链路稳定。
 
 第二阶段再启用 `huggingface/sentencepiece`，补 Claude/Llama/Mistral/Yi/Gemma/Qwen/Command/Nemo/DeepSeek。
 
@@ -447,15 +463,20 @@ ModelProxyService
 
 ### 4.2 Tokenizer
 
-当前 ArkTS 字节 tokenizer 只能保持接口形状，不能算原版一致。
+OpenAI/tiktoken 已经不再是 ArkTS 字节估算，而是走 MikTik native tokenizer。非 OpenAI tokenizer 仍只是保持接口形状，不能算原版一致。
 
-建议路线：
+已完成路线：
 
-1. 先做 MikTik OHOS native bridge，只启用 `openai`。
-2. ArkTS `/api/tokenizers/openai/encode/decode/count` 切到 native。
-3. 验证虚拟机 `.so` 加载、资源路径、异常返回、性能。
-4. 再处理 `full` feature 的 onig/tokenizers 编译问题。
-5. 最后逐步替换 llama/claude/qwen/command/deepseek 等 tokenizer。
+1. MikTik OHOS native bridge 已完成，只启用 `openai`。
+2. ArkTS `/api/tokenizers/openai/encode/decode/count` 已切到 native。
+3. 虚拟机 `.so` 加载、HAP 构建安装和关键 HTTP 接口已验证。
+4. chat-completions `bias` 的 OpenAI token 映射已切到 native，Claude 保持原版空对象行为。
+
+后续路线：
+
+1. 处理 MikTik `huggingface/sentencepiece` 或 `full` feature 的 onig/tokenizers 编译问题。
+2. 设计 tokenizer 资源打包/首次下载缓存策略，避免把大量模型资源硬写进 ArkTS。
+3. 逐步替换 GPT-2、llama、claude、qwen、command、deepseek 等 tokenizer。
 
 ### 4.3 Vector
 
@@ -470,9 +491,9 @@ Vector 不建议依赖 TauriTavern，因为它当前没有完整实现。
 
 ## 5. 当前下一步建议
 
-建议先做两条短线：
+当前短线进度：
 
 1. 模型代理：OpenAI chat-completions 最小代理已经完成；下一步若继续模型侧，应先补真实 OpenAI 错误细节、请求取消、更多 OpenAI 参数和 OpenAI-compatible provider 的差异。
-2. Tokenizer：新建一个最小 Rust native bridge 工程，验证 MikTik `openai` feature 能编成 OHOS `.so` 并被 ArkTS 调用。
+2. Tokenizer：OpenAI/tiktoken native bridge 已完成；下一步是非 OpenAI tokenizer 资源和 MikTik `huggingface/sentencepiece` 编译链路。
 
 这两条都能明显提升“与原版行为一致”的程度，而且风险可控。

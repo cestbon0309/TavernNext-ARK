@@ -16,11 +16,12 @@
 - 第三方扩展 Git 第一阶段已接入 native `.so` + `libgit2`：支持 HTTPS 公共仓库安装、版本状态、分支列表、分支切换和 fast-forward 更新。
 - OpenAI chat-completions 支持 `openai` 和 `custom` 来源，支持 `/models` 状态检查、`/chat/completions` 非流式生成和流式 SSE 生成。
 - 流式生成已改为 Harmony `requestInStream()` + `dataReceive` 转发，并通过虚拟机、hdc 端口映射、慢速 mock OpenAI 服务确认分块即时到达。
+- OpenAI/tiktoken tokenizer 已接入 native `.so` + Rust `miktik`：`/api/tokenizers/openai/encode`、`decode`、`count` 和 chat-completions `bias` 的 OpenAI token 映射已走真实 tokenizer。
 
 明确暂缓或仍不完善：
 - 多用户明确暂缓：当前 App 形态不需要多用户运行模型，后端固定使用 `data/default-user/`；`/api/users/*` 只保留为本地账号弹窗、密码校验和备份恢复的兼容层，不启用真实 session、cookie-session、当前用户切换和权限中间件。
 - 模型 provider 仍不完整：OpenAI/OpenAI-compatible `openai` 和 `custom` 主路径已可用；text-completions、NovelAI、Horde、Stable Diffusion 等已有基础代理或查询路由，但还没有完整对齐原版 provider 行为、错误格式、请求取消和流式转换。
-- Tokenizer 仍是估算/兼容接口：已补 encode/decode/count 和部分 remote tokenizer proxy，但尚未接入 MikTik/OHOS native tokenizer，不是真实 OpenAI/Claude/Llama/Qwen/Gemma 等 tokenizer。
+- Tokenizer 仍未全量：OpenAI/tiktoken 已接入 MikTik native；GPT-2、Claude、Llama/Llama 3、Mistral、Qwen、Gemma、Yi、Command、Nemo、DeepSeek 等仍未接入真实本地 tokenizer。
 - Vector 已有最小实现：支持本地 JSON 索引、insert/list/delete/query/query-multi/purge，以及部分 embedding provider 调用和 hash fallback；但尚未对齐原版 `vectra.LocalIndex` 的完整行为和性能。
 - Git 后续增强：私有仓库认证、SSH、submodule、非 fast-forward merge 冲突处理、hooks 执行仍暂缓。
 - settings snapshots、presets、themes、moving UI、assets/content-manager、聊天备份等管理类接口仍需后续补齐。
@@ -2414,11 +2415,70 @@ TLS 处理：
 
 ## 13. Tokenizer 接口
 
-以下路由共用同一个估算实现：
+### 13.1 OpenAI/tiktoken native tokenizer
+
+以下 OpenAI 路由已接入 native `libtavern_tokenizer.so`：
+
+- `POST /api/tokenizers/openai/encode`
+- `POST /api/tokenizers/openai/decode`
+- `POST /api/tokenizers/openai/count`
+
+native 链路：
+
+```text
+TokenizerService.ets
+  -> libtavern_tokenizer.so NAPI module
+    -> native/tavern_tokenizer_ffi Rust staticlib
+      -> third_party/miktik TokenizerRegistry
+```
+
+当前 Rust bridge 只启用 MikTik `openai` feature。支持的 canonical tokenizer 包括 `o1`、`gpt-4o`、`gpt-4`、`gpt-4-32k`、`gpt-3.5-turbo`、`gpt-3.5-turbo-0301`；模型 alias 由 MikTik/ArkTS 共同解析，空模型按原版默认走 OpenAI tokenizer。
+
+encode 请求：
+
+```json
+{
+  "text": "Hello world"
+}
+```
+
+encode 响应示例：
+
+```json
+{
+  "ids": [13225, 2375],
+  "count": 2,
+  "chunks": ["Hello", " world"]
+}
+```
+
+decode 请求：
+
+```json
+{
+  "ids": [13225, 2375]
+}
+```
+
+decode 响应：
+
+```json
+{
+  "text": "Hello world",
+  "chunks": ["Hello", " world"]
+}
+```
+
+`POST /api/tokenizers/openai/count` 按原版 chat message 规则统计：普通模型每条 message 加 `3`，`name` 加 `1`，末尾加 reply priming `3`；`gpt-3.5-turbo-0301` 使用每条 message `4`、`name` 为 `-1`，并保留原版 legacy 修正。
+
+`POST /api/backends/chat-completions/bias` 也会使用同一套 native OpenAI tokenizer。请求体必须是数组，数组项使用 `{ "text": "...", "value": number }`；`text` 可以是普通文本，也可以是原始 token 数组字符串如 `[1,2,3]`。Claude tokenizer 按原版返回空对象。
+
+### 13.2 兼容/暂缓 tokenizer
+
+以下非 OpenAI 本地 tokenizer 仍使用兼容或估算实现，不是原版等价 tokenizer：
 
 - `POST /api/tokenizers/encode`
 - `POST /api/tokenizers/gpt2/encode`
-- `POST /api/tokenizers/openai/encode`
 - `POST /api/tokenizers/llama/encode`
 - `POST /api/tokenizers/mistral/encode`
 - `POST /api/tokenizers/yi/encode`
@@ -2428,32 +2488,7 @@ TLS 处理：
 - `POST /api/tokenizers/qwen2/encode`
 - `POST /api/tokenizers/command-r/encode`
 
-请求：
-
-```json
-{
-  "text": "hello world"
-}
-```
-
-算法：
-
-```text
-tokens = ceil(utf8ByteLength(text) / 3.35)
-```
-
-响应：
-
-```json
-{
-  "ids": [],
-  "count": 4,
-  "token_count": 4,
-  "chunks": []
-}
-```
-
-这是启动阶段和 UI Token 计数的占位实现，不是真 tokenizer。
+这些路径目前保持前端接口可用：encode 返回 byte token ids、count 和按字符拆分的 chunks；decode 可把 byte token ids 解回 UTF-8 文本。后续需要补 MikTik `huggingface/sentencepiece` 能力、tokenizer 资源打包/缓存，以及 Claude/Llama/Qwen/Gemma 等模型 alias。
 
 ## 14. 未注册接口和占位响应
 
@@ -2538,7 +2573,7 @@ UI 截图：
 - 已有本地账号兼容 API 和密码校验；多用户系统明确暂缓，当前固定使用 `default-user`，不支持真实多用户会话、cookie-session、当前用户切换、权限中间件和真实 CSRF。
 - multipart 解析已支持，角色卡 JSON/PNG 导入、头像上传、背景上传、sprites 上传、聊天导入已接入；世界书导入等 multipart 接口仍需补。
 - OpenAI/OpenAI-compatible chat-completions 已有最小可用代理，支持 `openai` 和 `custom` 来源、状态检查、非流式生成和流式 SSE 透传；其他 provider 或外部服务仍未完整对齐。
-- Tokenizer 已有估算 encode/decode/count 和部分 remote proxy，但不是真实 tokenizer；上下文裁剪和模型精确 token 计数仍需 native MikTik/tokenizer。
+- OpenAI/tiktoken tokenizer 已接入 native MikTik；非 OpenAI tokenizer 仍是兼容/估算实现，上下文裁剪和模型精确 token 计数对 Claude/Llama/Qwen/Gemma 等仍需后续补齐。
 - Vector 已有最小本地 JSON 索引和 embedding/hash fallback，但还不是原版 `vectra.LocalIndex` 等价实现。
 - 背景、头像、聊天图片、附件、sprites、缩略图和 `image-metadata` 已接入本地文件实现；其中图片处理依赖 Harmony `ImageKit`，与 Node/Jimp 在极端格式上的像素级结果可能存在细微差异。
 - `extensions/discover` 已扫描 rawfile 系统扩展和本地/全局第三方扩展目录；扩展 Git 已支持 HTTPS 公共仓库，但私有仓库认证、SSH、submodule、merge 冲突处理和 hooks 仍暂缓。
@@ -2863,21 +2898,20 @@ avatar
 
 当前 ArkTS 已实现：
 
-- 多个 `/api/tokenizers/*/encode` 的估算接口，返回 byte token ids、count 和按字符拆分的 chunks。
-- 多个 `/api/tokenizers/*/decode` 的兼容接口，可把 byte token ids 解回文本。
-- `POST /api/tokenizers/openai/count` 的估算实现。
-- `POST /api/backends/chat-completions/bias` 的 byte-token logit bias 映射。
+- OpenAI/tiktoken native tokenizer：`/api/tokenizers/openai/encode`、`decode`、`count` 已通过 MikTik 真实 encode/decode/count。
+- `POST /api/backends/chat-completions/bias`：OpenAI 模型使用 MikTik token ids，Claude 返回空对象，原始 token 数组字符串按原版直接展开。
+- 多个非 OpenAI `/api/tokenizers/*/encode` 的估算接口，返回 byte token ids、count 和按字符拆分的 chunks。
+- 多个非 OpenAI `/api/tokenizers/*/decode` 的兼容接口，可把 byte token ids 解回文本。
 - `POST /api/tokenizers/remote/kobold/count`：转发到 Kobold/KoboldCpp `tokencount`。
 - `POST /api/tokenizers/remote/textgenerationwebui/encode`：按 tabby/koboldcpp/llamacpp/vllm/aphrodite 等 API 类型转发远程 encode/tokenize。
 - `/api/vector/insert`、`list`、`delete`、`query`、`query-multi`、`purge`、`purge-all`。
 - vector 索引写入 `data/default-user/vectors/<source>/<collectionId>/<model>/index.json`。
 - embedding 支持 OpenAI-compatible、Mistral、OpenRouter、ElectronHub、NanoGPT、SiliconFlow、Chutes、llamacpp、vllm、ollama、extras、cohere 等基础 endpoint；请求失败或未配置时回退到本地 hash vector。
 
-仍缺失：
+仍缺失或不完善：
 
-- 真实 tokenizer：
+- 非 OpenAI 真实 tokenizer：
   - GPT-2
-  - OpenAI
   - Claude
   - Llama / Llama 3
   - Mistral
@@ -3049,5 +3083,6 @@ avatar
 8. 高级能力阶段：
    - 已完成：vectors 最小本地 JSON 索引和 embedding/hash fallback
    - 待补：vectors 原版等价索引和性能优化
-   - tokenizer 真实实现
+   - 已完成：OpenAI/tiktoken native tokenizer
+   - 待补：非 OpenAI tokenizer 真实实现
    - 图片、语音、翻译、搜索等外部能力

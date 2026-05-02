@@ -6,7 +6,8 @@
   "author": "",
   "license": "",
   "dependencies": {
-    "libtavern_git.so": "file:./src/main/cpp/types/libtavern_git"
+    "libtavern_git.so": "file:./src/main/cpp/types/libtavern_git",
+    "libtavern_tokenizer.so": "file:./src/main/cpp/types/libtavern_tokenizer"
   }
 }
 

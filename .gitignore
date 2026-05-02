@@ -3,6 +3,7 @@
 /local.properties
 /.idea
 **/build
+**/target
 /.hvigor
 .cxx
 /.clangd
