@@ -1,6 +1,9 @@
 import { cryptoFramework } from '@kit.CryptoArchitectureKit';
 import { util } from '@kit.ArkTS';
+import { DataDirectories } from '../DataDirectories';
+import { FileStore } from '../FileStore';
 import { JsonArray, JsonRecord, emptyJsonRecord } from '../HttpTypes';
+import { joinPath } from '../PathUtils';
 import { ChatCompletionApiConfig, ChatCompletionSource } from './ChatCompletionTypes';
 import { asArrayValue, asBooleanValue, asRecordValue, asStringValue, cloneJsonValue } from './JsonHelpers';
 
@@ -32,25 +35,46 @@ class PromptDigestCollection {
 
 export class PromptCachingService {
   private snapshots: Record<string, PromptDigestSnapshot> = {};
+  private dirs: DataDirectories;
+  private store: FileStore;
+  private cacheRoot: string;
+
+  constructor(dirs: DataDirectories, store: FileStore) {
+    this.dirs = dirs;
+    this.store = store;
+    this.cacheRoot = joinPath(this.dirs.cacheRoot, 'prompt-cache');
+    this.store.ensureDir(this.cacheRoot);
+  }
 
   apply(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string, payload: JsonRecord,
     originalPayload: JsonRecord): ChatCompletionApiConfig {
+    const ttl = this.resolveTtl(originalPayload);
+    if (ttl.length === 0) {
+      return config;
+    }
     const plan = this.resolvePlan(source, config, endpointPath, payload, originalPayload);
     if (plan.strategy === 'none') {
       return config;
+    }
+    if (this.containsCacheControl(payload)) {
+      throw new Error('Claude prompt caching cannot be combined with manually supplied cache_control fields');
     }
     if (plan.anthropicBetaHeaderMode.length > 0) {
       config.anthropicBetaHeaderMode = plan.anthropicBetaHeaderMode === 'prompt_caching_only' ?
         'prompt_caching_only' : 'claude_defaults';
     }
-    const previous = this.snapshots[plan.key];
+    if (plan.strategy === 'nanogpt_claude') {
+      payload['cache_control'] = this.nanoGptCacheControl(ttl);
+      return config;
+    }
+    const previous = this.loadSnapshot(plan.key);
     let snapshot = new PromptDigestSnapshot();
     if (plan.strategy === 'openrouter_claude') {
-      snapshot = this.applyOpenRouterClaude(payload, previous, '5m');
+      snapshot = this.applyOpenRouterClaude(payload, previous, ttl);
     } else {
-      snapshot = this.applyClaude(payload, previous, '5m');
+      snapshot = this.applyClaude(payload, previous, ttl);
     }
-    this.snapshots[plan.key] = snapshot;
+    this.saveSnapshot(plan.key, snapshot);
     return config;
   }
 
@@ -82,6 +106,73 @@ export class PromptCachingService {
       plan.anthropicBetaHeaderMode = 'prompt_caching_only';
     }
     return plan;
+  }
+
+  private resolveTtl(originalPayload: JsonRecord): string {
+    const raw = asStringValue(originalPayload['prompt_cache_ttl']) ||
+      asStringValue(originalPayload['claude_prompt_cache_ttl']) ||
+      asStringValue(originalPayload['promptCacheTtl']);
+    if (raw.trim().length > 0) {
+      return this.parseTtl(raw);
+    }
+    const settingsPath = joinPath(this.dirs.defaultUser.root, 'settings.json');
+    const settings = this.store.readJsonRecord(settingsPath);
+    const models = asRecordValue(settings['models']);
+    const claude = asRecordValue(models['claude']);
+    return this.parseTtl(asStringValue(claude['prompt_cache_ttl']));
+  }
+
+  private parseTtl(raw: string): string {
+    const normalized = raw.trim().toLowerCase();
+    if (normalized === 'off' || normalized === 'false' || normalized === '0') {
+      return '';
+    }
+    if (normalized === '1h' || normalized === 'one_hour' || normalized === 'one-hour') {
+      return '1h';
+    }
+    if (normalized === '5m' || normalized === 'five_minutes' || normalized === 'five-minutes' ||
+      normalized === 'true') {
+      return '5m';
+    }
+    if (normalized.length === 0) {
+      return '';
+    }
+    throw new Error(`Unsupported Claude prompt cache TTL: ${raw}`);
+  }
+
+  private loadSnapshot(key: string): PromptDigestSnapshot | undefined {
+    const memory = this.snapshots[key];
+    if (memory !== undefined) {
+      return memory;
+    }
+    const path = this.snapshotPath(key);
+    const value = this.store.readJsonObject(path, emptyJsonRecord());
+    if (value === null || Array.isArray(value) || typeof value !== 'object') {
+      return undefined;
+    }
+    const record = value as JsonRecord;
+    const digests = asArrayValue(record['digests']);
+    const snapshot = new PromptDigestSnapshot();
+    snapshot.version = Number(record['version'] ?? 0);
+    for (const digest of digests) {
+      if (typeof digest === 'string') {
+        snapshot.digests.push(digest);
+      }
+    }
+    if (snapshot.version !== PROMPT_CACHE_VERSION) {
+      return undefined;
+    }
+    this.snapshots[key] = snapshot;
+    return snapshot;
+  }
+
+  private saveSnapshot(key: string, snapshot: PromptDigestSnapshot): void {
+    this.snapshots[key] = snapshot;
+    this.store.writeJson(this.snapshotPath(key), snapshot);
+  }
+
+  private snapshotPath(key: string): string {
+    return joinPath(this.cacheRoot, `${key}.json`);
   }
 
   private applyClaude(payload: JsonRecord, previous: PromptDigestSnapshot | undefined, ttl: string): PromptDigestSnapshot {
@@ -419,6 +510,13 @@ export class PromptCachingService {
     return value;
   }
 
+  private nanoGptCacheControl(ttl: string): JsonRecord {
+    const value = emptyJsonRecord();
+    value['enabled'] = true;
+    value['ttl'] = ttl;
+    return value;
+  }
+
   private location(kind: string, first: number, second: number): PromptCacheLocation {
     const location = new PromptCacheLocation();
     location.kind = kind;
@@ -456,6 +554,35 @@ export class PromptCachingService {
 
   private digestValue(value: Object | string | number | boolean | null | JsonArray): string {
     return this.digestText(JSON.stringify(value));
+  }
+
+  private containsCacheControl(value: Object | string | number | boolean | null | JsonArray | undefined): boolean {
+    if (value === undefined || value === null) {
+      return false;
+    }
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        const item: Object | string | number | boolean | null = value[index];
+        if (this.containsCacheControl(item)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    if (typeof value !== 'object') {
+      return false;
+    }
+    const record = value as JsonRecord;
+    if (record['cache_control'] !== undefined) {
+      return true;
+    }
+    const keys = Object.keys(record);
+    for (const key of keys) {
+      if (this.containsCacheControl(record[key])) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private digestText(value: string): string {

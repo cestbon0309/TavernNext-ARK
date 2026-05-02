@@ -3,6 +3,8 @@ import { bodyAsRecord, parseJsonRecord } from '../JsonUtils';
 import { proxyErrorResponse } from '../RemoteHttpClient';
 import { SecretsService } from '../SecretsService';
 import { CancellationToken } from '../CancellationToken';
+import { DataDirectories } from '../DataDirectories';
+import { FileStore } from '../FileStore';
 import { ChatCompletionConfigResolver } from './ChatCompletionConfigResolver';
 import { ChatCompletionApiConfig, ChatCompletionSource } from './ChatCompletionTypes';
 import { ChatCompletionRepository } from './http/ChatCompletionRepository';
@@ -15,12 +17,13 @@ export class ChatCompletionService {
   private configResolver: ChatCompletionConfigResolver;
   private payloadBuilders: PayloadBuilderRegistry = new PayloadBuilderRegistry();
   private repository: ChatCompletionRepository = new ChatCompletionRepository();
-  private promptCaching: PromptCachingService = new PromptCachingService();
+  private promptCaching: PromptCachingService;
   private activeStreams: Record<string, CancellationToken | null> = {};
   private activeGenerations: Record<string, CancellationToken | null> = {};
 
-  constructor(secrets: SecretsService) {
+  constructor(secrets: SecretsService, dirs: DataDirectories, store: FileStore) {
     this.configResolver = new ChatCompletionConfigResolver(secrets);
+    this.promptCaching = new PromptCachingService(dirs, store);
   }
 
   async generate(request: HttpRequest): Promise<HttpResponse> {
@@ -31,7 +34,7 @@ export class ChatCompletionService {
     }
     let config: ChatCompletionApiConfig;
     try {
-      config = this.configResolver.resolveGenerateConfig(source, body);
+      config = await this.configResolver.resolveGenerateConfig(source, body);
     } catch (err) {
       return proxyErrorResponse(err instanceof Error ? err.message : JSON.stringify(err), 400);
     }
@@ -101,7 +104,7 @@ export class ChatCompletionService {
       return HttpResponse.json(response);
     }
     try {
-      const config = this.configResolver.resolveStatusConfig(source, body);
+      const config = await this.configResolver.resolveStatusConfig(source, body);
       if (this.hasMissingRequiredKey(config)) {
         return HttpResponse.json(this.errorTrue(), 400);
       }
@@ -117,7 +120,7 @@ export class ChatCompletionService {
       return HttpResponse.json([]);
     }
     try {
-      const config = this.configResolver.resolveStatusConfig(source, emptyJsonRecord());
+      const config = await this.configResolver.resolveStatusConfig(source, emptyJsonRecord());
       if (this.hasMissingRequiredKey(config)) {
         return HttpResponse.json([]);
       }

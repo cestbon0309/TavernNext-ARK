@@ -37,6 +37,13 @@ export class RemoteHttpClient {
     await this.streamEventRequest(url, 'POST', JSON.stringify(value), nextHeaders, timeoutMs, onEvent, cancelToken);
   }
 
+  async streamPostJsonWithEventHook(url: string, value: Object, headers: Record<string, string>, send: HttpStreamSend,
+    onEvent: RemoteSseDataHandler, timeoutMs: number = 300000, cancelToken?: CancellationToken): Promise<void> {
+    const nextHeaders = this.withHeader(headers, 'Content-Type', 'application/json');
+    await this.streamRequestWithEventHook(url, 'POST', JSON.stringify(value), nextHeaders, timeoutMs, send, onEvent,
+      cancelToken);
+  }
+
   async postText(url: string, value: string, headers: Record<string, string> = {},
     timeoutMs: number = 300000): Promise<RemoteHttpResult> {
     return this.request(url, 'POST', value, headers, timeoutMs, false);
@@ -205,6 +212,68 @@ export class RemoteHttpClient {
         error['message'] = `HTTP ${statusCode}`;
         value['error'] = error;
         await onEvent(JSON.stringify(value));
+      }
+    } finally {
+      request.destroy();
+    }
+  }
+
+  private async streamRequestWithEventHook(url: string, method: string, body: string, headers: Record<string, string>,
+    timeoutMs: number, send: HttpStreamSend, onEvent: RemoteSseDataHandler, cancelToken?: CancellationToken): Promise<void> {
+    const request = http.createHttp();
+    cancelToken?.onCancel(() => {
+      request.destroy();
+    });
+    let queue: Promise<void> = Promise.resolve();
+    let hookQueue: Promise<void> = Promise.resolve();
+    let sawChunk = false;
+    let textBuffer = '';
+    const accumulator = new RemoteSseAccumulator();
+    let resolveDataEnd: () => void = () => {};
+    const dataEnd = new Promise<void>((resolve: () => void) => {
+      resolveDataEnd = resolve;
+    });
+    request.on('dataReceive', (data: ArrayBuffer) => {
+      sawChunk = true;
+      const bytes = new Uint8Array(data);
+      const chunk = new Uint8Array(bytes.byteLength);
+      chunk.set(bytes);
+      const text = this.decoder.decodeToString(chunk);
+      queue = queue.then(async () => {
+        await send(chunk);
+      });
+      hookQueue = hookQueue.then(async () => {
+        textBuffer += text;
+        textBuffer = await this.forwardSseText(textBuffer, accumulator, onEvent);
+      });
+    });
+    request.on('dataEnd', () => {
+      resolveDataEnd();
+    });
+    try {
+      const options: http.HttpRequestOptions = {
+        method: method === 'GET' ? http.RequestMethod.GET : http.RequestMethod.POST,
+        header: headers,
+        readTimeout: timeoutMs,
+        connectTimeout: timeoutMs,
+        expectDataType: http.HttpDataType.ARRAY_BUFFER,
+      };
+      if (method !== 'GET') {
+        options.extraData = body;
+      }
+      const statusCode = Number(await request.requestInStream(url, options));
+      await dataEnd;
+      await queue;
+      await hookQueue;
+      if (cancelToken?.isCancelled()) {
+        return;
+      }
+      if (textBuffer.length > 0) {
+        await accumulator.onLine(this.stripTrailingCr(textBuffer), onEvent);
+      }
+      await accumulator.finish(onEvent);
+      if (!sawChunk && (statusCode < 200 || statusCode >= 300)) {
+        await send(`event: error\ndata: {"error":{"message":"HTTP ${statusCode}"}}\n\n`);
       }
     } finally {
       request.destroy();

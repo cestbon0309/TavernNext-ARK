@@ -1046,7 +1046,8 @@ entry/src/main/ets/backend/model/
 文件职责：
 
 - `ChatCompletionService.ets`：HTTP route 之后的编排层，负责解析 `chat_completion_source`、处理 status/generate/stream、调用 config resolver、payload registry 和 repository。
-- `ChatCompletionConfigResolver.ets`：统一处理默认 base URL、reverse proxy、custom URL、API key、Authorization/custom headers、Claude beta header、Vertex AI express/full 鉴权占位。
+- `ChatCompletionConfigResolver.ets`：统一处理默认 base URL、reverse proxy、custom URL、API key、Authorization/custom headers、Claude beta header、Vertex AI express/full 鉴权。
+- `VertexAiAuth.ets`：解析 service account JSON，使用 HarmonyOS CryptoFramework 做 RSA-SHA256 JWT 签名，请求 Google OAuth access token，并按 service account JSON digest 缓存 token。
 - `SourceRegistry.ets`：provider 名称解析、别名、secret key 映射、reverse proxy 支持范围。
 - `CustomApiFormat.ets` / `CustomParameters.ets`：处理 `custom_api_format`，以及 `custom_include_headers/custom_include_body/custom_exclude_body` 的 JSON/简化 YAML 解析。
 - `payload/*`：只负责把 SillyTavern 前端传入的 OpenAI-like payload 转成各 provider 上游请求体和 endpoint path，不发网络请求。
@@ -1064,22 +1065,22 @@ entry/src/main/ets/backend/model/
 - NanoGPT：复用 OpenAI chat payload，补 web search `:online` 后缀和 reasoning effort 映射。
 - Chutes：复用 OpenAI payload，补 `min_p/repetition_penalty/reasoning_effort`。
 - Groq / SiliconFlow：按 OpenAI-compatible provider 走统一 OpenAI payload/transport。
-- Claude：已做 OpenAI-like messages 到 Anthropic Messages 的基础转换，含 system 提取、文本/图片 block、tool result、OpenAI tools 到 Claude tools、json_schema 强制 tool、thinking budget；非流式响应归一化为 OpenAI chat completion。
-- Gemini/MakerSuite：已做 messages 到 `contents/systemInstruction/generationConfig/tools` 的基础转换，支持 data URL 图片、function declarations、json_schema response mime/schema、thinkingConfig；非流式响应归一化。
-- Vertex AI：复用 Gemini payload，URL 改为 Vertex publisher model endpoint；status 目前按 TauriTavern 思路 bypass。
+- Claude：已做 OpenAI-like messages 到 Anthropic Messages 的转换，含 system 提取、文本/图片 block、tool result、OpenAI tools 到 Claude tools、json_schema 强制 tool、thinking budget、model contract、assistant prefill、sampling/thinking/output effort 校验；非流式响应归一化为 OpenAI chat completion。
+- Gemini/MakerSuite：已做 messages 到 `contents/systemInstruction/generationConfig/tools` 的转换，支持 data URL 图片/视频/音频、function declarations、function call/result、custom Google tools、web search、json_schema response mime/schema、thinkingBudget/thinkingLevel、image generation response modalities/imageConfig；非流式响应归一化。
+- Vertex AI：复用 Gemini payload，URL 改为 Vertex publisher model endpoint；支持 express API key 与 full service account OAuth；status 目前按 TauriTavern 思路 bypass。
 - Cohere：已做 `/chat` payload 转换，含 messages、sampling 参数、stop、tools、json_schema；status models 和非流式响应归一化。
 - Custom formats：`openai_compat`、`openai_responses`、`claude_messages`、`gemini_interactions` 都有 builder 分发。
 
 当前仍不完整或需要下一轮精修的点：
 
-- Prompt post processing 尚未迁移：`semi/strict/single/merge_tools` 等模式还没有完整复刻。
-- Prompt caching 尚未迁移：Claude/OpenRouter/NanoGPT 的 cache_control 自动插入、digest 快照、cache usage 统计还缺。
-- LLM API logging 尚未迁移：没有 TauriTavern 的 request/response/readable stream 日志层。
-- Claude 只实现基础 contract：新旧 Claude 模型的 sampling/thinking/assistant prefill 能力矩阵还没有完整落地。
-- Gemini/Vertex 只实现常用路径：video/audio、多轮原生 function output、Gemini 2.5/3 的 thinkingLevel/thinkingBudget 精细映射还需要继续对齐。
-- OpenAI Responses 和 Gemini Interactions 的非流式已做基础归一化，但流式目前仍是上游 SSE 透传，尚未转换成 OpenAI chat completion chunk。
+- Prompt post processing 已迁移 `none/merge/merge_tools/semi/semi_tools/strict/strict_tools/single`，后续主要需要真实请求样例回归。
+- Prompt caching 已迁移 plan、digest、cache_control、持久化快照、usage 日志；TTL 默认按 TauriTavern 从 settings 读取，默认 off。
+- LLM API logging 已有轻量 source/endpoint/model/stream/base 日志与 prompt cache usage 日志，但尚未做到 TauriTavern 的完整 request/response/readable stream 文件日志。
+- Claude 已补常用 model contract，但仍需要用真实新旧 Claude 模型做 sampling/thinking/assistant prefill 的边界回归。
+- Gemini/Vertex 已补常用多模态、function output、Gemini 2.5/3 thinking 映射；仍需要用真实 Gemini/Vertex 端点做全路径回归。
+- OpenAI Responses 和 Gemini Interactions 的非流式已做基础归一化，流式已转换成 OpenAI chat completion chunk；还需要更多真实 provider 回归样例。
 - Custom YAML 解析仍是简化实现，不等价于 Rust `serde_yaml`。
-- Vertex AI full service account OAuth 仍是占位逻辑，目前没有真正生成 access token。
+- Vertex AI full service account OAuth 已实现 JWT/OAuth access token 流程；需要在真机/模拟器上用真实 service account 验证 CryptoFramework 的 RSA 算法名兼容性。
 
 验证状态：
 
@@ -1092,10 +1093,10 @@ entry/src/main/ets/backend/model/
 
 当前任务拆分：
 
-- [ ] 行为基线：为关键 provider 建立可对照的 payload/stream 样例和验证入口。
+- [x] 行为基线：为关键 provider 建立可对照的 payload/stream 样例和验证入口。
 - [x] Prompt post processing：迁移 `none/merge/merge_tools/semi/semi_tools/strict/strict_tools/single`。
 - [x] Claude：补 model contract、assistant prefill、sampling/thinking/output effort、messages/tools/validation。
-- [ ] Gemini/Vertex：补多模态 parts、function call/result、thinkingBudget/thinkingLevel、Vertex full OAuth。
+- [x] Gemini/Vertex：补多模态 parts、function call/result、thinkingBudget/thinkingLevel、Vertex full OAuth。
 - [x] OpenAI Responses / Gemini Interactions：补原生 SSE 到 OpenAI chat chunk 的流式转换。
 - [x] Prompt caching：补 Claude/OpenRouter/NanoGPT cache plan、digest、cache_control 插入和 usage 记录。
 - [x] 取消、日志、错误映射：补 generation/stream cancel registry、LLM API readable logs、上游错误分类。
@@ -1110,3 +1111,6 @@ entry/src/main/ets/backend/model/
 - 2026-05-03：新增 `RemoteHttpClient.streamPostJsonEvents()` 和 `http/StreamNormalizers.ets`；`/responses`、`/interactions` 流式响应现在会解析上游 SSE `data:` 事件并转换为 OpenAI chat completion chunk，支持文本 delta、reasoning_content、tool_calls、finish_reason、`[DONE]`。普通 OpenAI-compatible provider 仍走原始 SSE 透传。HAP 构建通过。
 - 2026-05-03：新增 `PromptCaching.ets` 并接入 `ChatCompletionService`。Claude、OpenRouter Claude、NanoGPT Claude、custom `claude_messages` 在请求前会计算 digest、维护进程内 snapshot，并插入根级和 system/pre-history/last-common block 级 `cache_control: { type: "ephemeral", ttl: "5m" }`；custom Claude 会把 `anthropic-beta` 限制为 prompt caching 模式。HAP 构建通过。剩余：snapshot 目前是进程内内存，未持久化到 data 目录；cache usage 仅靠上游响应字段归一化，未做专门日志统计。
 - 2026-05-03：新增 `CancellationToken.ets`，`ChatCompletionService` 维护 `request_id/stream_id` registry，`RemoteHttpClient` 在 token 取消时调用 HarmonyOS HTTP request destroy，并在流式回调中停止后续输出；新增 `/api/backends/chat-completions/cancel-stream` 和 `/api/backends/chat-completions/cancel-generation`。同时 repository 对上游 400/401/403/429/5xx 做分类错误 message，服务层输出 `[LLM] source/endpoint/model/stream/base` 轻量日志。HAP 构建通过。限制：HarmonyOS HTTP 已进入系统不可中断阶段时，取消可能只能停止后续输出，不能保证立即终止底层网络。
+- 2026-05-03：补齐 Vertex AI full service account OAuth：新增 `VertexAiAuth.ets`，解析 `vertexai_service_account_json`，用 HarmonyOS `cryptoFramework` 导入 PEM private key、生成 RS256 JWT assertion，请求 `oauth2.googleapis.com/token`，并按 service account JSON 的 SHA256 digest 缓存 access token；`ChatCompletionConfigResolver.resolveGenerateConfig()` 改为 async，full 模式现在使用 `Authorization: Bearer <access_token>` 和 service account 内的 `project_id` 拼 Vertex base URL。HAP 构建通过。限制：RSA 签名算法名已通过 ArkTS 编译，仍需要用真实 service account 在模拟器/真机验证运行时兼容性。
+- 2026-05-03：补齐 prompt cache 持久化与 usage 日志：`PromptCaching.ets` 现在从请求字段或 `default-user/settings.json` 的 `models.claude.prompt_cache_ttl` 读取 TTL，默认 off；支持 `5m/1h`，拒绝自动缓存与手动 `cache_control` 混用；Claude/OpenRouter digest snapshot 写入 `data/_cache/prompt-cache/*.json`；NanoGPT Claude 使用 `{ enabled: true, ttl }` 形状。`RemoteHttpClient.streamPostJsonWithEventHook()` 能在保持 SSE 原样透传时旁路解析 `data:` 事件，`ChatCompletionRepository` 会记录 `cache_creation_input_tokens/cache_read_input_tokens/input_tokens`。HAP 构建通过。
+- 2026-05-03：新增 `PROVIDER_BEHAVIOR_VALIDATION.md`，记录 OpenAI-compatible SSE 透传、OpenAI Responses/Gemini Interactions stream chunk 转换、Claude/OpenRouter/NanoGPT prompt cache、Vertex full OAuth 的验证样例和期望观察点，作为后续真实 provider 回归入口。

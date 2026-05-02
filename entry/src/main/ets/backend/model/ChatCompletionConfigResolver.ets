@@ -5,6 +5,7 @@ import { parseCustomApiFormat, modelListSourceForCustomFormat } from './CustomAp
 import { CustomParameters } from './CustomParameters';
 import { asStringValue } from './JsonHelpers';
 import { sourceSecretKey, supportsReverseProxy } from './SourceRegistry';
+import { VertexAiAuthService } from './VertexAiAuth';
 
 type ConfigPurpose = 'status' | 'generate';
 
@@ -28,18 +29,19 @@ const ZAI_API_BASE_CODING = 'https://api.z.ai/api/coding/paas/v4';
 export class ChatCompletionConfigResolver {
   private secrets: SecretsService;
   private customParameters: CustomParameters = new CustomParameters();
+  private vertexAiAuth: VertexAiAuthService = new VertexAiAuthService();
 
   constructor(secrets: SecretsService) {
     this.secrets = secrets;
   }
 
-  resolveStatusConfig(source: ChatCompletionSource, body: JsonRecord): ChatCompletionApiConfig {
-    return this.resolveConfig(source, asStringValue(body['reverse_proxy']), asStringValue(body['proxy_password']),
+  async resolveStatusConfig(source: ChatCompletionSource, body: JsonRecord): Promise<ChatCompletionApiConfig> {
+    return await this.resolveConfig(source, asStringValue(body['reverse_proxy']), asStringValue(body['proxy_password']),
       asStringValue(body['custom_url']), asStringValue(body['custom_include_headers']), '', 'status', body);
   }
 
-  resolveGenerateConfig(source: ChatCompletionSource, payload: JsonRecord): ChatCompletionApiConfig {
-    return this.resolveConfig(source, asStringValue(payload['reverse_proxy']), asStringValue(payload['proxy_password']),
+  async resolveGenerateConfig(source: ChatCompletionSource, payload: JsonRecord): Promise<ChatCompletionApiConfig> {
+    return await this.resolveConfig(source, asStringValue(payload['reverse_proxy']), asStringValue(payload['proxy_password']),
       asStringValue(payload['custom_url']), asStringValue(payload['custom_include_headers']),
       asStringValue(payload['zai_endpoint']), 'generate', payload);
   }
@@ -51,15 +53,20 @@ export class ChatCompletionConfigResolver {
     return modelListSourceForCustomFormat(parseCustomApiFormat(asStringValue(body['custom_api_format'])));
   }
 
-  private resolveConfig(source: ChatCompletionSource, reverseProxy: string, proxyPassword: string, customUrl: string,
-    customHeadersRaw: string, zaiEndpoint: string, purpose: ConfigPurpose, payload: JsonRecord): ChatCompletionApiConfig {
+  private async resolveConfig(source: ChatCompletionSource, reverseProxy: string, proxyPassword: string, customUrl: string,
+    customHeadersRaw: string, zaiEndpoint: string, purpose: ConfigPurpose, payload: JsonRecord): Promise<ChatCompletionApiConfig> {
     if (source === 'custom') {
       return this.resolveCustomConfig(reverseProxy, proxyPassword, customUrl, customHeadersRaw);
     }
     if (source === 'vertexai' && purpose === 'generate') {
-      return this.resolveVertexAiGenerateConfig(reverseProxy, proxyPassword, payload);
+      return await this.resolveVertexAiGenerateConfig(reverseProxy, proxyPassword, payload);
     }
     const config = new ChatCompletionApiConfig();
+    if (source === 'vertexai' && purpose === 'status') {
+      config.baseUrl = VERTEXAI_GLOBAL_BASE;
+      config.requiresKey = false;
+      return config;
+    }
     if (supportsReverseProxy(source) && reverseProxy.trim().length > 0) {
       config.baseUrl = reverseProxy.trim();
       config.apiKey = proxyPassword.trim();
@@ -95,7 +102,7 @@ export class ChatCompletionConfigResolver {
     return config;
   }
 
-  private resolveVertexAiGenerateConfig(reverseProxy: string, proxyPassword: string, payload: JsonRecord): ChatCompletionApiConfig {
+  private async resolveVertexAiGenerateConfig(reverseProxy: string, proxyPassword: string, payload: JsonRecord): Promise<ChatCompletionApiConfig> {
     const config = new ChatCompletionApiConfig();
     if (reverseProxy.trim().length > 0) {
       config.baseUrl = `${reverseProxy.trim().replace(/\/+$/, '')}/v1`;
@@ -105,20 +112,22 @@ export class ChatCompletionConfigResolver {
     }
     const mode = (asStringValue(payload['vertexai_auth_mode']) || 'express').trim().toLowerCase();
     const region = (asStringValue(payload['vertexai_region']) || 'us-central1').trim();
-    const projectId = asStringValue(payload['vertexai_express_project_id']).trim();
+    const projectOverride = asStringValue(payload['vertexai_express_project_id']).trim();
     if (mode === 'express') {
       config.apiKey = this.secrets.activeSecretValue('api_key_vertexai');
-      config.baseUrl = projectId.length > 0 ?
-        `${VERTEXAI_GLOBAL_BASE}/v1/projects/${projectId}/locations/${region}` :
+      config.baseUrl = projectOverride.length > 0 ?
+        `${VERTEXAI_GLOBAL_BASE}/v1/projects/${projectOverride}/locations/${region}` :
         `${this.vertexAiHost(region)}/v1`;
       return config;
     }
-    const serviceAccountJson = this.secrets.activeSecretValue('vertexai_service_account_json');
-    if (serviceAccountJson.length > 0) {
-      config.authorizationHeader = `Bearer ${serviceAccountJson}`;
-      config.requiresKey = false;
+    if (mode !== 'full') {
+      throw new Error(`Unsupported Vertex AI authentication mode: ${mode}`);
     }
-    config.baseUrl = `${this.vertexAiHost(region)}/v1/projects/${projectId}/locations/${region}`;
+    const serviceAccountJson = this.secrets.activeSecretValue('vertexai_service_account_json');
+    const token = await this.vertexAiAuth.getServiceAccountAccessToken(serviceAccountJson);
+    config.authorizationHeader = `Bearer ${token.accessToken}`;
+    config.requiresKey = false;
+    config.baseUrl = `${this.vertexAiHost(region)}/v1/projects/${token.projectId}/locations/${region}`;
     return config;
   }
 

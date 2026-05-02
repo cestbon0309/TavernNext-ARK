@@ -46,6 +46,9 @@ export class ChatCompletionRepository {
       return HttpResponse.json(this.providerError(source, result.statusCode, result.text), 200);
     }
     const parsed = parseJsonRecord(result.text);
+    if (this.containsCacheControl(payload)) {
+      this.logPromptCacheUsage(source, asStringValue(payload['model']), parsed);
+    }
     if (source === 'claude' || endpointPath === '/messages') {
       return HttpResponse.json(normalizeClaudeResponse(parsed));
     }
@@ -70,15 +73,29 @@ export class ChatCompletionRepository {
     const headers = this.headers(source, config, endpointPath, 'text/event-stream');
     if (endpointPath === '/responses') {
       const normalizer = new OpenAiResponsesStreamNormalizer(asStringValue(payload['model']));
+      let loggedCacheUsage = false;
       await this.http.streamPostJsonEvents(url, payload, headers, async (event: string): Promise<void> => {
+        loggedCacheUsage = this.logPromptCacheUsageFromEvent(source, asStringValue(payload['model']), payload, event,
+          loggedCacheUsage);
         await normalizer.handleEvent(event, send);
       }, 300000, cancelToken);
       return;
     }
     if (endpointPath === '/interactions') {
       const normalizer = new GeminiInteractionsStreamNormalizer(asStringValue(payload['model']));
+      let loggedCacheUsage = false;
       await this.http.streamPostJsonEvents(url, payload, headers, async (event: string): Promise<void> => {
+        loggedCacheUsage = this.logPromptCacheUsageFromEvent(source, asStringValue(payload['model']), payload, event,
+          loggedCacheUsage);
         await normalizer.handleEvent(event, send);
+      }, 300000, cancelToken);
+      return;
+    }
+    if (this.containsCacheControl(payload)) {
+      let loggedCacheUsage = false;
+      await this.http.streamPostJsonWithEventHook(url, payload, headers, send, async (event: string): Promise<void> => {
+        loggedCacheUsage = this.logPromptCacheUsageFromEvent(source, asStringValue(payload['model']), payload, event,
+          loggedCacheUsage);
       }, 300000, cancelToken);
       return;
     }
@@ -243,4 +260,97 @@ export class ChatCompletionRepository {
       return rawText;
     }
   }
+
+  private logPromptCacheUsageFromEvent(source: ChatCompletionSource, model: string, payload: JsonRecord, event: string,
+    alreadyLogged: boolean): boolean {
+    if (alreadyLogged || !this.containsCacheControl(payload) || event === '[DONE]') {
+      return alreadyLogged;
+    }
+    try {
+      const parsed = JSON.parse(event) as Object;
+      if (parsed !== null && !Array.isArray(parsed) && typeof parsed === 'object') {
+        return this.logPromptCacheUsage(source, model, parsed as JsonRecord);
+      }
+    } catch (_err) {
+    }
+    return false;
+  }
+
+  private logPromptCacheUsage(source: ChatCompletionSource, model: string, value: JsonRecord): boolean {
+    const usage = this.findPromptCacheUsage(value);
+    if (usage === null) {
+      return false;
+    }
+    const total = usage.cacheCreationInputTokens + usage.cacheReadInputTokens + usage.inputTokens;
+    const modelText = model.trim().length > 0 ? ` model=${model.trim()}` : '';
+    console.info(`[LLM] ${source} prompt cache usage:${modelText} cache_read_input_tokens=${usage.cacheReadInputTokens} ` +
+      `cache_creation_input_tokens=${usage.cacheCreationInputTokens} input_tokens=${usage.inputTokens} total_input_tokens=${total}`);
+    return true;
+  }
+
+  private findPromptCacheUsage(value: JsonRecord): PromptCacheUsage | null {
+    const usage = asRecordValue(value['usage']);
+    const parsed = this.parsePromptCacheUsage(usage);
+    if (parsed !== null) {
+      return parsed;
+    }
+    const message = asRecordValue(value['message']);
+    return this.parsePromptCacheUsage(asRecordValue(message['usage']));
+  }
+
+  private parsePromptCacheUsage(usage: JsonRecord): PromptCacheUsage | null {
+    const cacheCreation = this.nonNegativeNumber(usage['cache_creation_input_tokens']);
+    const cacheRead = this.nonNegativeNumber(usage['cache_read_input_tokens']);
+    const input = this.nonNegativeNumber(usage['input_tokens']);
+    if (cacheCreation < 0 || cacheRead < 0 || input < 0) {
+      return null;
+    }
+    const result = new PromptCacheUsage();
+    result.cacheCreationInputTokens = cacheCreation;
+    result.cacheReadInputTokens = cacheRead;
+    result.inputTokens = input;
+    return result;
+  }
+
+  private nonNegativeNumber(value: Object | string | number | boolean | null | JsonArray | undefined): number {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      return -1;
+    }
+    return Math.floor(value);
+  }
+
+  private containsCacheControl(value: Object | string | number | boolean | null | JsonArray | undefined): boolean {
+    if (value === undefined || value === null) {
+      return false;
+    }
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index += 1) {
+        const item: Object | string | number | boolean | null = value[index];
+        if (this.containsCacheControl(item)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    if (typeof value !== 'object') {
+      return false;
+    }
+    const record = value as JsonRecord;
+    if (record['cache_control'] !== undefined) {
+      return true;
+    }
+    const keys = Object.keys(record);
+    for (const key of keys) {
+      if (this.containsCacheControl(record[key])) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
+class PromptCacheUsage {
+  cacheCreationInputTokens: number = 0;
+  cacheReadInputTokens: number = 0;
+  inputTokens: number = 0;
 }

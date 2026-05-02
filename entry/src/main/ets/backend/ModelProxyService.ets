@@ -4,6 +4,7 @@ import { HttpRequest, HttpResponse, JsonArray, JsonRecord, emptyJsonRecord } fro
 import { RemoteHttpClient, proxyErrorResponse } from './RemoteHttpClient';
 import { asString, bodyAsRecord, parseJsonRecord } from './JsonUtils';
 import { ChatCompletionService } from './model/ChatCompletionService';
+import { FileStore } from './FileStore';
 
 class HordeStatusResponse {
   ok: boolean = false;
@@ -22,7 +23,7 @@ export class ModelProxyService {
   constructor(dirs: DataDirectories, secrets: SecretsService) {
     this.dirs = dirs;
     this.secrets = secrets;
-    this.chatCompletions = new ChatCompletionService(secrets);
+    this.chatCompletions = new ChatCompletionService(secrets, dirs, new FileStore());
   }
 
   async chatCompletionsGenerate(request: HttpRequest): Promise<HttpResponse> {
