@@ -9,4 +9,5 @@ export declare function canUseModel(model: string): boolean;
 export declare function encode(model: string, text: string): TokenizerEncodeResult;
 export declare function decode(model: string, ids: number[]): string;
 export declare function count(model: string, text: string): number;
+export declare function encodePieces(model: string, text: string): string;
 export declare function countMessages(model: string, messagesJson: string): number;

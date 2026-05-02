@@ -23,12 +23,19 @@ struct TokenizerCountResult {
     char *error;
 };
 
+struct TokenizerJsonStringArrayResult {
+    uint8_t *bytes_ptr;
+    size_t bytes_len;
+    char *error;
+};
+
 char *tavern_tokenizer_version();
 char *tavern_tokenizer_resolve_model(const char *model);
 bool tavern_tokenizer_can_use_model(const char *model);
 TokenizerEncodeResult tavern_tokenizer_encode(const char *model, const uint8_t *text_ptr, size_t text_len);
 TokenizerStringResult tavern_tokenizer_decode(const char *model, const uint32_t *ids_ptr, size_t ids_len);
 TokenizerCountResult tavern_tokenizer_count(const char *model, const uint8_t *text_ptr, size_t text_len);
+TokenizerJsonStringArrayResult tavern_tokenizer_encode_pieces(const char *model, const uint8_t *text_ptr, size_t text_len);
 TokenizerCountResult tavern_tokenizer_count_messages(const char *model, const uint8_t *json_ptr, size_t json_len);
 void tavern_tokenizer_free_ids(uint32_t *ids_ptr, size_t ids_len);
 void tavern_tokenizer_free_bytes(uint8_t *bytes_ptr, size_t bytes_len);
@@ -244,6 +251,25 @@ napi_value Count(napi_env env, napi_callback_info info)
     return CreateSizeNumber(env, native.count);
 }
 
+napi_value EncodePieces(napi_env env, napi_callback_info info)
+{
+    size_t argc = 2;
+    napi_value args[2] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    const std::string model = argc > 0 ? GetStringArg(env, args[0]) : "";
+    const std::string text = argc > 1 ? GetStringArg(env, args[1]) : "";
+    TokenizerJsonStringArrayResult native = tavern_tokenizer_encode_pieces(model.c_str(),
+        reinterpret_cast<const uint8_t *>(text.data()), text.size());
+    if (native.error != nullptr) {
+        ThrowNativeError(env, native.error, "Tokenizer encode pieces failed");
+        return nullptr;
+    }
+
+    NativeBytes json(native.bytes_ptr, native.bytes_len);
+    return CreateString(env, json.str());
+}
+
 napi_value CountMessages(napi_env env, napi_callback_info info)
 {
     size_t argc = 2;
@@ -272,6 +298,7 @@ static napi_value Init(napi_env env, napi_value exports)
         { "encode", nullptr, Encode, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "decode", nullptr, Decode, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "count", nullptr, Count, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "encodePieces", nullptr, EncodePieces, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "countMessages", nullptr, CountMessages, nullptr, nullptr, nullptr, napi_default, nullptr },
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);

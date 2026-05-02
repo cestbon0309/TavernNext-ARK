@@ -3,6 +3,7 @@ import {
   countMessages as nativeCountMessages,
   decode as nativeDecode,
   encode as nativeEncode,
+  encodePieces as nativeEncodePieces,
   resolveModel as nativeResolveModel,
 } from 'libtavern_tokenizer.so';
 import { util } from '@kit.ArkTS';
@@ -40,7 +41,7 @@ export class TokenizerService {
         const response = new EncodeResponse();
         response.ids = this.numberArray(encoded.ids);
         response.count = response.ids.length;
-        response.chunks = this.tokenChunks(model, response.ids);
+        response.chunks = this.encodedTokenChunks(model, text, response.ids);
         return HttpResponse.json(response);
       } catch (_err) {
       }
@@ -274,10 +275,23 @@ export class TokenizerService {
     }
   }
 
+  private encodedTokenChunks(model: string, text: string, ids: number[]): string[] {
+    const resolved = this.resolveTokenizerModel(model);
+    if (this.isSentencePieceTokenizer(resolved)) {
+      try {
+        const pieces = JSON.parse(nativeEncodePieces(model, text)) as Object;
+        if (Array.isArray(pieces)) {
+          return this.stringArray(pieces);
+        }
+      } catch (_err) {
+      }
+    }
+    return this.tokenChunks(model, ids);
+  }
+
   private tokenChunks(model: string, ids: number[]): string[] {
     const resolved = this.resolveTokenizerModel(model);
-    if (resolved === 'claude' || resolved === 'deepseek' || resolved === 'llama3' || resolved === 'qwen2' ||
-      resolved === 'command-r' || resolved === 'command-a' || resolved === 'nemo') {
+    if (this.isWebTokenizer(resolved)) {
       return this.webTokenizerChunks(model, ids);
     }
 
@@ -290,6 +304,16 @@ export class TokenizerService {
       }
     }
     return chunks;
+  }
+
+  private isWebTokenizer(resolved: string): boolean {
+    return resolved === 'claude' || resolved === 'deepseek' || resolved === 'llama3' || resolved === 'qwen2' ||
+      resolved === 'command-r' || resolved === 'command-a' || resolved === 'nemo';
+  }
+
+  private isSentencePieceTokenizer(resolved: string): boolean {
+    return resolved === 'llama' || resolved === 'mistral' || resolved === 'yi' || resolved === 'gemma' ||
+      resolved === 'jamba' || resolved === 'nerdstash' || resolved === 'nerdstash_v2';
   }
 
   private webTokenizerChunks(model: string, ids: number[]): string[] {
@@ -348,6 +372,18 @@ export class TokenizerService {
       if (Number.isFinite(id) && id >= 0) {
         result.push(Math.floor(id));
       }
+    }
+    return result;
+  }
+
+  private stringArray(values: Object | JsonArray | string[] | undefined): string[] {
+    if (!Array.isArray(values)) {
+      return [];
+    }
+    const result: string[] = [];
+    const entries: JsonPrimitive[] | string[] = values as JsonPrimitive[] | string[];
+    for (const value of entries) {
+      result.push(`${value ?? ''}`);
     }
     return result;
   }

@@ -16,6 +16,21 @@ static READY_MODELS: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
 const CLAUDE_JSON_GZIP_BYTES: &[u8] = include_bytes!("../resources/tokenizers/claude.json.gz");
 const DEEPSEEK_JSON_GZIP_BYTES: &[u8] = include_bytes!("../resources/tokenizers/deepseek.json.gz");
 const GEMMA_MODEL_GZIP_BYTES: &[u8] = include_bytes!("../resources/tokenizers/gemma.model.gz");
+const LLAMA_MODEL_GZIP_BYTES: &[u8] = include_bytes!("../resources/tokenizers/llama.model.gz");
+const MISTRAL_MODEL_GZIP_BYTES: &[u8] = include_bytes!("../resources/tokenizers/mistral.model.gz");
+const YI_MODEL_GZIP_BYTES: &[u8] = include_bytes!("../resources/tokenizers/yi.model.gz");
+const JAMBA_MODEL_GZIP_BYTES: &[u8] = include_bytes!("../resources/tokenizers/jamba.model.gz");
+const NERDSTASH_MODEL_GZIP_BYTES: &[u8] =
+    include_bytes!("../resources/tokenizers/nerdstash.model.gz");
+const NERDSTASH_V2_MODEL_GZIP_BYTES: &[u8] =
+    include_bytes!("../resources/tokenizers/nerdstash_v2.model.gz");
+const LLAMA3_JSON_GZIP_BYTES: &[u8] = include_bytes!("../resources/tokenizers/llama3.json.gz");
+const COMMAND_R_JSON_GZIP_BYTES: &[u8] =
+    include_bytes!("../resources/tokenizers/command-r.json.gz");
+const COMMAND_A_JSON_GZIP_BYTES: &[u8] =
+    include_bytes!("../resources/tokenizers/command-a.json.gz");
+const QWEN2_JSON_GZIP_BYTES: &[u8] = include_bytes!("../resources/tokenizers/qwen2.json.gz");
+const NEMO_JSON_GZIP_BYTES: &[u8] = include_bytes!("../resources/tokenizers/nemo.json.gz");
 const OPENAI_MODELS: &[&str] = &[
     "o1",
     "gpt-4o",
@@ -23,8 +38,49 @@ const OPENAI_MODELS: &[&str] = &[
     "gpt-4-32k",
     "gpt-3.5-turbo",
     "gpt-3.5-turbo-0301",
+    "gpt-3.5-turbo-instruct",
+    "gpt-3.5-turbo-instruct-0914",
+    "text-davinci-003",
+    "text-davinci-002",
+    "text-davinci-001",
+    "text-curie-001",
+    "text-babbage-001",
+    "text-ada-001",
+    "code-davinci-002",
+    "code-davinci-001",
+    "code-cushman-002",
+    "code-cushman-001",
+    "text-davinci-edit-001",
+    "code-davinci-edit-001",
+    "text-embedding-ada-002",
+    "text-similarity-davinci-001",
+    "text-similarity-curie-001",
+    "text-similarity-babbage-001",
+    "text-similarity-ada-001",
+    "text-search-davinci-doc-001",
+    "text-search-curie-doc-001",
+    "text-search-babbage-doc-001",
+    "text-search-ada-doc-001",
+    "code-search-babbage-code-001",
+    "code-search-ada-code-001",
+    "gpt2",
 ];
-const BUNDLED_HF_MODELS: &[&str] = &["claude", "deepseek", "gemma"];
+const BUNDLED_HF_MODELS: &[&str] = &[
+    "claude",
+    "deepseek",
+    "gemma",
+    "llama",
+    "llama3",
+    "mistral",
+    "yi",
+    "jamba",
+    "nerdstash",
+    "nerdstash_v2",
+    "qwen2",
+    "command-r",
+    "command-a",
+    "nemo",
+];
 
 #[repr(C)]
 pub struct TokenizerEncodeResult {
@@ -43,6 +99,13 @@ pub struct TokenizerStringResult {
 #[repr(C)]
 pub struct TokenizerCountResult {
     count: usize,
+    error: *mut c_char,
+}
+
+#[repr(C)]
+pub struct TokenizerJsonStringArrayResult {
+    bytes_ptr: *mut u8,
+    bytes_len: usize,
     error: *mut c_char,
 }
 
@@ -107,6 +170,12 @@ fn into_bytes(text: String) -> (*mut u8, usize) {
     (bytes_ptr, bytes_len)
 }
 
+fn into_json_bytes(value: &[String]) -> Result<(*mut u8, usize), String> {
+    serde_json::to_string(value)
+        .map(into_bytes)
+        .map_err(|error| format!("failed to serialize tokenizer JSON result: {error}"))
+}
+
 fn canonical_model(requested: &str) -> &'static str {
     TokenizerRegistry::resolve_model_ref(requested)
 }
@@ -123,6 +192,50 @@ fn model_resource_spec(canonical: &str) -> Option<ModelResourceSpec> {
         }),
         "gemma" => Some(ModelResourceSpec {
             bytes: GEMMA_MODEL_GZIP_BYTES,
+            compression: ResourceCompression::Gzip,
+        }),
+        "llama" => Some(ModelResourceSpec {
+            bytes: LLAMA_MODEL_GZIP_BYTES,
+            compression: ResourceCompression::Gzip,
+        }),
+        "llama3" => Some(ModelResourceSpec {
+            bytes: LLAMA3_JSON_GZIP_BYTES,
+            compression: ResourceCompression::Gzip,
+        }),
+        "mistral" => Some(ModelResourceSpec {
+            bytes: MISTRAL_MODEL_GZIP_BYTES,
+            compression: ResourceCompression::Gzip,
+        }),
+        "yi" => Some(ModelResourceSpec {
+            bytes: YI_MODEL_GZIP_BYTES,
+            compression: ResourceCompression::Gzip,
+        }),
+        "jamba" => Some(ModelResourceSpec {
+            bytes: JAMBA_MODEL_GZIP_BYTES,
+            compression: ResourceCompression::Gzip,
+        }),
+        "nerdstash" => Some(ModelResourceSpec {
+            bytes: NERDSTASH_MODEL_GZIP_BYTES,
+            compression: ResourceCompression::Gzip,
+        }),
+        "nerdstash_v2" => Some(ModelResourceSpec {
+            bytes: NERDSTASH_V2_MODEL_GZIP_BYTES,
+            compression: ResourceCompression::Gzip,
+        }),
+        "command-r" => Some(ModelResourceSpec {
+            bytes: COMMAND_R_JSON_GZIP_BYTES,
+            compression: ResourceCompression::Gzip,
+        }),
+        "command-a" => Some(ModelResourceSpec {
+            bytes: COMMAND_A_JSON_GZIP_BYTES,
+            compression: ResourceCompression::Gzip,
+        }),
+        "qwen2" => Some(ModelResourceSpec {
+            bytes: QWEN2_JSON_GZIP_BYTES,
+            compression: ResourceCompression::Gzip,
+        }),
+        "nemo" => Some(ModelResourceSpec {
+            bytes: NEMO_JSON_GZIP_BYTES,
             compression: ResourceCompression::Gzip,
         }),
         _ => None,
@@ -160,6 +273,32 @@ fn is_bundled_native_request(requested: &str, canonical: &str) -> bool {
         "gpt-4" => lower.contains("gpt-4"),
         "gpt-3.5-turbo-0301" => lower.contains("gpt-3.5-turbo-0301"),
         "gpt-3.5-turbo" => lower.contains("gpt-3.5-turbo"),
+        "gpt2" => lower == "gpt2" || lower == "gpt-2",
+        "gpt-3.5-turbo-instruct"
+        | "gpt-3.5-turbo-instruct-0914"
+        | "text-davinci-003"
+        | "text-davinci-002"
+        | "text-davinci-001"
+        | "text-curie-001"
+        | "text-babbage-001"
+        | "text-ada-001"
+        | "code-davinci-002"
+        | "code-davinci-001"
+        | "code-cushman-002"
+        | "code-cushman-001"
+        | "text-davinci-edit-001"
+        | "code-davinci-edit-001"
+        | "text-embedding-ada-002"
+        | "text-similarity-davinci-001"
+        | "text-similarity-curie-001"
+        | "text-similarity-babbage-001"
+        | "text-similarity-ada-001"
+        | "text-search-davinci-doc-001"
+        | "text-search-curie-doc-001"
+        | "text-search-babbage-doc-001"
+        | "text-search-ada-doc-001"
+        | "code-search-babbage-code-001"
+        | "code-search-ada-code-001" => lower == canonical,
         _ => false,
     }
 }
@@ -537,6 +676,62 @@ pub unsafe extern "C" fn tavern_tokenizer_count(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn tavern_tokenizer_encode_pieces(
+    model: *const c_char,
+    text_ptr: *const u8,
+    text_len: usize,
+) -> TokenizerJsonStringArrayResult {
+    let requested = unsafe { string_from_ptr(model, "gpt-3.5-turbo") };
+    let input = match unsafe { text_from_parts(text_ptr, text_len) } {
+        Ok(value) => value,
+        Err(error) => {
+            return TokenizerJsonStringArrayResult {
+                bytes_ptr: ptr::null_mut(),
+                bytes_len: 0,
+                error: into_error(error),
+            };
+        }
+    };
+    let canonical = match ensure_model_ready(&requested) {
+        Ok(value) => value,
+        Err(error) => {
+            return TokenizerJsonStringArrayResult {
+                bytes_ptr: ptr::null_mut(),
+                bytes_len: 0,
+                error: into_error(error),
+            };
+        }
+    };
+
+    let pieces = match registry()
+        .get_canonical(canonical)
+        .and_then(|tokenizer| tokenizer.encode_pieces(input))
+    {
+        Ok(value) => value,
+        Err(error) => {
+            return TokenizerJsonStringArrayResult {
+                bytes_ptr: ptr::null_mut(),
+                bytes_len: 0,
+                error: into_error(error.to_string()),
+            };
+        }
+    };
+
+    match into_json_bytes(&pieces) {
+        Ok((bytes_ptr, bytes_len)) => TokenizerJsonStringArrayResult {
+            bytes_ptr,
+            bytes_len,
+            error: ptr::null_mut(),
+        },
+        Err(error) => TokenizerJsonStringArrayResult {
+            bytes_ptr: ptr::null_mut(),
+            bytes_len: 0,
+            error: into_error(error),
+        },
+    }
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn tavern_tokenizer_count_messages(
     model: *const c_char,
     json_ptr: *const u8,
@@ -631,5 +826,113 @@ pub unsafe extern "C" fn tavern_tokenizer_free_string(value: *mut c_char) {
     }
     unsafe {
         drop(CString::from_raw(value));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_all_sillytavern_tokenizer_families() {
+        let cases = [
+            ("gpt2", "gpt2"),
+            ("gpt-2", "gpt2"),
+            ("llama-3.3-70b", "llama3"),
+            ("llama-2-13b", "llama"),
+            ("mistral-large", "mistral"),
+            ("yi-34b", "yi"),
+            ("gemini-2.0-flash", "gemma"),
+            ("jamba-1.5", "jamba"),
+            ("nerdstash", "nerdstash"),
+            ("nerdstash_v2", "nerdstash_v2"),
+            ("nerdstash-v2", "nerdstash_v2"),
+            ("qwen2.5-coder", "qwen2"),
+            ("command-r-plus", "command-r"),
+            ("command-a-03", "command-a"),
+            ("nemo", "nemo"),
+            ("deepseek-chat", "deepseek"),
+        ];
+
+        for (requested, expected) in cases {
+            assert_eq!(canonical_model(requested), expected, "{requested}");
+            assert!(
+                is_bundled_native_request(requested, expected),
+                "{requested} should be supported by bundled native bridge"
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_tokenizer_resources_load_and_encode() {
+        for model in [
+            "claude",
+            "deepseek",
+            "gemma",
+            "llama",
+            "llama3",
+            "mistral",
+            "yi",
+            "jamba",
+            "nerdstash",
+            "nerdstash_v2",
+            "qwen2",
+            "command-r",
+            "command-a",
+            "nemo",
+        ] {
+            let canonical = ensure_model_ready(model).expect("model should prepare");
+            let tokenizer = registry()
+                .get_canonical(canonical)
+                .expect("tokenizer should load");
+            let ids = tokenizer
+                .encode("Hello world")
+                .expect("tokenizer should encode");
+            assert!(!ids.is_empty(), "{model} should return token ids");
+            assert!(
+                tokenizer.count_tokens("Hello world").expect("count") > 0,
+                "{model} should count tokens"
+            );
+            if TokenizerRegistry::is_sentencepiece_model(canonical) {
+                let pieces = tokenizer
+                    .encode_pieces("Hello world")
+                    .expect("sentencepiece pieces");
+                assert_eq!(pieces.len(), ids.len(), "{model} pieces should match ids");
+            }
+        }
+    }
+
+    #[test]
+    fn tiktoken_explicit_models_are_native() {
+        for model in [
+            "gpt2",
+            "text-davinci-003",
+            "code-davinci-002",
+            "text-embedding-ada-002",
+        ] {
+            assert!(
+                is_bundled_native_request(model, canonical_model(model)),
+                "{model} should be native"
+            );
+            let canonical = ensure_model_ready(model).expect("tiktoken model should prepare");
+            let ids = registry()
+                .get_canonical(canonical)
+                .expect("tokenizer should load")
+                .encode("Hello world")
+                .expect("tokenizer should encode");
+            assert!(!ids.is_empty(), "{model} should return token ids");
+        }
+    }
+
+    #[test]
+    fn unknown_custom_model_still_uses_openai_fallback() {
+        let requested = "my-openai-compatible-model";
+        let canonical = canonical_model(requested);
+        assert_eq!(canonical, "gpt-3.5-turbo");
+        assert!(
+            !is_bundled_native_request(requested, canonical),
+            "explicit unknown model should not be native unless ArkTS resolves openai routes first"
+        );
+        assert!(is_bundled_native_request(canonical, canonical));
     }
 }

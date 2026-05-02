@@ -16,12 +16,12 @@
 - 第三方扩展 Git 第一阶段已接入 native `.so` + `libgit2`：支持 HTTPS 公共仓库安装、版本状态、分支列表、分支切换和 fast-forward 更新。
 - OpenAI chat-completions 支持 `openai` 和 `custom` 来源，支持 `/models` 状态检查、`/chat/completions` 非流式生成和流式 SSE 生成。
 - 流式生成已改为 Harmony `requestInStream()` + `dataReceive` 转发，并通过虚拟机、hdc 端口映射、慢速 mock OpenAI 服务确认分块即时到达。
-- Tokenizer 已接入 native `.so` + Rust `miktik`：OpenAI/tiktoken、Claude、DeepSeek、Gemma 已走真实 encode/decode/count，`/api/tokenizers/openai/count` 会按原版模型分支进行 OpenAI chat overhead、Claude-style prompt 或 SentencePiece flatten 计数。
+- Tokenizer 已接入 native `.so` + Rust `miktik`：SillyTavern 本地 tokenizer 路由已走真实 encode/decode/count，覆盖 OpenAI/tiktoken、GPT-2、旧 OpenAI text/embedding 模型、Claude、DeepSeek、Gemma、Llama/Llama 3、Mistral、Yi、Jamba、Nerdstash/Nerdstash v2、Qwen2、Command-R/Command-A 和 Nemo；`/api/tokenizers/openai/count` 会按原版模型分支进行 OpenAI chat overhead、Claude-style prompt 或 SentencePiece flatten 计数。
 
 明确暂缓或仍不完善：
 - 多用户明确暂缓：当前 App 形态不需要多用户运行模型，后端固定使用 `data/default-user/`；`/api/users/*` 只保留为本地账号弹窗、密码校验和备份恢复的兼容层，不启用真实 session、cookie-session、当前用户切换和权限中间件。
 - 模型 provider 仍不完整：OpenAI/OpenAI-compatible `openai` 和 `custom` 主路径已可用；text-completions、NovelAI、Horde、Stable Diffusion 等已有基础代理或查询路由，但还没有完整对齐原版 provider 行为、错误格式、请求取消和流式转换。
-- Tokenizer 仍未全量：OpenAI/tiktoken、Claude、DeepSeek、Gemma 已接入 MikTik native；GPT-2、Llama/Llama 3、Mistral、Qwen、Yi、Command、Nemo、Nerdstash、Jamba 等仍未接入真实本地 tokenizer。
+- Tokenizer 本地路由已基本补齐：剩余风险主要是特殊 token、异常 token id、chunks 展示和包体积等边界细节；不再使用 byte 估算承担这些模型的主路径计数。
 - Vector 已有最小实现：支持本地 JSON 索引、insert/list/delete/query/query-multi/purge，以及部分 embedding provider 调用和 hash fallback；但尚未对齐原版 `vectra.LocalIndex` 的完整行为和性能。
 - Git 后续增强：私有仓库认证、SSH、submodule、非 fast-forward merge 冲突处理、hooks 执行仍暂缓。
 - settings snapshots、presets、themes、moving UI、assets/content-manager、聊天备份等管理类接口仍需后续补齐。
@@ -2422,12 +2422,36 @@ TLS 处理：
 - `POST /api/tokenizers/openai/encode`
 - `POST /api/tokenizers/openai/decode`
 - `POST /api/tokenizers/openai/count`
+- `POST /api/tokenizers/gpt2/encode`
+- `POST /api/tokenizers/gpt2/decode`
+- `POST /api/tokenizers/llama/encode`
+- `POST /api/tokenizers/llama/decode`
+- `POST /api/tokenizers/llama3/encode`
+- `POST /api/tokenizers/llama3/decode`
+- `POST /api/tokenizers/mistral/encode`
+- `POST /api/tokenizers/mistral/decode`
+- `POST /api/tokenizers/yi/encode`
+- `POST /api/tokenizers/yi/decode`
+- `POST /api/tokenizers/gemma/encode`
+- `POST /api/tokenizers/gemma/decode`
+- `POST /api/tokenizers/jamba/encode`
+- `POST /api/tokenizers/jamba/decode`
+- `POST /api/tokenizers/nerdstash/encode`
+- `POST /api/tokenizers/nerdstash/decode`
+- `POST /api/tokenizers/nerdstash_v2/encode`
+- `POST /api/tokenizers/nerdstash_v2/decode`
 - `POST /api/tokenizers/claude/encode`
 - `POST /api/tokenizers/claude/decode`
 - `POST /api/tokenizers/deepseek/encode`
 - `POST /api/tokenizers/deepseek/decode`
-- `POST /api/tokenizers/gemma/encode`
-- `POST /api/tokenizers/gemma/decode`
+- `POST /api/tokenizers/qwen2/encode`
+- `POST /api/tokenizers/qwen2/decode`
+- `POST /api/tokenizers/command-r/encode`
+- `POST /api/tokenizers/command-r/decode`
+- `POST /api/tokenizers/command-a/encode`
+- `POST /api/tokenizers/command-a/decode`
+- `POST /api/tokenizers/nemo/encode`
+- `POST /api/tokenizers/nemo/decode`
 
 native 链路：
 
@@ -2438,15 +2462,26 @@ TokenizerService.ets
       -> third_party/miktik TokenizerRegistry
 ```
 
-当前 Rust bridge 启用 MikTik `openai`、`huggingface`、`sentencepiece` features。支持的 canonical tokenizer 包括 `o1`、`gpt-4o`、`gpt-4`、`gpt-4-32k`、`gpt-3.5-turbo`、`gpt-3.5-turbo-0301`、`claude`、`deepseek`、`gemma`；模型 alias 由 MikTik/ArkTS 共同解析，空模型按原版默认走 OpenAI tokenizer。
+当前 Rust bridge 启用 MikTik `openai`、`huggingface`、`sentencepiece` features。支持的 canonical tokenizer 包括 `o1`、`gpt-4o`、`gpt-4`、`gpt-4-32k`、`gpt-3.5-turbo`、`gpt-3.5-turbo-0301`、`gpt2`、原版 `TEXT_COMPLETION_MODELS` 中的旧 OpenAI text/code/embedding 模型、`claude`、`deepseek`、`gemma`、`llama`、`llama3`、`mistral`、`yi`、`jamba`、`nerdstash`、`nerdstash_v2`、`qwen2`、`command-r`、`command-a`、`nemo`；模型 alias 由 MikTik/ArkTS 共同解析，空模型按原版默认走 OpenAI tokenizer。
 
 内置 tokenizer 资源：
 
 - `native/tavern_tokenizer_ffi/resources/tokenizers/claude.json.gz`
 - `native/tavern_tokenizer_ffi/resources/tokenizers/deepseek.json.gz`
 - `native/tavern_tokenizer_ffi/resources/tokenizers/gemma.model.gz`
+- `native/tavern_tokenizer_ffi/resources/tokenizers/llama.model.gz`
+- `native/tavern_tokenizer_ffi/resources/tokenizers/llama3.json.gz`
+- `native/tavern_tokenizer_ffi/resources/tokenizers/mistral.model.gz`
+- `native/tavern_tokenizer_ffi/resources/tokenizers/yi.model.gz`
+- `native/tavern_tokenizer_ffi/resources/tokenizers/jamba.model.gz`
+- `native/tavern_tokenizer_ffi/resources/tokenizers/nerdstash.model.gz`
+- `native/tavern_tokenizer_ffi/resources/tokenizers/nerdstash_v2.model.gz`
+- `native/tavern_tokenizer_ffi/resources/tokenizers/qwen2.json.gz`
+- `native/tavern_tokenizer_ffi/resources/tokenizers/command-r.json.gz`
+- `native/tavern_tokenizer_ffi/resources/tokenizers/command-a.json.gz`
+- `native/tavern_tokenizer_ffi/resources/tokenizers/nemo.json.gz`
 
-这些资源来自 TauriTavern 的 MikTik 方案，首次使用时由 Rust bridge 懒加载解压并注册到 MikTik `TokenizerRegistry`。
+这些资源来自 SillyTavern 本地 `src/tokenizers` 和 SillyTavern-Tokenizers 仓库；OHOS 侧选择全部 gzip 内置，首次使用时由 Rust bridge 懒加载解压并注册到 MikTik `TokenizerRegistry`。这和 TauriTavern 的“部分内置、部分首次下载缓存”思路一致，但为了移动端稳定性先避免运行时下载 tokenizer。
 
 encode 请求：
 
@@ -2487,30 +2522,20 @@ decode 响应：
 
 `POST /api/tokenizers/openai/count` 对非 OpenAI native 模型保持原版分支：
 
-- Claude、DeepSeek：先按原版 `convertClaudePrompt(..., false, '', false, false, '', false)` 语义转成 Claude-style prompt，再用 web tokenizer 计数。
-- Gemma：按原版 SentencePiece 分支，把 messages 中的 values flatten 后用 `\n\n` 拼接，再计数。
+- Claude、DeepSeek、Llama3、Qwen2、Command-R、Command-A、Nemo：先按原版 `convertClaudePrompt(..., false, '', false, false, '', false)` 语义转成 Claude-style prompt，再用 web tokenizer 计数。
+- Llama、Mistral、Yi、Gemma、Jamba、Nerdstash、Nerdstash v2：按原版 SentencePiece 分支，把 messages 中的 values flatten 后用 `\n\n` 拼接，再计数。
 
 `POST /api/backends/chat-completions/bias` 也会使用同一套 native tokenizer。请求体必须是数组，数组项使用 `{ "text": "...", "value": number }`；`text` 可以是普通文本，也可以是原始 token 数组字符串如 `[1,2,3]`。Claude tokenizer 按原版返回空对象。
 
 ### 13.2 兼容/暂缓 tokenizer
 
-以下本地 tokenizer 仍使用兼容或估算实现，不是原版等价 tokenizer：
+`POST /api/tokenizers/encode` 这个无模型旧兼容入口仍按字节估算；它不是原版具体模型 tokenizer。除此之外，SillyTavern 已注册的本地 tokenizer 模型路由当前都已接入 native。
 
-- `POST /api/tokenizers/encode`
-- `POST /api/tokenizers/gpt2/encode`
-- `POST /api/tokenizers/llama/encode`
-- `POST /api/tokenizers/mistral/encode`
-- `POST /api/tokenizers/yi/encode`
-- `POST /api/tokenizers/llama3/encode`
-- `POST /api/tokenizers/jamba/encode`
-- `POST /api/tokenizers/qwen2/encode`
-- `POST /api/tokenizers/command-r/encode`
-- `POST /api/tokenizers/command-a/encode`
-- `POST /api/tokenizers/nemo/encode`
-- `POST /api/tokenizers/nerdstash/encode`
-- `POST /api/tokenizers/nerdstash_v2/encode`
+仍需关注的边界：
 
-这些路径目前保持前端接口可用：encode 返回 byte token ids、count 和按字符拆分的 chunks；decode 可把 byte token ids 解回 UTF-8 文本。后续需要补 tokenizer 资源打包/缓存，以及 GPT-2、Llama/Llama 3、Mistral、Yi、Qwen2、Command、Nemo、Nerdstash、Jamba 等模型 alias 和资源。
+- 特殊 token 和非法 token id 的错误返回是否与 Node/WASM 完全一致。
+- SentencePiece chunks 当前使用 native token pieces；decode 响应仍按单 token decode 聚合，和原版展示高度接近但仍需用更多样本文本比对。
+- 全部 tokenizer 资源内置会增加 HAP 体积；如后续包体压力明显，可改为 TauriTavern 式首次下载缓存。
 
 ## 14. 未注册接口和占位响应
 
@@ -2595,7 +2620,7 @@ UI 截图：
 - 已有本地账号兼容 API 和密码校验；多用户系统明确暂缓，当前固定使用 `default-user`，不支持真实多用户会话、cookie-session、当前用户切换、权限中间件和真实 CSRF。
 - multipart 解析已支持，角色卡 JSON/PNG 导入、头像上传、背景上传、sprites 上传、聊天导入已接入；世界书导入等 multipart 接口仍需补。
 - OpenAI/OpenAI-compatible chat-completions 已有最小可用代理，支持 `openai` 和 `custom` 来源、状态检查、非流式生成和流式 SSE 透传；其他 provider 或外部服务仍未完整对齐。
-- OpenAI/tiktoken、Claude、DeepSeek、Gemma tokenizer 已接入 native MikTik；其余 tokenizer 仍是兼容/估算实现，上下文裁剪和模型精确 token 计数对 GPT-2、Llama、Qwen、Command、Nemo 等仍需后续补齐。
+- SillyTavern 本地 tokenizer 路由已接入 native MikTik；上下文裁剪和模型精确 token 计数已覆盖 GPT-2、Llama/Llama 3、Mistral、Yi、Gemma、Jamba、Nerdstash、Qwen2、Command、Nemo、Claude、DeepSeek 和 OpenAI/tiktoken。剩余是特殊 token/chunks/包体积等边界优化。
 - Vector 已有最小本地 JSON 索引和 embedding/hash fallback，但还不是原版 `vectra.LocalIndex` 等价实现。
 - 背景、头像、聊天图片、附件、sprites、缩略图和 `image-metadata` 已接入本地文件实现；其中图片处理依赖 Harmony `ImageKit`，与 Node/Jimp 在极端格式上的像素级结果可能存在细微差异。
 - `extensions/discover` 已扫描 rawfile 系统扩展和本地/全局第三方扩展目录；扩展 Git 已支持 HTTPS 公共仓库，但私有仓库认证、SSH、submodule、merge 冲突处理和 hooks 仍暂缓。
@@ -2920,11 +2945,9 @@ avatar
 
 当前 ArkTS 已实现：
 
-- OpenAI/tiktoken native tokenizer：`/api/tokenizers/openai/encode`、`decode`、`count` 已通过 MikTik 真实 encode/decode/count。
-- Claude、DeepSeek、Gemma native tokenizer：`/api/tokenizers/claude/*`、`/api/tokenizers/deepseek/*`、`/api/tokenizers/gemma/*` 已使用 MikTik `huggingface/sentencepiece` 后端和内置 gzip tokenizer 资源；`openai/count` 的这些模型会按原版 SillyTavern 分支计数。
+- OpenAI/tiktoken native tokenizer：`/api/tokenizers/openai/encode`、`decode`、`count` 已通过 MikTik 真实 encode/decode/count，并覆盖 GPT-2 和原版旧 OpenAI text/code/embedding 模型。
+- SillyTavern 本地 tokenizer native 路由：`/api/tokenizers/claude/*`、`deepseek/*`、`gemma/*`、`llama/*`、`llama3/*`、`mistral/*`、`yi/*`、`jamba/*`、`nerdstash/*`、`nerdstash_v2/*`、`qwen2/*`、`command-r/*`、`command-a/*`、`nemo/*` 已使用 MikTik `huggingface/sentencepiece` 后端和内置 gzip tokenizer 资源；`openai/count` 的这些模型会按原版 SillyTavern 分支计数。
 - `POST /api/backends/chat-completions/bias`：OpenAI、DeepSeek、Gemma 等 native 可用模型使用 MikTik token ids，Claude 返回空对象，原始 token 数组字符串按原版直接展开。
-- 多个尚未 native 化的 `/api/tokenizers/*/encode` 仍是估算接口，返回 byte token ids、count 和按字符拆分的 chunks。
-- 多个尚未 native 化的 `/api/tokenizers/*/decode` 仍是兼容接口，可把 byte token ids 解回文本。
 - `POST /api/tokenizers/remote/kobold/count`：转发到 Kobold/KoboldCpp `tokencount`。
 - `POST /api/tokenizers/remote/textgenerationwebui/encode`：按 tabby/koboldcpp/llamacpp/vllm/aphrodite 等 API 类型转发远程 encode/tokenize。
 - `/api/vector/insert`、`list`、`delete`、`query`、`query-multi`、`purge`、`purge-all`。
@@ -2933,15 +2956,10 @@ avatar
 
 仍缺失或不完善：
 
-- 尚未接入真实 native tokenizer：
-  - GPT-2
-  - Llama / Llama 3
-  - Mistral
-  - Qwen2
-  - Yi
-  - Command 系列
-  - Nemo
-  - Nerdstash、Jamba 等
+- tokenizer 边界仍需继续比对：
+  - 特殊 token、异常 token id、极端 Unicode 文本的结果是否与原版完全一致
+  - SentencePiece/web tokenizer chunks 展示在更多样本文本下是否完全一致
+  - 全部 gzip tokenizer 资源内置后的 HAP 体积取舍
 - 原版 `vectra.LocalIndex` 等价索引、性能优化、大数据量索引格式和精确排序行为。
 - 各 embedding provider 的完整请求参数、鉴权细节、错误透传和前端配置字段对齐。
 
@@ -3104,7 +3122,6 @@ avatar
 8. 高级能力阶段：
    - 已完成：vectors 最小本地 JSON 索引和 embedding/hash fallback
    - 待补：vectors 原版等价索引和性能优化
-   - 已完成：OpenAI/tiktoken native tokenizer
-   - 已完成：Claude、DeepSeek、Gemma native tokenizer
-   - 待补：GPT-2、Llama/Llama 3、Mistral、Yi、Qwen2、Command、Nemo、Nerdstash、Jamba 等剩余 tokenizer
+   - 已完成：SillyTavern 本地 tokenizer 路由 native 化，包括 OpenAI/tiktoken、GPT-2、Claude、DeepSeek、Gemma、Llama/Llama 3、Mistral、Yi、Qwen2、Command、Nemo、Nerdstash、Jamba 等
+   - 待补：tokenizer 特殊 token/chunks/包体积边界优化
    - 图片、语音、翻译、搜索等外部能力
