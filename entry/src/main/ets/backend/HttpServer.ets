@@ -142,7 +142,11 @@ export class HttpServer {
     }
 
     try {
-      await connection.send({ data: this.serializeResponse(response) });
+      if (response.streamHandler !== null) {
+        await this.sendStreamResponse(connection, response);
+      } else {
+        await connection.send({ data: this.serializeResponse(response) });
+      }
     } catch (err) {
       hilog.warn(DOMAIN, TAG, 'Send failed: %{public}s', JSON.stringify(err));
     }
@@ -267,6 +271,31 @@ export class HttpServer {
     packet.set(headerBytes, 0);
     packet.set(bodyBytes, headerBytes.byteLength);
     return packet.buffer;
+  }
+
+  private async sendStreamResponse(connection: socket.TCPSocketConnection, response: HttpResponse): Promise<void> {
+    response.headers['connection'] = 'close';
+    const lines: string[] = [`HTTP/1.1 ${response.statusCode} ${response.statusText}`];
+    Object.keys(response.headers).forEach((name: string) => {
+      lines.push(`${name}: ${response.headers[name]}`);
+    });
+    lines.push('');
+    lines.push('');
+    await connection.send({ data: this.encoder.encodeInto(lines.join('\r\n')).buffer });
+
+    const handler = response.streamHandler;
+    if (handler === null) {
+      return;
+    }
+    await handler(async (chunk: string | Uint8Array): Promise<void> => {
+      if (typeof chunk === 'string') {
+        await connection.send({ data: this.encoder.encodeInto(chunk).buffer });
+      } else {
+        const buffer = new ArrayBuffer(chunk.byteLength);
+        new Uint8Array(buffer).set(chunk);
+        await connection.send({ data: buffer });
+      }
+    });
   }
 
   private concatBytes(left: Uint8Array, right: Uint8Array): Uint8Array {

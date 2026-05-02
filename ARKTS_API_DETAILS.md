@@ -2,6 +2,25 @@
 
 本文档描述 `tavernnext-ohos` 当前 ArkTS 后端的实际接口行为。它不是 SillyTavern Node.js 后端的完整替代说明，而是截至当前工程状态已经实现、已经占位、以及需要保持兼容的数据约定。
 
+## 最新状态快照（2026-05-03）
+
+当前工程已经完成本地数据兼容和 OpenAI chat-completions 最小可用链路，仍不是完整 SillyTavern Node.js 后端替代。
+
+已完成并验证：
+- WebView 加载 `http://127.0.0.1:8000`，rawfile 前端静态资源可用。
+- 首次启动按原版默认内容初始化 `data/default-user/`，只在 `content.log` 为空时执行一次。
+- settings、角色、聊天、群聊、世界书、groups、QuickReplies、secrets、users、extensions、data zip 导出/恢复、媒体上传等本地 API 已覆盖主要前端流程。
+- 媒体相关处理已尽量使用 Harmony 官方 API：图片尺寸/裁剪/缩略图/平均色使用 `ImageKit`，zip 压缩/解压使用 `zlib`。
+- OpenAI chat-completions 支持 `openai` 和 `custom` 来源，支持 `/models` 状态检查、`/chat/completions` 非流式生成和流式 SSE 生成。
+- 流式生成已改为 Harmony `requestInStream()` + `dataReceive` 转发，并通过虚拟机、hdc 端口映射、慢速 mock OpenAI 服务确认分块即时到达。
+
+暂缓或未完成：
+- 多用户暂缓：账号接口目前是本地兼容层，不启用真实 session、cookie-session、当前用户切换和权限中间件。
+- 模型 provider 暂缓：OpenRouter、Claude、Gemini、NovelAI、Kobold/TextGen、Horde、Stable Diffusion 等还未完整实现。
+- Tokenizer 暂缓：当前只有估算/占位接口，尚未接入 MikTik/OHOS native tokenizer。
+- Vector 暂缓：embedding 调用、本地向量索引、insert/query/delete/list/purge 仍未完成。
+- settings snapshots、presets、themes、moving UI、assets/content-manager、聊天备份等管理类接口仍需后续补齐。
+
 代码入口：
 
 - `entry/src/main/ets/backend/BackendService.ets`：后端生命周期和路由注册。
@@ -2474,8 +2493,7 @@ UI 截图：
 
 - 已有本地账号兼容 API 和密码校验，但不支持真实多用户会话、cookie-session、当前用户切换、权限中间件和真实 CSRF。
 - multipart 解析已支持，角色卡 JSON/PNG 导入、头像上传、背景上传、sprites 上传、聊天导入已接入；世界书导入等 multipart 接口仍需补。
-- 不支持真实模型代理，底部仍显示“未连接到 API!”。
-- 不支持真实 OpenAI / chat-completions 生成。
+- OpenAI chat-completions 已有最小可用代理，支持状态检查、非流式生成和流式 SSE 透传；其他 provider 仍未完整实现。
 - 不支持真实 tokenizer，仅按 UTF-8 字节数估算。
 - 背景、头像、聊天图片、附件、sprites、缩略图和 `image-metadata` 已接入本地文件实现；其中图片处理依赖 Harmony `ImageKit`，与 Node/Jimp 在极端格式上的像素级结果可能存在细微差异。
 - `extensions/discover` 已扫描 rawfile 系统扩展和本地/全局第三方扩展目录，但扩展安装/更新不支持 Git，manifest 解析也未对齐原版。
@@ -2836,14 +2854,26 @@ avatar
 
 ### 17.9 模型代理和外部服务
 
-当前 ArkTS 已注册但未实现：
+当前 ArkTS 已实现的最小模型代理：
 
 - `POST /api/backends/chat-completions/generate`
+- `POST /api/backends/chat-completions/status`
 - `POST /api/openai/generate`
+
+当前范围：
+
+- 仅支持 `chat_completion_source=openai`。
+- `status` 使用 `reverse_proxy || https://api.openai.com/v1` 拼接 `/models`。
+- `generate` 使用 `reverse_proxy || https://api.openai.com/v1` 拼接 `/chat/completions`。
+- API key 使用 `proxy_password` 或本地 `api_key_openai` secret；缺少 key 且没有 reverse proxy 时返回 `{ "error": true }`。
+- 非流式响应透传 OpenAI JSON。
+- 流式响应以 `text/event-stream` 透传上游 SSE 分块。
+- 请求体会清理 `chat_completion_source`、`reverse_proxy`、`proxy_password`、`custom_*`、`bypass_status_check` 等内部字段，只转发 OpenAI 接受的 `messages/model/temperature/max_tokens/max_completion_tokens/stream/presence_penalty/frequency_penalty/top_p/stop/logit_bias/seed/n/user/tools/tool_choice/logprobs/response_format` 等字段。
+- `logprobs` 数字会转换为 OpenAI chat API 的 `logprobs=true` 和 `top_logprobs=<n>`。
+- `json_schema` 会转换为 OpenAI `response_format: { type: "json_schema", json_schema: ... }`。
 
 仍缺失的大类：
 
-- OpenAI / chat-completions 代理
 - OpenRouter
 - Claude / Anthropic
 - Google / Gemini
@@ -2950,8 +2980,9 @@ avatar
    - moving UI
    - settings snapshots
 7. 模型连接最小阶段：
-   - 先实现一个可配置的 OpenAI-compatible chat completions proxy
-   - 支持非流式，再支持流式
+   - 已完成：OpenAI chat-completions 最小代理
+   - 已完成：支持非流式 JSON 和流式 SSE 透传
+   - 待补：OpenAI-compatible provider 差异、请求取消、错误细节完全对齐
 8. 高级能力阶段：
    - vectors
    - tokenizer 真实实现

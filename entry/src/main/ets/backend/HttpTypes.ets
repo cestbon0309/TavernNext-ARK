@@ -2,6 +2,8 @@ export type HeaderMap = Record<string, string>;
 export type JsonScalar = Object | string | number | boolean | null;
 export type JsonArray = Array<Object | string | number | boolean | null>;
 export type JsonRecord = Record<string, JsonScalar | JsonArray>;
+export type HttpStreamSend = (chunk: string | Uint8Array) => Promise<void>;
+export type HttpStreamHandler = (send: HttpStreamSend) => Promise<void>;
 
 export function emptyJsonRecord(): JsonRecord {
   const value: JsonRecord = {};
@@ -67,6 +69,7 @@ export class HttpResponse {
   };
   body: string = '';
   bodyBytes: Uint8Array | null = null;
+  streamHandler: HttpStreamHandler | null = null;
 
   static json(value: Object | string | number | boolean | null, statusCode: number = 200): HttpResponse {
     const response = new HttpResponse();
@@ -111,6 +114,17 @@ export class HttpResponse {
     response.statusText = statusTextFor(statusCode);
     response.body = '';
     response.headers['content-type'] = 'text/plain; charset=utf-8';
+    return response;
+  }
+
+  static stream(contentType: string, handler: HttpStreamHandler, statusCode: number = 200): HttpResponse {
+    const response = new HttpResponse();
+    response.statusCode = statusCode;
+    response.statusText = statusTextFor(statusCode);
+    response.body = '';
+    response.streamHandler = handler;
+    response.headers['content-type'] = contentType;
+    response.headers['cache-control'] = 'no-cache';
     return response;
   }
 }

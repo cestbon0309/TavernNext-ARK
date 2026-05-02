@@ -252,6 +252,27 @@ export class SillyTavernCore {
     return HttpResponse.json(new OkResponse());
   }
 
+  statsGet(): HttpResponse {
+    return HttpResponse.json(this.store.readJsonRecord(this.statsPath()));
+  }
+
+  statsUpdate(request: HttpRequest): HttpResponse {
+    if (request.body === null || Array.isArray(request.body)) {
+      return HttpResponse.empty(400);
+    }
+    const stats = request.body as JsonRecord;
+    stats['timestamp'] = Date.now();
+    this.store.writeJson(this.statsPath(), stats);
+    return HttpResponse.empty(200);
+  }
+
+  statsRecreate(): HttpResponse {
+    const stats = this.collectStats();
+    stats['timestamp'] = Date.now();
+    this.store.writeJson(this.statsPath(), stats);
+    return HttpResponse.empty(200);
+  }
+
   offlineStatus(): HttpResponse {
     return HttpResponse.json(new StatusResponse());
   }
@@ -1178,6 +1199,100 @@ export class SillyTavernCore {
       return emptyJsonRecord();
     }
     return request.body as JsonRecord;
+  }
+
+  private statsPath(): string {
+    return joinPath(this.userDirs.root, 'stats.json');
+  }
+
+  private collectStats(): JsonRecord {
+    const result = emptyJsonRecord();
+    const characters = this.store.listFilesByExtension(this.userDirs.characters, '.png');
+    for (const character of characters) {
+      result[character.name] = this.calculateCharacterStats(joinPath(this.userDirs.chats, withoutExtension(character.name)));
+    }
+    return result;
+  }
+
+  private calculateCharacterStats(chatDir: string): JsonRecord {
+    const stats = emptyJsonRecord();
+    stats['total_gen_time'] = 0;
+    stats['user_word_count'] = 0;
+    stats['non_user_word_count'] = 0;
+    stats['user_msg_count'] = 0;
+    stats['non_user_msg_count'] = 0;
+    stats['total_swipe_count'] = 0;
+    stats['chat_size'] = 0;
+    stats['date_last_chat'] = 0;
+    stats['date_first_chat'] = new Date('9999-12-31T23:59:59.999Z').getTime();
+
+    for (const file of this.store.list(chatDir)) {
+      if (!file.isFile) {
+        continue;
+      }
+      const rows = this.readChatRowsFromText(this.store.readText(file.path, ''));
+      stats['chat_size'] = Number(stats['chat_size'] ?? 0) + file.size;
+      stats['date_last_chat'] = Math.max(Number(stats['date_last_chat'] ?? 0), Math.floor(file.mtimeMs));
+      for (const row of rows) {
+        const message = row as JsonRecord;
+        this.addMessageStats(stats, message);
+      }
+    }
+
+    return stats;
+  }
+
+  private addMessageStats(stats: JsonRecord, message: JsonRecord): void {
+    const text = this.asString(message['mes']);
+    if (text.length > 0) {
+      const words = this.countWords(text);
+      if (message['is_user'] === true) {
+        stats['user_word_count'] = Number(stats['user_word_count'] ?? 0) + words;
+        stats['user_msg_count'] = Number(stats['user_msg_count'] ?? 0) + 1;
+        const timestamp = this.parseTimestamp(this.asString(message['send_date']));
+        if (timestamp > 0) {
+          stats['date_first_chat'] = Math.min(Number(stats['date_first_chat'] ?? timestamp), timestamp);
+        }
+      } else {
+        stats['non_user_word_count'] = Number(stats['non_user_word_count'] ?? 0) + words;
+        stats['non_user_msg_count'] = Number(stats['non_user_msg_count'] ?? 0) + 1;
+      }
+    }
+
+    const genStarted = this.asString(message['gen_started']);
+    const genFinished = this.asString(message['gen_finished']);
+    if (genStarted.length > 0 && genFinished.length > 0) {
+      stats['total_gen_time'] = Number(stats['total_gen_time'] ?? 0) + Math.max(0,
+        this.parseTimestamp(genFinished) - this.parseTimestamp(genStarted));
+    }
+
+    const swipes = this.asArray(message['swipes']);
+    if (swipes.length > 1) {
+      stats['total_swipe_count'] = Number(stats['total_swipe_count'] ?? 0) + swipes.length - 1;
+      for (let index = 1; index < swipes.length; index += 1) {
+        const words = this.countWords(this.asString(swipes[index] as JsonValue));
+        if (message['is_user'] === true) {
+          stats['user_word_count'] = Number(stats['user_word_count'] ?? 0) + words;
+          stats['user_msg_count'] = Number(stats['user_msg_count'] ?? 0) + 1;
+        } else {
+          stats['non_user_word_count'] = Number(stats['non_user_word_count'] ?? 0) + words;
+          stats['non_user_msg_count'] = Number(stats['non_user_msg_count'] ?? 0) + 1;
+        }
+      }
+    }
+  }
+
+  private countWords(text: string): number {
+    const matches = text.match(/\b\w+\b/g);
+    return matches === null ? 0 : matches.length;
+  }
+
+  private parseTimestamp(text: string): number {
+    if (text.length === 0) {
+      return 0;
+    }
+    const value = new Date(text).getTime();
+    return Number.isFinite(value) ? value : 0;
   }
 
   private asString(value: JsonValue | undefined): string {

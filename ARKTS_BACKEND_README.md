@@ -6,6 +6,30 @@
 http://127.0.0.1:8000
 ```
 
+## 最新进度（2026-05-03）
+
+当前 ArkTS 后端已经可以支撑 SillyTavern 前端进入主界面，并完成默认单用户、本地数据优先的核心流程。首次启动会按原版 SillyTavern 的默认内容清单初始化 `data/default-user/`，包括默认 `settings.json`、背景、角色、头像、主题、预设、QuickReplies 和 Comfy workflows；初始化只在 `content.log` 为空时执行一次，已有用户文件不会被覆盖。
+
+已完成的主要功能：
+- 本地 HTTP/1.1 后端、rawfile 静态资源服务、WebView 加载入口。
+- settings、角色卡、聊天、群聊、世界书、groups、QuickReplies、Comfy workflow 列表等本地数据 API 的基础兼容。
+- 角色卡 PNG `tEXt/chara` 元数据读写，JSON/PNG 角色导入导出，聊天导入导出，data zip 导出/恢复。
+- 背景、头像、聊天图片、附件、sprites 和 image-metadata 等媒体上传接口；图片处理已接入 Harmony `ImageKit`，zip 压缩/解压已接入 Harmony `zlib`。
+- secrets、users、extensions 的本地兼容接口；目前仍是默认用户优先，不启用真实多用户 session。
+- OpenAI chat-completions 最小可用代理：支持 `openai` 和 `custom` 两种来源，`status` 请求 `/v1/models`，`generate` 请求 `/v1/chat/completions`，支持非流式 JSON 和流式 `text/event-stream` 透传。
+
+本次确认的模型调用状态：
+- 前端 OpenAI/Chat Completion 面板中的 `Streaming` 开关打开后，请求体会发送 `stream: true`。
+- ArkTS 侧流式代理已从普通 `http.request()` 切换为 Harmony `requestInStream()`，上游 SSE 会通过 `dataReceive` 分块即时转发给前端。
+- 已在虚拟机安装后通过 hdc 端口映射和慢速 mock OpenAI 服务验证：代理返回的 SSE 分块按约 700ms 间隔到达，不再等上游结束后一次性吐出。
+
+仍缺失或不完善的重点：
+- 多用户暂缓：`/api/users/*` 只满足本地弹窗和备份流程，尚无真实 session、cookie-session、当前用户切换和权限中间件。
+- 模型 provider 暂缓：OpenRouter、Claude、Gemini、NovelAI、Kobold/TextGen、Horde、Stable Diffusion 等真实代理还未完整对齐；目前只完成 OpenAI/OpenAI-compatible 最小链路。
+- Tokenizer 仍是估算接口：尚未接入 MikTik/native tokenizer，也没有完整 OpenAI/Claude/Llama/Qwen/Gemma 等 encode/decode/count。
+- Vector 仍未完成：向量 insert/query/delete/list/purge、embedding 调用和本地持久化索引都还需要后续实现。
+- settings snapshots、presets、themes、moving UI、assets/content-manager、聊天备份等管理类接口仍有缺口。
+
 ## 数据目录兼容
 
 运行时数据根目录必须严格对应 SillyTavern 的 `data/`：
@@ -188,6 +212,9 @@ data/
 - `POST /api/extensions/delete`
 - `POST /api/tokenizers/encode`
 - `POST /api/tokenizers/*/encode`
+- `POST /api/backends/chat-completions/status`
+- `POST /api/backends/chat-completions/generate`
+- `POST /api/openai/generate`
 - `POST /api/quick-reply/save`
 - `POST /api/quick-reply/delete`
 - `POST /api/sd/comfy/workflows`
@@ -198,7 +225,9 @@ data/
 
 当前仍是默认用户优先的本地兼容模型，`/csrf-token` 返回 `disabled`。账号 API 已能满足本地弹窗和密码校验基础流程，但还没有真实 session、cookie-session、当前用户切换和权限中间件。
 
-`POST /api/settings/get` 中 Kobold/NovelAI/OpenAI/TextGen 预设按原版返回 JSON 文件原文字符串数组；主题、moving UI、QuickReplies、instruct/context/sysprompt/reasoning 返回解析后的对象数组。Horde 目前只提供启动阶段兼容桩，返回离线状态和空模型列表，不做真实网络代理。
+`POST /api/settings/get` 中 Kobold/NovelAI/OpenAI/TextGen 预设按原版返回 JSON 文件原文字符串数组；主题、moving UI、QuickReplies、instruct/context/sysprompt/reasoning 返回解析后的对象数组。
+
+模型连接当前只完成 OpenAI chat-completions 的最小可用路径：`status` 会请求 `/v1/models`，`generate` 会请求 `/v1/chat/completions`，支持非流式 JSON 和流式 `text/event-stream` 透传。ArkTS 侧会清理 `chat_completion_source`、`reverse_proxy`、`proxy_password`、`custom_*`、`bypass_status_check` 等内部字段，只把 OpenAI 接受的 `messages/model/temperature/max_tokens/max_completion_tokens/stream/penalties/top_p/stop/logit_bias/seed/n/user/tools/tool_choice/logprobs/response_format` 等字段发给上游。OpenRouter、Claude、Gemini、Text completions、Horde、Stable Diffusion 等真实 provider 代理仍暂缓。
 
 媒体上传阶段已接入 Harmony 官方 API：头像裁剪/resize、缩略图、图片尺寸和平均色使用 `@kit.ImageKit`，sprite zip 解包使用 `@kit.BasicServicesKit` 的 `zlib.decompressFile`。MediaKit 暂未接入，因为当前后端接口只需要保存、列出和读取音视频文件，不涉及播放、录制或转码。
 
@@ -241,10 +270,11 @@ SillyTavern/dist/_webpack/d2f8920b496f6d16/output/lib.js
 - `POST /api/users/restore-data` 已通过非破坏性 HTTP API 验证，坏 zip 和非 data zip 都会返回 `400`，不会覆盖当前 `data/`。
 - 扩展抽屉的 `数据导出/恢复` 折叠栏已能在 rawfile HTML 中加载。
 - 媒体上传回归已通过 hdc 端口映射和 curl 验证：背景上传/列表/缩略图/删除、用户头像上传裁剪/缩略图/删除、聊天图片上传/列表/旧路由兼容/静态读取/删除、附件上传/verify/读取/删除、sprites 单张上传/zip 上传/读取/删除、`image-metadata` 文件夹创建/assign/delete/cleanup，以及 `m4a` 音频媒体列表。
+- OpenAI chat-completions 最小代理已通过本机 mock OpenAI 服务验证：状态检查、非流式生成、流式 SSE 生成均可用，且上游请求体不会包含 `reverse_proxy`、`proxy_password`、`custom_*` 等内部字段。
 
 ## 暂缓接口
 
-模型代理、真实 tokenizer、向量索引、预设/主题细节、内容管理器、assets 管理和复杂外部服务接口仍未完整实现。部分导入导出已经接入 ShareKit 或 zlib：角色导入/导出、聊天导入/导出、data zip 导出/恢复、sprite zip 导入。
+OpenAI chat-completions 已有最小可用代理；除此之外的模型代理、真实 tokenizer、向量索引、预设/主题细节、内容管理器、assets 管理和复杂外部服务接口仍未完整实现。部分导入导出已经接入 ShareKit 或 zlib：角色导入/导出、聊天导入/导出、data zip 导出/恢复、sprite zip 导入。
 
 ## 构建与调试
 

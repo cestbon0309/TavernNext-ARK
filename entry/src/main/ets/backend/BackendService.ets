@@ -6,11 +6,14 @@ import { ExtensionsService } from './ExtensionsService';
 import { FileStore } from './FileStore';
 import { HttpServer } from './HttpServer';
 import { MediaService } from './MediaService';
+import { ModelProxyService } from './ModelProxyService';
 import { SecretsService } from './SecretsService';
 import { ShareExportService } from './ShareExportService';
 import { SillyTavernCore } from './SillyTavernCore';
 import { StaticFileServer } from './StaticFileServer';
+import { TokenizerService } from './TokenizerService';
 import { UsersService } from './UsersService';
+import { VectorService } from './VectorService';
 
 export class BackendStatus {
   running: boolean;
@@ -37,6 +40,9 @@ export class BackendService {
   private secrets: SecretsService;
   private users: UsersService;
   private extensions: ExtensionsService;
+  private modelProxy: ModelProxyService;
+  private tokenizers: TokenizerService;
+  private vectors: VectorService;
   private shareExports: ShareExportService;
   private staticFiles: StaticFileServer;
   private lastMessage: string = 'Not started';
@@ -54,6 +60,9 @@ export class BackendService {
     this.secrets = new SecretsService(this.store, this.directories.defaultUser, this.crypto);
     this.users = new UsersService(this.store, this.directories, this.crypto, this.shareExports);
     this.extensions = new ExtensionsService(this.store, this.directories, context.resourceManager);
+    this.modelProxy = new ModelProxyService(this.directories, this.secrets);
+    this.tokenizers = new TokenizerService();
+    this.vectors = new VectorService(this.store, this.directories, this.secrets);
     this.staticFiles = new StaticFileServer(context.resourceManager);
     this.server = new HttpServer('127.0.0.1', 8000);
     this.registerRoutes();
@@ -95,6 +104,10 @@ export class BackendService {
     this.server.route('GET', '/thumbnail', async (request) => await this.media.getDataFile(request));
 
     this.server.route('POST', '/api/ping', async () => this.core.ping());
+
+    this.server.route('POST', '/api/stats/get', async () => this.core.statsGet());
+    this.server.route('POST', '/api/stats/update', async (request) => this.core.statsUpdate(request));
+    this.server.route('POST', '/api/stats/recreate', async () => this.core.statsRecreate());
 
     this.server.route('POST', '/api/settings/get', async () => this.core.getSettings());
     this.server.route('POST', '/api/settings/save', async (request) => this.core.saveSettings(request));
@@ -238,26 +251,11 @@ export class BackendService {
     this.server.route('POST', '/api/extensions/version', async (request) => this.extensions.version(request));
     this.server.route('POST', '/api/extensions/delete', async (request) => this.extensions.delete(request));
 
-    this.server.route('POST', '/api/tokenizers/encode', async (request) => this.core.tokenEstimate(request));
-    this.server.route('POST', '/api/tokenizers/gpt2/encode', async (request) => this.core.tokenEstimate(request));
-    this.server.route('POST', '/api/tokenizers/openai/encode', async (request) => this.core.tokenEstimate(request));
-    this.server.route('POST', '/api/tokenizers/llama/encode', async (request) => this.core.tokenEstimate(request));
-    this.server.route('POST', '/api/tokenizers/mistral/encode', async (request) => this.core.tokenEstimate(request));
-    this.server.route('POST', '/api/tokenizers/yi/encode', async (request) => this.core.tokenEstimate(request));
-    this.server.route('POST', '/api/tokenizers/llama3/encode', async (request) => this.core.tokenEstimate(request));
-    this.server.route('POST', '/api/tokenizers/gemma/encode', async (request) => this.core.tokenEstimate(request));
-    this.server.route('POST', '/api/tokenizers/jamba/encode', async (request) => this.core.tokenEstimate(request));
-    this.server.route('POST', '/api/tokenizers/qwen2/encode', async (request) => this.core.tokenEstimate(request));
-    this.server.route('POST', '/api/tokenizers/command-r/encode', async (request) => this.core.tokenEstimate(request));
-    this.server.route('POST', '/api/horde/status', async () => this.core.offlineStatus());
-    this.server.route('POST', '/api/horde/text-models', async () => this.core.emptyArray());
-    this.server.route('POST', '/api/horde/text-workers', async () => this.core.emptyArray());
-    this.server.route('POST', '/api/horde/sd-models', async () => this.core.emptyArray());
+    this.registerTokenizerRoutes();
+    this.registerModelProxyRoutes();
+    this.registerVectorRoutes();
     this.server.route('POST', '/api/sd/comfy/workflows', async () => this.core.listComfyWorkflows());
     this.server.route('POST', '/api/sd/comfy/workflow', async (request) => this.core.getComfyWorkflow(request));
-    this.server.route('POST', '/api/vector/query', async () => this.core.notImplemented('Vector index'));
-    this.server.route('POST', '/api/backends/chat-completions/generate', async () => this.core.notImplemented('Model proxy'));
-    this.server.route('POST', '/api/openai/generate', async () => this.core.notImplemented('OpenAI proxy'));
 
     this.server.fallback(async (request) => {
       if (request.method === 'POST' && request.path.startsWith('/api/images/list/')) {
@@ -276,5 +274,69 @@ export class BackendService {
       }
       return this.staticFiles.serve(request);
     });
+  }
+
+  private registerTokenizerRoutes(): void {
+    const localTokenizers = ['gpt2', 'openai', 'llama', 'nerdstash', 'nerdstash_v2', 'mistral', 'yi', 'claude',
+      'llama3', 'gemma', 'jamba', 'qwen2', 'command-r', 'command-a', 'nemo', 'deepseek'];
+    this.server.route('POST', '/api/tokenizers/encode', async (request) => this.tokenizers.encode(request));
+    for (const name of localTokenizers) {
+      this.server.route('POST', `/api/tokenizers/${name}/encode`, async (request) => this.tokenizers.encode(request));
+      this.server.route('POST', `/api/tokenizers/${name}/decode`, async (request) => this.tokenizers.decode(request));
+    }
+    this.server.route('POST', '/api/tokenizers/openai/count', async (request) => this.tokenizers.countOpenAi(request));
+    this.server.route('POST', '/api/backends/chat-completions/bias', async (request) => this.tokenizers.bias(request));
+    this.server.route('POST', '/api/tokenizers/remote/kobold/count',
+      async (request) => await this.tokenizers.remoteKoboldCount(request));
+    this.server.route('POST', '/api/tokenizers/remote/textgenerationwebui/encode',
+      async (request) => await this.tokenizers.remoteTextGenEncode(request));
+  }
+
+  private registerModelProxyRoutes(): void {
+    this.server.route('POST', '/api/backends/chat-completions/status',
+      async (request) => await this.modelProxy.chatCompletionStatus(request));
+    this.server.route('POST', '/api/backends/chat-completions/generate',
+      async (request) => await this.modelProxy.chatCompletionsGenerate(request));
+    this.server.route('POST', '/api/openai/generate', async (request) => await this.modelProxy.openAiGenerate(request));
+    this.server.route('POST', '/api/backends/text-completions/status',
+      async (request) => await this.modelProxy.textCompletionStatus(request));
+    this.server.route('POST', '/api/backends/text-completions/generate',
+      async (request) => await this.modelProxy.textCompletionGenerate(request));
+    this.server.route('POST', '/api/novelai/status', async () => await this.modelProxy.novelStatus());
+    this.server.route('POST', '/api/novelai/generate', async (request) => await this.modelProxy.novelGenerate(request));
+    this.server.route('POST', '/api/horde/status', async () => await this.modelProxy.hordeStatus());
+    this.server.route('POST', '/api/horde/text-models', async () => await this.modelProxy.hordeTextModels());
+    this.server.route('POST', '/api/horde/text-workers', async () => await this.modelProxy.hordeTextWorkers());
+    this.server.route('POST', '/api/horde/sd-models', async () => await this.modelProxy.hordeSdModels());
+    this.server.route('POST', '/api/horde/generate-text',
+      async (request) => await this.modelProxy.hordeGenerateText(request));
+    this.server.route('POST', '/api/horde/task-status',
+      async (request) => await this.modelProxy.hordeTaskStatus(request));
+    this.server.route('POST', '/api/horde/cancel-task',
+      async (request) => await this.modelProxy.hordeCancelTask(request));
+    this.server.route('POST', '/api/horde/user-info', async () => await this.modelProxy.hordeUserInfo());
+    this.server.route('POST', '/api/openai/models', async () => await this.modelProxy.openAiModelList('openai'));
+    this.server.route('POST', '/api/openrouter/models', async () => await this.modelProxy.openAiModelList('openrouter'));
+    this.server.route('POST', '/api/sd/ping', async (request) => await this.modelProxy.sdProxy(request, '/sdapi/v1/progress'));
+    this.server.route('POST', '/api/sd/models', async (request) => await this.modelProxy.sdProxy(request, '/sdapi/v1/sd-models'));
+    this.server.route('POST', '/api/sd/samplers',
+      async (request) => await this.modelProxy.sdProxy(request, '/sdapi/v1/samplers'));
+    this.server.route('POST', '/api/sd/schedulers',
+      async (request) => await this.modelProxy.sdProxy(request, '/sdapi/v1/schedulers'));
+    this.server.route('POST', '/api/sd/upscalers',
+      async (request) => await this.modelProxy.sdProxy(request, '/sdapi/v1/upscalers'));
+    this.server.route('POST', '/api/sd/vaes', async (request) => await this.modelProxy.sdProxy(request, '/sdapi/v1/sd-vae'));
+    this.server.route('POST', '/api/sd/generate',
+      async (request) => await this.modelProxy.sdProxy(request, '/sdapi/v1/txt2img'));
+  }
+
+  private registerVectorRoutes(): void {
+    this.server.route('POST', '/api/vector/insert', async (request) => await this.vectors.insert(request));
+    this.server.route('POST', '/api/vector/list', async (request) => this.vectors.list(request));
+    this.server.route('POST', '/api/vector/delete', async (request) => this.vectors.delete(request));
+    this.server.route('POST', '/api/vector/query', async (request) => await this.vectors.query(request));
+    this.server.route('POST', '/api/vector/query-multi', async (request) => await this.vectors.queryMulti(request));
+    this.server.route('POST', '/api/vector/purge', async (request) => this.vectors.purge(request));
+    this.server.route('POST', '/api/vector/purge-all', async () => this.vectors.purgeAll());
   }
 }
