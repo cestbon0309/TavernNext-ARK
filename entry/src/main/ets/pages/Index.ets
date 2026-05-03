@@ -4,6 +4,7 @@ import { BackendService, BackendStatus } from '../backend/BackendService';
 import { ShellThemeService } from '../backend/ShellThemeService';
 
 const DEFAULT_SHELL_BACKGROUND = '#171717';
+const BACK_EXIT_INTERVAL_MS = 2000;
 
 @Entry
 @Component
@@ -16,6 +17,8 @@ struct Index {
   @State webReady: boolean = false;
   private controller: webview.WebviewController = new webview.WebviewController();
   private webRevealToken: number = 0;
+  private lastBackPressTime: number = 0;
+  private handlingBackPress: boolean = false;
 
   aboutToAppear(): void {
     webview.WebviewController.setWebDebuggingAccess(true);
@@ -110,6 +113,49 @@ struct Index {
     .backgroundColor(this.shellBackground)
   }
 
+  onBackPress(): boolean {
+    this.handleBackPress();
+    return true;
+  }
+
+  private handleBackPress(): void {
+    if (this.handlingBackPress) {
+      return;
+    }
+    this.handlingBackPress = true;
+
+    this.goBackInWeb().then((handled: boolean) => {
+      this.handlingBackPress = false;
+      if (handled) {
+        this.lastBackPressTime = 0;
+        return;
+      }
+      this.handleTopLevelBack();
+    }).catch((_err: Error) => {
+      this.handlingBackPress = false;
+      this.handleTopLevelBack();
+    });
+  }
+
+  private handleTopLevelBack(): void {
+    const now = Date.now();
+    if (now - this.lastBackPressTime <= BACK_EXIT_INTERVAL_MS) {
+      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      context.terminateSelf().catch((_err: Error) => {
+      });
+      return;
+    }
+
+    this.lastBackPressTime = now;
+    try {
+      this.getUIContext().getPromptAction().showToast({
+        message: '\u518d\u6309\u4e00\u6b21\u8fd4\u56de\u9000\u51fa',
+        duration: BACK_EXIT_INTERVAL_MS
+      });
+    } catch (_err) {
+    }
+  }
+
   private revealWebAfterFirstPaint(): void {
     const token = this.webRevealToken;
     setTimeout(() => {
@@ -130,10 +176,45 @@ struct Index {
     }, 700);
   }
 
+  private async goBackInWeb(): Promise<boolean> {
+    if (!this.running || !this.webReady) {
+      return false;
+    }
+
+    try {
+      const result = await this.controller.runJavaScript(`(() => {
+        const state = window.__tavernNextBackBridge;
+        if (state && typeof state.handleBack === 'function') {
+          return state.handleBack();
+        }
+        if (history.length > 1) {
+          history.back();
+          return 'history';
+        }
+        return 'exit';
+      })();`);
+      const normalized = result.replace(/"/g, '');
+      if (normalized === 'handled' || normalized === 'history') {
+        return true;
+      }
+    } catch (_err) {
+    }
+
+    try {
+      if (this.controller.accessBackward()) {
+        this.controller.backward();
+        return true;
+      }
+    } catch (_err) {
+    }
+    return false;
+  }
+
   private injectShellThemeProbe(): void {
     this.controller.runJavaScript(`(() => {
       if (window.__tavernNextShellThemeProbeInstalled) {
         window.__tavernNextShellThemeProbeReport && window.__tavernNextShellThemeProbeReport();
+        window.__tavernNextBackBridgeInstall && window.__tavernNextBackBridgeInstall();
         return 'already-installed';
       }
       window.__tavernNextShellThemeProbeInstalled = true;
@@ -190,6 +271,127 @@ struct Index {
       document.addEventListener('visibilitychange', schedule);
       schedule();
       setInterval(report, 2000);
+
+      window.__tavernNextBackBridgeInstall = () => {
+        if (window.__tavernNextBackBridge) {
+          return;
+        }
+
+        const visible = (element) => {
+          if (!element) {
+            return false;
+          }
+          const style = getComputedStyle(element);
+          if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+            return false;
+          }
+          const rect = element.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        };
+
+        const clickIfVisible = (selector) => {
+          const elements = Array.from(document.querySelectorAll(selector)).reverse();
+          const target = elements.find(visible);
+          if (!target) {
+            return false;
+          }
+          target.click();
+          return true;
+        };
+
+        const closeOpenDrawer = () => {
+          if (clickIfVisible('#rm_button_back_from_group, #rm_button_back')) {
+            return true;
+          }
+
+          const drawers = Array.from(document.querySelectorAll('.drawer-content.openDrawer:not(.pinnedOpen)'))
+            .filter(visible)
+            .reverse();
+          const drawer = drawers[0];
+          if (!drawer) {
+            return false;
+          }
+
+          const wrapper = drawer.closest('.drawer');
+          const toggle = wrapper && wrapper.querySelector('.drawer-toggle');
+          if (toggle) {
+            toggle.click();
+          } else {
+            drawer.classList.remove('openDrawer');
+            drawer.classList.add('closedDrawer');
+            document.querySelectorAll('.openIcon:not(.drawerPinnedOpen)').forEach((icon) => {
+              icon.classList.remove('openIcon');
+              icon.classList.add('closedIcon');
+            });
+          }
+          return true;
+        };
+
+        const closeLegacyPopup = () => {
+          if (clickIfVisible('#dialogue_popup_cancel, #dialogue_popup_ok, #select_chat_cross, #character_cross')) {
+            return true;
+          }
+          const shadowPopup = document.querySelector('#shadow_popup');
+          if (visible(shadowPopup)) {
+            shadowPopup.style.display = 'none';
+            return true;
+          }
+          return false;
+        };
+
+        const closeHtmlDialog = () => {
+          const dialogs = Array.from(document.querySelectorAll('dialog.popup[open]')).reverse();
+          const dialog = dialogs.find(visible);
+          if (!dialog) {
+            return false;
+          }
+          const cancel = dialog.querySelector('.popup-button-cancel, .popup-button-close, [data-result="0"]');
+          if (cancel instanceof HTMLElement && visible(cancel)) {
+            cancel.click();
+          } else {
+            dialog.dispatchEvent(new Event('cancel', { bubbles: true, cancelable: true }));
+          }
+          return true;
+        };
+
+        const bridge = {
+          depth: 0,
+          ignoreNextPop: false,
+          handleBack() {
+            if (closeHtmlDialog() || closeLegacyPopup() || closeOpenDrawer()) {
+              return 'handled';
+            }
+            if (bridge.depth > 0 || location.hash) {
+              bridge.ignoreNextPop = true;
+              history.back();
+              return 'history';
+            }
+            return 'exit';
+          }
+        };
+
+        const originalPushState = history.pushState.bind(history);
+        const originalReplaceState = history.replaceState.bind(history);
+        history.pushState = (...args) => {
+          bridge.depth++;
+          return originalPushState(...args);
+        };
+        history.replaceState = (...args) => originalReplaceState(...args);
+
+        window.addEventListener('popstate', () => {
+          if (bridge.ignoreNextPop) {
+            bridge.ignoreNextPop = false;
+          }
+          bridge.depth = Math.max(0, bridge.depth - 1);
+        });
+        window.addEventListener('hashchange', () => {
+          bridge.depth = Math.max(bridge.depth, location.hash ? 1 : 0);
+        });
+
+        bridge.depth = location.hash ? 1 : 0;
+        window.__tavernNextBackBridge = bridge;
+      };
+      window.__tavernNextBackBridgeInstall();
       return 'installed';
     })();`).catch((_err: Error) => {
     });
