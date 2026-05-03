@@ -15,4 +15,9 @@ foreach ($key in $replacements.Keys) {
   $content = [Regex]::Replace($content, $pattern, '${1}' + $replacements[$key] + '${2}')
 }
 
+foreach ($key in @('targetSdkVersion', 'compatibleSdkVersion')) {
+  $pattern = '("' + [Regex]::Escape($key) + '"\s*:\s*")[^"]*(")'
+  $content = [Regex]::Replace($content, $pattern, '${1}6.0.0(20)${2}')
+}
+
 [Console]::Out.Write($content)
