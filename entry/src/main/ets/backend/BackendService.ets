@@ -58,7 +58,7 @@ export class BackendService {
     new DefaultContentSeeder(this.store, this.directories, context.resourceManager).seedDefaultUser();
     this.directories.ensureDefaultUserFiles();
     this.shareExports = new ShareExportService(context as common.UIAbilityContext, this.store, this.directories.exportRoot);
-    this.core = new SillyTavernCore(this.store, this.directories, this.shareExports);
+    this.core = new SillyTavernCore(this.store, this.directories, this.shareExports, context.resourceManager);
     this.media = new MediaService(this.store, this.directories, this.crypto);
     this.secrets = new SecretsService(this.store, this.directories.defaultUser, this.crypto);
     this.users = new UsersService(this.store, this.directories, this.crypto, this.shareExports,
@@ -116,6 +116,19 @@ export class BackendService {
 
     this.server.route('POST', '/api/settings/get', async () => this.core.getSettings());
     this.server.route('POST', '/api/settings/save', async (request) => this.core.saveSettings(request));
+    this.server.route('POST', '/api/settings/get-snapshots', async () => this.core.settingsSnapshots());
+    this.server.route('POST', '/api/settings/load-snapshot', async (request) => this.core.loadSettingsSnapshot(request));
+    this.server.route('POST', '/api/settings/make-snapshot', async () => this.core.makeSettingsSnapshot());
+    this.server.route('POST', '/api/settings/restore-snapshot',
+      async (request) => this.core.restoreSettingsSnapshot(request));
+    this.server.route('POST', '/api/presets/save', async (request) => this.core.savePreset(request));
+    this.server.route('POST', '/api/presets/delete', async (request) => this.core.deletePreset(request));
+    this.server.route('POST', '/api/presets/restore', async (request) => this.core.restorePreset(request));
+    this.server.route('POST', '/api/themes/save', async (request) => this.core.saveTheme(request));
+    this.server.route('POST', '/api/themes/delete', async (request) => this.core.deleteTheme(request));
+    this.server.route('POST', '/api/moving-ui/save', async (request) => this.core.saveMovingUi(request));
+    this.server.route('POST', '/savetheme', async (request) => this.core.saveTheme(request));
+    this.server.route('POST', '/savemovingui', async (request) => this.core.saveMovingUi(request));
 
     this.server.route('POST', '/api/characters/all', async () => this.core.listCharacters());
     this.server.route('POST', '/api/characters/get', async (request) => this.core.getCharacter(request));
@@ -146,11 +159,16 @@ export class BackendService {
     this.server.route('POST', '/api/chats/group/import', async (request) => this.core.importGroupChat(request));
     this.server.route('POST', '/api/chats/group/info', async (request) => this.core.groupChatInfo(request));
     this.server.route('POST', '/api/chats/recent', async (request) => this.core.recentChats(request));
+    this.server.route('POST', '/api/backups/chat/get', async () => this.core.chatBackups());
+    this.server.route('POST', '/api/backups/chat/download', async (request) => this.core.downloadChatBackup(request));
+    this.server.route('POST', '/api/backups/chat/delete', async (request) => this.core.deleteChatBackup(request));
 
     this.server.route('POST', '/api/worldinfo/list', async () => this.core.listWorlds());
     this.server.route('POST', '/api/worldinfo/get', async (request) => this.core.getWorld(request));
     this.server.route('POST', '/api/worldinfo/edit', async (request) => this.core.editWorld(request));
+    this.server.route('POST', '/api/worldinfo/import', async (request) => this.core.importWorld(request));
     this.server.route('POST', '/api/worldinfo/delete', async (request) => this.core.deleteWorld(request));
+    this.server.route('POST', '/importworldinfo', async (request) => this.core.importWorld(request));
 
     this.server.route('POST', '/api/groups/all', async () => this.core.listGroups());
     this.server.route('POST', '/api/groups/create', async (request) => this.core.createGroup(request));
@@ -186,6 +204,17 @@ export class BackendService {
     this.server.route('POST', '/api/files/upload', async (request) => this.media.uploadFile(request));
     this.server.route('POST', '/api/files/delete', async (request) => this.media.deleteFile(request));
     this.server.route('POST', '/api/files/verify', async (request) => this.media.verifyFiles(request));
+    this.server.route('POST', '/api/assets/get', async () => this.media.assetsGet());
+    this.server.route('POST', '/api/assets/download', async (request) => await this.media.assetsDownload(request));
+    this.server.route('POST', '/api/assets/delete', async (request) => this.media.assetsDelete(request));
+    this.server.route('POST', '/api/assets/character', async (request) => this.media.assetsCharacter(request));
+    this.server.route('POST', '/api/content/importURL', async (request) => await this.media.contentImportUrl(request));
+    this.server.route('POST', '/api/content/importUUID', async (request) => await this.media.contentImportUuid(request));
+    this.server.route('POST', '/api/content/import', async (request) => await this.media.contentImportUrl(request));
+    this.server.route('POST', '/api/content-manager/importURL',
+      async (request) => await this.media.contentImportUrl(request));
+    this.server.route('POST', '/api/content-manager/importUUID',
+      async (request) => await this.media.contentImportUuid(request));
 
     this.server.route('GET', '/api/sprites/get', async (request) => this.media.spritesGet(request));
     this.server.route('POST', '/api/sprites/delete', async (request) => this.media.spritesDelete(request));
@@ -275,7 +304,7 @@ export class BackendService {
       }
       if (request.path.startsWith('/characters/') || request.path.startsWith('/User Avatars/') ||
         request.path.startsWith('/backgrounds/') || request.path.startsWith('/user/images/') ||
-        request.path.startsWith('/user/files/')) {
+        request.path.startsWith('/user/files/') || request.path.startsWith('/assets/')) {
         return await this.media.getDataFile(request);
       }
       return this.staticFiles.serve(request);
@@ -345,6 +374,20 @@ export class BackendService {
       async (request) => this.modelProxy.llmApiLogPreview(request));
     this.server.route('GET', '/api/dev/llm-api-logs/raw', async (request) => this.modelProxy.llmApiLogRaw(request));
     this.server.route('POST', '/api/dev/llm-api-logs/raw', async (request) => this.modelProxy.llmApiLogRaw(request));
+    this.server.route('GET', '/api/dev/llm-api-logs/settings',
+      async (request) => this.modelProxy.llmApiLogsSettings(request));
+    this.server.route('POST', '/api/dev/llm-api-logs/settings',
+      async (request) => this.modelProxy.llmApiLogsSettings(request));
+    this.server.route('GET', '/api/dev/llm-api-logs/keep',
+      async (request) => this.modelProxy.llmApiLogsKeep(request));
+    this.server.route('POST', '/api/dev/llm-api-logs/keep',
+      async (request) => this.modelProxy.llmApiLogsKeep(request));
+    this.server.route('GET', '/api/dev/llm-api-logs/stream-enabled',
+      async (request) => this.modelProxy.llmApiLogsStreamEnabled(request));
+    this.server.route('POST', '/api/dev/llm-api-logs/stream-enabled',
+      async (request) => this.modelProxy.llmApiLogsStreamEnabled(request));
+    this.server.route('GET', '/api/dev/llm-api-logs/stream',
+      async (request) => this.modelProxy.llmApiLogsStream(request));
     this.server.route('POST', '/api/sd/ping', async (request) => await this.modelProxy.sdProxy(request, '/sdapi/v1/progress'));
     this.server.route('POST', '/api/sd/models', async (request) => await this.modelProxy.sdProxy(request, '/sdapi/v1/sd-models'));
     this.server.route('POST', '/api/sd/samplers',

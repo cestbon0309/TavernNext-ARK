@@ -149,3 +149,29 @@
 - token 按 service account JSON SHA256 digest 缓存，并在过期前刷新。
 
 注意：该路径已经通过 ArkTS/HAP 构建；RSA 签名算法名仍需要用真实 service account 在模拟器或真机上做一次运行时验证。
+
+## 6. LLM API Logs Keep And Stream
+
+用途：确认 OHOS 版 LLM API logs 已具备 TauriTavern 类似的最近记录查看、保留数量配置和实时事件订阅。
+
+基础验证：
+
+```powershell
+curl.exe -i http://127.0.0.1:8000/api/dev/llm-api-logs/settings
+curl.exe -i -X POST http://127.0.0.1:8000/api/dev/llm-api-logs/settings -H "Content-Type: application/json" -d "{\"keep\":10,\"streamEnabled\":true}"
+curl.exe -i -X POST http://127.0.0.1:8000/api/dev/llm-api-logs -H "Content-Type: application/json" -d "{\"limit\":10}"
+```
+
+实时订阅验证：
+
+```powershell
+curl.exe -N http://127.0.0.1:8000/api/dev/llm-api-logs/stream
+```
+
+期望：
+
+- settings 返回 `{ "keep": number, "streamEnabled": boolean }`，keep 最大钳制到 100。
+- 触发一次 chat-completion generate 后，`/api/dev/llm-api-logs` 出现新的 index entry。
+- `/preview?id=<id>` 返回 request/response readable 预览，`/raw?id=<id>` 返回 raw JSON 或 raw SSE。
+- stream 连接先收到 `: connected`，打开 stream 后触发新的 generate 会收到 `event: llm-api-log`。
+- 前端扩展抽屉中的 `LLM API Logs` 面板可以调整 keep、启停 Live、查看/复制 request 和 response。

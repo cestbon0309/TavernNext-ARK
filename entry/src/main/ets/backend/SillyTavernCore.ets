@@ -1,4 +1,5 @@
 import { util } from '@kit.ArkTS';
+import { resourceManager } from '@kit.LocalizationKit';
 import { DataDirectories, UserDirectories } from './DataDirectories';
 import { FileEntry, FileStore } from './FileStore';
 import { emptyJsonRecord, HttpRequest, HttpResponse, JsonArray, JsonRecord, jsonMessage } from './HttpTypes';
@@ -6,6 +7,7 @@ import {
   ensureJsonExtension,
   ensureJsonlExtension,
   ensurePngExtension,
+  extensionOf,
   joinPath,
   sanitizeFileName,
   withoutExtension,
@@ -198,6 +200,16 @@ class PresetDirectoryResult {
   fileNames: string[] = [];
 }
 
+class PresetTarget {
+  directory: string = '';
+  defaultType: string = '';
+}
+
+class DefaultContentItem {
+  filename: string = '';
+  type: string = '';
+}
+
 class ChatStats {
   chatSize: number = 0;
   dateLastChat: number = 0;
@@ -225,15 +237,18 @@ export class SillyTavernCore {
   private userDirs: UserDirectories;
   private cardStore: PngCardStore;
   private shareExports: ShareExportService;
+  private manager: resourceManager.ResourceManager | null;
   private encoder: util.TextEncoder = new util.TextEncoder('utf-8');
   private decoder: util.TextDecoder = new util.TextDecoder('utf-8');
 
-  constructor(store: FileStore, dirs: DataDirectories, shareExports: ShareExportService) {
+  constructor(store: FileStore, dirs: DataDirectories, shareExports: ShareExportService,
+    manager: resourceManager.ResourceManager | null = null) {
     this.store = store;
     this.dirs = dirs;
     this.userDirs = dirs.defaultUser;
     this.cardStore = new PngCardStore(store);
     this.shareExports = shareExports;
+    this.manager = manager;
   }
 
   health(): HttpResponse {
@@ -356,6 +371,125 @@ export class SillyTavernCore {
     }
     this.store.writeJson(joinPath(this.userDirs.root, 'settings.json'), request.body);
     return HttpResponse.json(new ResultResponse('ok'));
+  }
+
+  settingsSnapshots(): HttpResponse {
+    const snapshots: Object[] = [];
+    const prefix = this.settingsBackupPrefix();
+    for (const file of this.store.list(this.userDirs.backups)) {
+      if (!file.isFile || !file.name.startsWith(prefix)) {
+        continue;
+      }
+      const row = emptyJsonRecord();
+      row['date'] = file.ctimeMs;
+      row['name'] = file.name;
+      row['size'] = file.size;
+      snapshots.push(row);
+    }
+    return HttpResponse.json(snapshots);
+  }
+
+  loadSettingsSnapshot(request: HttpRequest): HttpResponse {
+    const name = sanitizeFileName(this.asString(this.bodyAsRecord(request)['name']));
+    if (!this.validSettingsSnapshotName(name)) {
+      return HttpResponse.empty(400);
+    }
+    const path = joinPath(this.userDirs.backups, name);
+    if (!this.store.exists(path)) {
+      return HttpResponse.empty(404);
+    }
+    return HttpResponse.text(this.store.readText(path, '{}'), 200, 'application/json; charset=utf-8');
+  }
+
+  makeSettingsSnapshot(): HttpResponse {
+    const source = joinPath(this.userDirs.root, 'settings.json');
+    if (!this.store.exists(source)) {
+      return HttpResponse.empty(404);
+    }
+    const target = joinPath(this.userDirs.backups, `${this.settingsBackupPrefix()}${this.compactTimestamp()}.json`);
+    if (!this.store.copyFile(source, target)) {
+      return HttpResponse.empty(500);
+    }
+    this.removeOldBackups(this.settingsBackupPrefix(), 50);
+    return HttpResponse.empty(204);
+  }
+
+  restoreSettingsSnapshot(request: HttpRequest): HttpResponse {
+    const name = sanitizeFileName(this.asString(this.bodyAsRecord(request)['name']));
+    if (!this.validSettingsSnapshotName(name)) {
+      return HttpResponse.empty(400);
+    }
+    const snapshot = joinPath(this.userDirs.backups, name);
+    if (!this.store.exists(snapshot)) {
+      return HttpResponse.empty(404);
+    }
+    if (!this.store.copyFile(snapshot, joinPath(this.userDirs.root, 'settings.json'))) {
+      return HttpResponse.empty(500);
+    }
+    return HttpResponse.empty(204);
+  }
+
+  savePreset(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const name = sanitizeFileName(this.asString(body['name']));
+    const target = this.presetTarget(this.asString(body['apiId']));
+    const preset = body['preset'];
+    if (name.length === 0 || name === 'unnamed' || target.directory.length === 0 ||
+      preset === undefined || preset === null || Array.isArray(preset) || typeof preset !== 'object') {
+      return HttpResponse.empty(400);
+    }
+    this.store.writeJson(joinPath(target.directory, ensureJsonExtension(name)), preset as Object);
+    const response = emptyJsonRecord();
+    response['name'] = name;
+    return HttpResponse.json(response);
+  }
+
+  deletePreset(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const name = sanitizeFileName(this.asString(body['name']));
+    const target = this.presetTarget(this.asString(body['apiId']));
+    if (name.length === 0 || name === 'unnamed' || target.directory.length === 0) {
+      return HttpResponse.empty(400);
+    }
+    const path = joinPath(target.directory, ensureJsonExtension(name));
+    if (!this.store.exists(path)) {
+      return HttpResponse.empty(404);
+    }
+    this.store.deleteFile(path);
+    return HttpResponse.empty(200);
+  }
+
+  restorePreset(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const name = sanitizeFileName(this.asString(body['name']));
+    const target = this.presetTarget(this.asString(body['apiId']));
+    if (name.length === 0 || name === 'unnamed' || target.directory.length === 0) {
+      return HttpResponse.empty(400);
+    }
+    const response = emptyJsonRecord();
+    response['isDefault'] = false;
+    response['preset'] = emptyJsonRecord();
+    const rawPath = this.defaultPresetRawPath(name, target.defaultType);
+    if (rawPath.length > 0) {
+      const parsed = this.defaultJson(rawPath);
+      if (parsed !== null) {
+        response['isDefault'] = true;
+        response['preset'] = parsed;
+      }
+    }
+    return HttpResponse.json(response);
+  }
+
+  saveTheme(request: HttpRequest): HttpResponse {
+    return this.saveNamedJson(request, this.userDirs.themes);
+  }
+
+  deleteTheme(request: HttpRequest): HttpResponse {
+    return this.deleteNamedJson(request, this.userDirs.themes);
+  }
+
+  saveMovingUi(request: HttpRequest): HttpResponse {
+    return this.saveNamedJson(request, this.userDirs.movingUI);
   }
 
   listCharacters(): HttpResponse {
@@ -818,6 +952,7 @@ export class SillyTavernCore {
     this.store.ensureDir(dir);
     const jsonl = chat.map((item: Object | string | number | boolean | null) => JSON.stringify(item)).join('\n');
     this.store.writeText(joinPath(dir, sanitizeFileName(ensureJsonlExtension(fileName))), jsonl);
+    this.backupChat(withoutExtension(sanitizeFileName(avatarUrl)), jsonl);
     return HttpResponse.json(new OkResponse());
   }
 
@@ -994,6 +1129,7 @@ export class SillyTavernCore {
     }
     const jsonl = chat.map((item: Object | string | number | boolean | null) => JSON.stringify(item)).join('\n');
     this.store.writeText(joinPath(this.userDirs.groupChats, ensureJsonlExtension(id)), jsonl);
+    this.backupChat(id, jsonl);
     return HttpResponse.json(new OkResponse());
   }
 
@@ -1097,6 +1233,27 @@ export class SillyTavernCore {
     return HttpResponse.json(new OkResponse());
   }
 
+  importWorld(request: HttpRequest): HttpResponse {
+    const file = request.file('avatar') ?? request.file('file') ?? (request.files.length > 0 ? request.files[0] : null);
+    if (file === null) {
+      return HttpResponse.empty(400);
+    }
+    const convertedData = this.asString(this.bodyAsRecord(request)['convertedData']);
+    const jsonText = convertedData.length > 0 ? convertedData : this.decoder.decodeToString(file.bytes);
+    const parsed = this.parseJsonRecord(jsonText);
+    if (parsed['entries'] === undefined) {
+      return HttpResponse.text('Is not a valid world info file', 400);
+    }
+    const worldName = withoutExtension(sanitizeFileName(file.fileName));
+    if (worldName.length === 0 || worldName === 'unnamed') {
+      return HttpResponse.empty(400);
+    }
+    this.store.writeJson(joinPath(this.userDirs.worlds, ensureJsonExtension(worldName)), parsed);
+    const response = emptyJsonRecord();
+    response['name'] = worldName;
+    return HttpResponse.json(response);
+  }
+
   deleteWorld(request: HttpRequest): HttpResponse {
     const name = sanitizeFileName(this.asString(this.bodyAsRecord(request)['name']));
     if (name.length === 0) {
@@ -1194,6 +1351,48 @@ export class SillyTavernCore {
     return HttpResponse.json(result);
   }
 
+  chatBackups(): HttpResponse {
+    const backups: Object[] = [];
+    for (const file of this.store.list(this.userDirs.backups)) {
+      if (!file.isFile || extensionOf(file.name) !== '.jsonl' || !file.name.startsWith('chat_')) {
+        continue;
+      }
+      const info = this.chatInfo(file, this.readChatFile(file.path));
+      if (this.asString(info['file_name']).length > 0) {
+        backups.push(info);
+      }
+    }
+    return HttpResponse.json(backups);
+  }
+
+  downloadChatBackup(request: HttpRequest): HttpResponse {
+    const name = sanitizeFileName(this.asString(this.bodyAsRecord(request)['name']));
+    if (!this.validChatBackupName(name)) {
+      return HttpResponse.empty(400);
+    }
+    const path = joinPath(this.userDirs.backups, name);
+    const text = this.store.readText(path, '');
+    if (text.length === 0 && !this.store.exists(path)) {
+      return HttpResponse.empty(404);
+    }
+    const response = HttpResponse.text(text, 200, 'application/octet-stream');
+    response.headers['content-disposition'] = `attachment; filename="${name}"`;
+    return response;
+  }
+
+  deleteChatBackup(request: HttpRequest): HttpResponse {
+    const name = sanitizeFileName(this.asString(this.bodyAsRecord(request)['name']));
+    if (!this.validChatBackupName(name)) {
+      return HttpResponse.empty(400);
+    }
+    const path = joinPath(this.userDirs.backups, name);
+    if (!this.store.exists(path)) {
+      return HttpResponse.empty(404);
+    }
+    this.store.deleteFile(path);
+    return HttpResponse.empty(200);
+  }
+
   private bodyAsRecord(request: HttpRequest): JsonRecord {
     if (request.body === null || Array.isArray(request.body)) {
       return emptyJsonRecord();
@@ -1203,6 +1402,162 @@ export class SillyTavernCore {
 
   private statsPath(): string {
     return joinPath(this.userDirs.root, 'stats.json');
+  }
+
+  private settingsBackupPrefix(): string {
+    return 'settings_default-user_';
+  }
+
+  private validSettingsSnapshotName(name: string): boolean {
+    return name.startsWith(this.settingsBackupPrefix()) && extensionOf(name) === '.json' && sanitizeFileName(name) === name;
+  }
+
+  private validChatBackupName(name: string): boolean {
+    return name.startsWith('chat_') && extensionOf(name) === '.jsonl' && sanitizeFileName(name) === name;
+  }
+
+  private saveNamedJson(request: HttpRequest, directory: string): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const name = sanitizeFileName(this.asString(body['name']));
+    if (name.length === 0 || name === 'unnamed') {
+      return HttpResponse.empty(400);
+    }
+    this.store.writeJson(joinPath(directory, ensureJsonExtension(name)), body);
+    return HttpResponse.empty(200);
+  }
+
+  private deleteNamedJson(request: HttpRequest, directory: string): HttpResponse {
+    const name = sanitizeFileName(this.asString(this.bodyAsRecord(request)['name']));
+    if (name.length === 0 || name === 'unnamed') {
+      return HttpResponse.empty(400);
+    }
+    const path = joinPath(directory, ensureJsonExtension(name));
+    if (!this.store.exists(path)) {
+      return HttpResponse.empty(404);
+    }
+    this.store.deleteFile(path);
+    return HttpResponse.empty(200);
+  }
+
+  private presetTarget(apiId: string): PresetTarget {
+    const target = new PresetTarget();
+    switch (apiId) {
+      case 'kobold':
+      case 'koboldhorde':
+        target.directory = this.userDirs.koboldAISettings;
+        target.defaultType = 'kobold_preset';
+        break;
+      case 'novel':
+        target.directory = this.userDirs.novelAISettings;
+        target.defaultType = 'novel_preset';
+        break;
+      case 'textgenerationwebui':
+        target.directory = this.userDirs.textGenSettings;
+        target.defaultType = 'textgen_preset';
+        break;
+      case 'openai':
+        target.directory = this.userDirs.openAISettings;
+        target.defaultType = 'openai_preset';
+        break;
+      case 'instruct':
+        target.directory = this.userDirs.instruct;
+        target.defaultType = 'instruct';
+        break;
+      case 'context':
+        target.directory = this.userDirs.context;
+        target.defaultType = 'context';
+        break;
+      case 'sysprompt':
+        target.directory = this.userDirs.sysprompt;
+        target.defaultType = 'sysprompt';
+        break;
+      case 'reasoning':
+        target.directory = this.userDirs.reasoning;
+        target.defaultType = 'reasoning';
+        break;
+      default:
+        break;
+    }
+    return target;
+  }
+
+  private defaultPresetRawPath(name: string, type: string): string {
+    if (this.manager === null || type.length === 0) {
+      return '';
+    }
+    const items = this.defaultContentIndex();
+    for (const item of items) {
+      if (item.type === type && withoutExtension(item.filename) === name) {
+        return `default/content/${item.filename.replace(/\\/g, '/')}`;
+      }
+    }
+    return '';
+  }
+
+  private defaultContentIndex(): DefaultContentItem[] {
+    if (this.manager === null) {
+      return [];
+    }
+    try {
+      const text = this.decoder.decodeToString(this.manager.getRawFileContentSync('default/content/index.json'));
+      const parsed = JSON.parse(text) as JsonArray;
+      const items: DefaultContentItem[] = [];
+      for (const item of parsed) {
+        if (item === null || Array.isArray(item) || typeof item !== 'object') {
+          continue;
+        }
+        const record = item as JsonRecord;
+        const next = new DefaultContentItem();
+        next.filename = this.asString(record['filename']);
+        next.type = this.asString(record['type']);
+        if (next.filename.length > 0 && next.type.length > 0) {
+          items.push(next);
+        }
+      }
+      return items;
+    } catch (_err) {
+      return [];
+    }
+  }
+
+  private defaultJson(rawPath: string): JsonRecord | null {
+    if (this.manager === null) {
+      return null;
+    }
+    try {
+      return this.parseJsonRecord(this.decoder.decodeToString(this.manager.getRawFileContentSync(rawPath)));
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  private backupChat(name: string, jsonl: string): void {
+    const safeName = sanitizeFileName(name).replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+    if (safeName.length === 0 || safeName === 'unnamed') {
+      return;
+    }
+    const prefix = `chat_${safeName}_`;
+    this.store.writeText(joinPath(this.userDirs.backups, `${prefix}${this.compactTimestamp()}.jsonl`), jsonl);
+    this.removeOldBackups(prefix, 50);
+  }
+
+  private removeOldBackups(prefix: string, limit: number): void {
+    const files = this.store.list(this.userDirs.backups)
+      .filter((file: FileEntry): boolean => file.isFile && file.name.startsWith(prefix))
+      .sort((left: FileEntry, right: FileEntry): number => left.mtimeMs - right.mtimeMs);
+    while (files.length > limit) {
+      const oldest = files.shift();
+      if (oldest === undefined) {
+        break;
+      }
+      this.store.deleteFile(oldest.path);
+    }
+  }
+
+  private compactTimestamp(): string {
+    const date = new Date();
+    const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
+    return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
   }
 
   private collectStats(): JsonRecord {

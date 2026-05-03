@@ -17,6 +17,7 @@
 - OpenAI chat-completions 支持 `openai` 和 `custom` 来源，支持 `/models` 状态检查、`/chat/completions` 非流式生成和流式 SSE 生成。
 - 流式生成已改为 Harmony `requestInStream()` + `dataReceive` 转发，并通过虚拟机、hdc 端口映射、慢速 mock OpenAI 服务确认分块即时到达。
 - Tokenizer 已接入 native `.so` + Rust `miktik`：SillyTavern 本地 tokenizer 路由已走真实 encode/decode/count，覆盖 OpenAI/tiktoken、GPT-2、旧 OpenAI text/embedding 模型、Claude、DeepSeek、Gemma、Llama/Llama 3、Mistral、Yi、Jamba、Nerdstash/Nerdstash v2、Qwen2、Command-R/Command-A 和 Nemo；`/api/tokenizers/openai/count` 会按原版模型分支进行 OpenAI chat overhead、Claude-style prompt 或 SentencePiece flatten 计数。
+- 管理类接口本轮已补：世界书 multipart 导入、settings snapshots、presets save/delete/restore、themes save/delete、moving UI save、assets 管理、content importURL/importUUID、聊天备份读/下载/删除，以及 LLM API logs 的 keep 配置、SSE 订阅和前端查看面板。
 
 明确暂缓或仍不完善：
 - 多用户明确暂缓：当前 App 形态不需要多用户运行模型，后端固定使用 `data/default-user/`；`/api/users/*` 只保留为本地账号弹窗、密码校验和备份恢复的兼容层，不启用真实 session、cookie-session、当前用户切换和权限中间件。
@@ -24,7 +25,7 @@
 - Tokenizer 本地路由已基本补齐：剩余风险主要是特殊 token、异常 token id、chunks 展示和包体积等边界细节；不再使用 byte 估算承担这些模型的主路径计数。
 - Vector 已有可用实现：支持本地 JSON 索引、insert/list/delete/query/query-multi/purge、批量 remote embedding provider 调用和 hash fallback；已对齐 OpenAI-compatible、Cohere、Ollama、Extras、NomicAI、Google/MakerSuite、Vertex 等常用 embedding 请求/响应形状，但尚未对齐原版 `vectra.LocalIndex` 的完整行为和性能。
 - Git 后续增强：私有仓库认证、SSH、submodule、非 fast-forward merge 冲突处理、hooks 执行仍暂缓。
-- settings snapshots、presets、themes、moving UI、assets/content-manager、聊天备份等管理类接口仍需后续补齐。
+- 管理类接口剩余差异：聊天备份目前每次保存都会写入并按单聊天前缀保留 50 条，尚未实现原版节流/全局最大数量/完整 integrity slug 校验；content import 的通用下载域名仍是内置白名单而非 config 驱动；data-maid、master import/export 和 Comfy workflow save/delete/rename 仍未完成。
 
 代码入口：
 
@@ -1506,13 +1507,12 @@ type RecentChatResponse = {
 
 - 接收 `force` 字段，但不执行原版 `chat_metadata.integrity` 校验。
 - 没有实现原版 `IntegrityMismatchError`。
-- 没有按 `backups/chat` 规则写聊天备份。
-- 没有实现节流备份逻辑。
-- 没有实现最大备份数量清理。
-- 没有实现：
+- 已按 `backups/chat_*.jsonl` 写聊天备份，并实现：
   - `POST /api/backups/chat/get`
   - `POST /api/backups/chat/download`
   - `POST /api/backups/chat/delete`
+- 备份清理目前按单聊天前缀保留最近 50 条。
+- 仍未实现原版节流备份逻辑和全局最大备份数量策略。
 
 后续需要对齐原版 `trySaveChat()`、`backupChat()`、`removeOldBackups()` 和前端强制覆盖确认流程。
 
@@ -2618,7 +2618,7 @@ UI 截图：
 当前实现目标是“让 SillyTavern 前端先在手机 WebView 中跑起来”，不是完整后端替代。已知限制：
 
 - 已有本地账号兼容 API 和密码校验；多用户系统明确暂缓，当前固定使用 `default-user`，不支持真实多用户会话、cookie-session、当前用户切换、权限中间件和真实 CSRF。
-- multipart 解析已支持，角色卡 JSON/PNG 导入、头像上传、背景上传、sprites 上传、聊天导入已接入；世界书导入等 multipart 接口仍需补。
+- multipart 解析已支持，角色卡 JSON/PNG 导入、头像上传、背景上传、sprites 上传、聊天导入、世界书导入已接入；仍需补齐 CharX/BYAF/Risu sprites 等更复杂导入格式。
 - Chat-completions provider 主路径已覆盖 OpenAI/OpenAI-compatible、OpenRouter、DeepSeek、Moonshot、Z.AI、NanoGPT、Chutes、Groq、SiliconFlow、Claude、Gemini/MakerSuite、Vertex AI、Cohere，支持常用 payload builder、状态检查、非流式归一化、关键流式转换、prompt cache、取消和 LLM API 文件日志；其他外部服务仍未完整对齐。
 - SillyTavern 本地 tokenizer 路由已接入 native MikTik；上下文裁剪和模型精确 token 计数已覆盖 GPT-2、Llama/Llama 3、Mistral、Yi、Gemma、Jamba、Nerdstash、Qwen2、Command、Nemo、Claude、DeepSeek 和 OpenAI/tiktoken。剩余是特殊 token/chunks/包体积等边界优化。
 - Vector 已有本地 JSON 索引、批量 remote embedding provider 调用和 hash fallback；OpenAI-compatible、Cohere、Ollama、Extras、NomicAI、Google/MakerSuite、Vertex 等常用请求形状已补，但还不是原版 `vectra.LocalIndex` 等价实现。
@@ -2626,7 +2626,7 @@ UI 截图：
 - `extensions/discover` 已扫描 rawfile 系统扩展和本地/全局第三方扩展目录；扩展 Git 已支持 HTTPS 公共仓库，但私有仓库认证、SSH、submodule、merge 冲突处理和 hooks 仍暂缓。
 - `users/backup` 已使用 Harmony zlib 生成 zip 并调用 ShareKit；扩展页新入口已适配 OHOS JSON/ShareKit 结果，但 rawfile `user.js` 账号弹窗里的备份按钮仍保留浏览器 blob 下载逻辑。
 - `users/restore-data` 和 `users/restore-data-picker` 已有 zip 解压和覆盖恢复逻辑，后端 picker 已在模拟器用 50MB 级备份验证；HTTP multipart 恢复入口主要保留为调试兼容。
-- `settings/get` 的 Kobold/NovelAI/OpenAI/TextGen 预设已按原版返回 JSON 文件原文字符串数组；settings snapshots 等管理接口仍缺。
+- `settings/get` 的 Kobold/NovelAI/OpenAI/TextGen 预设已按原版返回 JSON 文件原文字符串数组；settings snapshots、presets、themes、moving UI、assets、content import 和聊天备份管理接口已接入基础兼容，仍有原版节流、config 白名单、完整校验等细节差异。
 - `characters/chats` 的 `last_mes` 当前不是 `send_date`，后续需要与 Node 版 `getChatInfo()` 完全对齐。
 - 静态前端资源内的 `global.d.ts` 被 rawfile 打包会触发 hvigor source warning，但不影响运行。
 
@@ -2717,6 +2717,9 @@ avatar
 - `POST /api/chats/group/import`，基础版：只接受 SillyTavern JSONL
 - `POST /api/chats/group/info`
 - `POST /api/chats/recent`
+- `POST /api/backups/chat/get`
+- `POST /api/backups/chat/download`
+- `POST /api/backups/chat/delete`
 
 仍缺失：
 
@@ -2727,11 +2730,7 @@ avatar
   - 多聊天 JSON 导入时的批量文件名稳定生成
   - 导入错误类型与原版日志细节
 - 聊天保存完整性校验和强制覆盖确认；当前 `force` 字段接收但不做 integrity slug 校验
-- 聊天保存节流备份、最大备份数量清理和备份文件命名
-- 聊天备份相关接口：
-  - `POST /api/backups/chat/get`
-  - `POST /api/backups/chat/download`
-  - `POST /api/backups/chat/delete`
+- 聊天保存节流备份和原版全局最大备份数量策略；当前每次保存备份，按单聊天前缀保留 50 条
 - 群聊文件和 `groups/<id>.json` 的后端一致性兜底；当前主要依赖前端更新 `chats[]` 和 `chat_id`
 - 群聊导入后自动写回 group JSON 的事务式保障
 - 聊天导出 ShareKit 失败时的前端提示细化
@@ -2788,19 +2787,17 @@ avatar
 - `GET /backgrounds/*`
 - `GET /user/images/*`
 - `GET /user/files/*`
-
-仍缺失：
-
-- 资产：
-  - `POST /api/assets/get`
-  - `POST /api/assets/download`
-  - `POST /api/assets/delete`
-  - `POST /api/assets/character`
+- `POST /api/assets/get`
+- `POST /api/assets/download`
+- `POST /api/assets/delete`
+- `POST /api/assets/character`
+- `GET /assets/*`
 
 兼容差异和后续增强：
 
 - 头像上传、背景缩略图、persona 缩略图和 metadata 平均色已用 ImageKit 实现；极端格式的解码/缩放结果可能不与 Jimp 像素级完全一致。
 - GIF、APNG、动画 WebP 和视频类缩略图按原版跳过处理并回退源文件。
+- assets download 的通用 URL 域名白名单当前内置在 ArkTS 后端，尚未读取原版 config `whitelistImportDomains`。
 - MediaKit 暂未接入。当前媒体阶段只保存、列出、读取音视频文件；音视频转码、录制、播放不是原版这些后端接口的职责。
 
 ### 17.4 设置、预设、主题和 UI 配置
@@ -2810,27 +2807,23 @@ avatar
 - `POST /api/settings/get`
 - `POST /api/settings/save`
 - 启动阶段所需的基础预设目录读取
+- `POST /api/settings/get-snapshots`
+- `POST /api/settings/make-snapshot`
+- `POST /api/settings/load-snapshot`
+- `POST /api/settings/restore-snapshot`
+- `POST /api/presets/save`
+- `POST /api/presets/delete`
+- `POST /api/presets/restore`
+- `POST /api/themes/save`
+- `POST /api/themes/delete`
+- `POST /api/moving-ui/save`
 - `POST /api/quick-reply/save`
 - `POST /api/quick-reply/delete`
-- 旧路径兼容：`/savequickreply`、`/deletequickreply`
+- 旧路径兼容：`/savequickreply`、`/deletequickreply`、`/savetheme`、`/savemovingui`
 - 启动阶段所需的 Comfy workflow 本地列表读取：`POST /api/sd/comfy/workflows`
 
 仍缺失：
 
-- 设置快照：
-  - `POST /api/settings/get-snapshots`
-  - `POST /api/settings/make-snapshot`
-  - `POST /api/settings/load-snapshot`
-  - `POST /api/settings/restore-snapshot`
-- 预设：
-  - `POST /api/presets/save`
-  - `POST /api/presets/delete`
-  - `POST /api/presets/restore`
-- 主题：
-  - `POST /api/themes/save`
-  - `POST /api/themes/delete`
-- moving UI：
-  - `POST /api/moving-ui/save`
 - Comfy workflow 完整管理：
   - `POST /api/sd/comfy/save-workflow`
   - `POST /api/sd/comfy/delete-workflow`
@@ -2838,6 +2831,8 @@ avatar
 
 兼容差异：
 
+- settings snapshots 固定使用当前单用户前缀 `settings_default-user_`，与多用户系统一起暂缓真实用户 handle 切换。
+- presets restore 会从 rawfile `default/content/index.json` 查找默认预设；已覆盖 kobold/koboldhorde/novel/textgenerationwebui/openai/instruct/context/sysprompt/reasoning。
 - Horde 启动阶段兼容桩已返回离线状态和空模型/worker 数组；真实 Horde 网络代理和生成仍未实现。
 
 ### 17.5 世界书
@@ -2847,13 +2842,14 @@ avatar
 - `POST /api/worldinfo/list`
 - `POST /api/worldinfo/get`
 - `POST /api/worldinfo/edit`
-- `POST /api/worldinfo/delete`
-
-仍缺失：
-
 - `POST /api/worldinfo/import`
-- 世界书导入时的文件上传解析
-- 更完整的世界书校验、备份和兼容转换
+- `POST /api/worldinfo/delete`
+- 旧路径兼容：`/importworldinfo`
+
+兼容差异：
+
+- 世界书导入支持 multipart `avatar` 字段，兼容 `file` 或首个上传文件，并支持前端传入 `convertedData`。
+- 校验目前与原版主路径一致检查 JSON 中存在 `entries`，但尚未实现更细的世界书 schema 校验、导入前备份和更多格式转换兜底。
 
 ### 17.6 群组
 
@@ -2866,14 +2862,10 @@ avatar
 
 仍缺失：
 
-- 群聊消息相关接口在 `chats` 模块中尚未实现：
-  - `POST /api/chats/group/get`
-  - `POST /api/chats/group/save`
-  - `POST /api/chats/group/delete`
-  - `POST /api/chats/group/import`
-  - `POST /api/chats/group/info`
 - 群组头像上传和资源处理
 - 更完整的群组聊天统计和最近聊天字段对齐
+
+群聊消息相关接口在 `chats` 模块中已有基础版：`group/get`、`group/save`、`group/delete`、`group/import`、`group/info`。剩余主要是群组 JSON 与聊天文件之间的事务式一致性、导入后自动写回和统计字段对齐。
 
 ### 17.7 Secrets、扩展和账号
 
@@ -2982,6 +2974,13 @@ avatar
 - `POST /api/horde/task-status`
 - `POST /api/horde/cancel-task`
 - `POST /api/horde/user-info`
+- `GET/POST /api/dev/llm-api-logs`
+- `GET/POST /api/dev/llm-api-logs/preview`
+- `GET/POST /api/dev/llm-api-logs/raw`
+- `GET/POST /api/dev/llm-api-logs/settings`
+- `GET/POST /api/dev/llm-api-logs/keep`
+- `GET/POST /api/dev/llm-api-logs/stream-enabled`
+- `GET /api/dev/llm-api-logs/stream`
 - `POST /api/sd/ping`
 - `POST /api/sd/models`
 - `POST /api/sd/samplers`
@@ -3004,6 +3003,7 @@ avatar
 - `json_schema` 会转换为 OpenAI `response_format: { type: "json_schema", json_schema: ... }`。
 - text-completions 基础代理会按 `api_type` 查询模型或透传 `/v1/completions` / KoboldCpp `/api/v1/generate`。
 - NovelAI、Horde、Stable Diffusion 当前是基础 HTTP 代理/查询，不代表完整原版 provider 行为。
+- LLM API logs 写入 `data/_cache/llm-api-logs/`，保存 index/meta/request raw/response raw/readable 预览；默认 keep=5，可通过 settings/keep 调整，最大 100；`/stream` 使用 HTTP SSE 推送 `llm-api-log` 事件，前端扩展抽屉的 `LLM API Logs` 面板可查看、复制、启停 Live。
 
 仍缺失或未完整对齐的大类：
 
@@ -3014,6 +3014,7 @@ avatar
 - Horde 完整排队、取消、worker/model 过滤和错误兼容。
 - Kobold / KoboldCpp / TextGenerationWebUI 的完整 text-completions 行为。
 - Stable Diffusion 完整 txt2img/img2img/options/progress/upscale 等接口。
+- LLM API logs 与 TauriTavern 差异：OHOS 走 HTTP SSE，不是 Tauri event bus；订阅清理依赖心跳/发送失败；日志 UI 是 OHOS rawfile 面板，不是原版 SillyTavern 内建功能。
 - Azure
 - Minimax
 - Volcengine
@@ -3047,27 +3048,30 @@ avatar
 
 当前 ArkTS 已实现：
 
+- `POST /api/stats/get`
+- `POST /api/stats/update`
+- `POST /api/stats/recreate`
 - `POST /api/users/backup`：压缩整个 `<filesDir>/data` 并通过 ShareKit 导出。
 - `POST /api/users/restore-data`：上传 zip，解压到私有临时目录，校验 data 结构后覆盖 `<filesDir>/data`。
 - 扩展抽屉新增 `数据导出/恢复` 折叠栏，提供 data 导出和 data zip 导入恢复入口。
+- `POST /api/content/importURL` / `POST /api/content/importUUID`：支持 Chub/CharacterHub 角色和 lorebook、Pygmalion、JanitorAI、AICC、Risu、Perchance `.gz` 和内置白名单通用 URL；同时兼容旧文档写法 `/api/content-manager/importURL` / `importUUID`。
+- `POST /api/backups/chat/get`
+- `POST /api/backups/chat/download`
+- `POST /api/backups/chat/delete`
 
 仍缺失：
 
-- stats：
-  - `POST /api/stats/get`
-  - `POST /api/stats/update`
-  - `POST /api/stats/recreate`
 - data-maid：
   - `POST /api/data-maid/report`
   - `POST /api/data-maid/delete`
   - `POST /api/data-maid/finalize`
   - `GET /api/data-maid/view`
-- content-manager：
-  - `POST /api/content-manager/importURL`
-  - `POST /api/content-manager/importUUID`
-- backups：
-  - 聊天备份读取、下载、删除
 - master import/export 相关能力；当前只覆盖整个 `data/` zip 导出/恢复，不覆盖原版内容管理器的细粒度导入导出
+
+兼容差异：
+
+- content import 的通用 URL 白名单仍是 ArkTS 内置列表，尚未读取原版 config；部分站点受 Cloudflare 或远端接口变化影响时会按原版一样返回下载失败。
+- Perchance 头像支持 base64 和 URL，并尽量用 ImageKit 转 PNG；极端非图片或远端阻断时回退透明 PNG。
 
 ### 17.11 建议阶段划分
 
@@ -3108,16 +3112,20 @@ avatar
    - 已完成：sprites upload/upload-zip/delete/get
    - 已完成：thumbnails 生成和缓存
    - 已完成：image-metadata 与背景虚拟文件夹
+   - 已完成：assets get/download/delete/character 和 `/assets/*` 静态读取
+   - 已完成：content importURL/importUUID 基础兼容
 6. 设置与预设阶段：
-   - presets
-   - themes
-   - quick replies
-   - moving UI
-   - settings snapshots
+   - 已完成：presets save/delete/restore
+   - 已完成：themes save/delete
+   - 已完成：quick replies
+   - 已完成：moving UI save
+   - 已完成：settings snapshots
+   - 待补：Comfy workflow save/delete/rename
 7. 模型连接最小阶段：
    - 已完成：OpenAI chat-completions 最小代理
    - 已完成：支持非流式 JSON 和流式 SSE 透传
    - 已完成：text-completions、NovelAI、Horde、Stable Diffusion 的基础 HTTP 代理/查询路由
+   - 已完成：LLM API logs 文件日志、keep 配置、SSE 订阅和前端查看面板
    - 待补：OpenAI-compatible provider 差异、请求取消、错误细节完全对齐
 8. 高级能力阶段：
    - 已完成：vectors 最小本地 JSON 索引和 embedding/hash fallback

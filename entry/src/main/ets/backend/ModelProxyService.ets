@@ -240,6 +240,22 @@ export class ModelProxyService {
     return this.chatCompletions.logRaw(request);
   }
 
+  llmApiLogsSettings(request: HttpRequest): HttpResponse {
+    return this.chatCompletions.logsSettings(request);
+  }
+
+  llmApiLogsKeep(request: HttpRequest): HttpResponse {
+    return this.chatCompletions.logsKeep(request);
+  }
+
+  llmApiLogsStreamEnabled(request: HttpRequest): HttpResponse {
+    return this.chatCompletions.logsStreamEnabled(request);
+  }
+
+  llmApiLogsStream(request: HttpRequest): HttpResponse {
+    return this.chatCompletions.logsStream(request);
+  }
+
   private textCompletionModelsPath(apiType: string): string {
     switch (apiType) {
       case 'dreamgen':

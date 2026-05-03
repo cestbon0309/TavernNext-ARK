@@ -19,10 +19,20 @@ export class RemoteHttpClient {
     return this.request(url, 'GET', '', headers, timeoutMs, false);
   }
 
+  async getBytes(url: string, headers: Record<string, string> = {}, timeoutMs: number = 120000): Promise<RemoteHttpResult> {
+    return this.request(url, 'GET', '', headers, timeoutMs, true);
+  }
+
   async postJson(url: string, value: Object, headers: Record<string, string> = {},
     timeoutMs: number = 300000): Promise<RemoteHttpResult> {
     const nextHeaders = this.withHeader(headers, 'Content-Type', 'application/json');
     return this.request(url, 'POST', JSON.stringify(value), nextHeaders, timeoutMs, false);
+  }
+
+  async postJsonBytes(url: string, value: Object, headers: Record<string, string> = {},
+    timeoutMs: number = 300000): Promise<RemoteHttpResult> {
+    const nextHeaders = this.withHeader(headers, 'Content-Type', 'application/json');
+    return this.request(url, 'POST', JSON.stringify(value), nextHeaders, timeoutMs, true);
   }
 
   async streamPostJson(url: string, value: Object, headers: Record<string, string>, send: HttpStreamSend,

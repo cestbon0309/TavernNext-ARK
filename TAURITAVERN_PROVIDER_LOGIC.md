@@ -1003,14 +1003,12 @@ else: repository.generate(...)
 
 主要缺口：
 
-- Provider gate 当前只放行 `openai/custom`，其他 source 还不能从前端真实使用。
-- 没有 provider builder registry，逻辑仍集中在 `ModelProxyService.ets`。
-- OpenRouter/DeepSeek/NanoGPT/ZAI/Moonshot 等 OpenAI-compatible 专属参数未对齐。
-- Claude/Gemini/Cohere 缺专门 payload builder、model contract、response normalizer。
-- OpenAI Responses/Gemini Interactions 缺 custom format 支持。
-- SSE 目前主要透传；对 Responses/Interactions 这种原生 stream 需要转换成 OpenAI chat chunk。
+- Provider gate 和 builder registry 已落地，OpenAI-compatible、Claude、Gemini/MakerSuite、Vertex、Cohere 等主路径已有专门 builder/normalizer。
+- OpenRouter/DeepSeek/NanoGPT/ZAI/Moonshot 等 OpenAI-compatible 专属参数已补主路径，但仍需要真实服务回归。
+- Claude/Gemini/Cohere 已有专门 payload builder、model contract 和 response normalizer，但边界模型、工具调用和多模态仍要用真实端点补回归样例。
+- OpenAI Responses/Gemini Interactions 已有 custom format builder 和 stream 转换基础版，仍需更多事件类型对齐。
 - custom YAML/JSON parser 不如 TauriTavern 的 `serde_yaml` 完整。
-- prompt post processing、prompt caching、LLM API logs 尚未迁移。
+- prompt post processing、prompt caching、LLM API logs 已迁移基础行为；剩余主要是真实请求样例回归、UI 差异和事件细节。
 
 ## 20. 当前 ArkTS 重写落地状态
 
@@ -1075,7 +1073,7 @@ entry/src/main/ets/backend/model/
 
 - Prompt post processing 已迁移 `none/merge/merge_tools/semi/semi_tools/strict/strict_tools/single`，后续主要需要真实请求样例回归。
 - Prompt caching 已迁移 plan、digest、cache_control、持久化快照、usage 日志；TTL 默认按 TauriTavern 从 settings 读取，默认 off。
-- LLM API logging 已补 ArkTS 文件日志：每次 generate 会写入最近 5 条 `index/meta/request/response`，保存 raw JSON 或 raw SSE，并生成 request/response readable 预览；新增 `/api/dev/llm-api-logs`、`/preview`、`/raw` 便于调试查看。和 TauriTavern 相比，当前还没有前端实时事件订阅和可配置 keep 数量。
+- LLM API logging 已补 ArkTS 文件日志：每次 generate 会写入 `index/meta/request/response`，保存 raw JSON 或 raw SSE，并生成 request/response readable 预览；新增 `/api/dev/llm-api-logs`、`/preview`、`/raw`、`/settings`、`/keep`、`/stream-enabled`、`/stream`。默认 keep=5，可配置到 100；`/stream` 使用 HTTP SSE 推送 `llm-api-log` 事件，rawfile 前端的扩展抽屉已加入 `LLM API Logs` 面板。和 TauriTavern 相比，OHOS 走 HTTP SSE 而不是 Tauri event bus，连接清理依赖心跳/发送失败。
 - Claude 已补常用 model contract，但仍需要用真实新旧 Claude 模型做 sampling/thinking/assistant prefill 的边界回归。
 - Gemini/Vertex 已补常用多模态、function output、Gemini 2.5/3 thinking 映射；仍需要用真实 Gemini/Vertex 端点做全路径回归。
 - OpenAI Responses 和 Gemini Interactions 的非流式已做基础归一化，流式已转换成 OpenAI chat completion chunk；还需要更多真实 provider 回归样例。
@@ -1116,6 +1114,6 @@ entry/src/main/ets/backend/model/
 - 2026-05-03：补齐 Vertex AI full service account OAuth：新增 `VertexAiAuth.ets`，解析 `vertexai_service_account_json`，用 HarmonyOS `cryptoFramework` 导入 PEM private key、生成 RS256 JWT assertion，请求 `oauth2.googleapis.com/token`，并按 service account JSON 的 SHA256 digest 缓存 access token；`ChatCompletionConfigResolver.resolveGenerateConfig()` 改为 async，full 模式现在使用 `Authorization: Bearer <access_token>` 和 service account 内的 `project_id` 拼 Vertex base URL。HAP 构建通过。限制：RSA 签名算法名已通过 ArkTS 编译，仍需要用真实 service account 在模拟器/真机验证运行时兼容性。
 - 2026-05-03：补齐 prompt cache 持久化与 usage 日志：`PromptCaching.ets` 现在从请求字段或 `default-user/settings.json` 的 `models.claude.prompt_cache_ttl` 读取 TTL，默认 off；支持 `5m/1h`，拒绝自动缓存与手动 `cache_control` 混用；Claude/OpenRouter digest snapshot 写入 `data/_cache/prompt-cache/*.json`；NanoGPT Claude 使用 `{ enabled: true, ttl }` 形状。`RemoteHttpClient.streamPostJsonWithEventHook()` 能在保持 SSE 原样透传时旁路解析 `data:` 事件，`ChatCompletionRepository` 会记录 `cache_creation_input_tokens/cache_read_input_tokens/input_tokens`。HAP 构建通过。
 - 2026-05-03：新增 `PROVIDER_BEHAVIOR_VALIDATION.md`，记录 OpenAI-compatible SSE 透传、OpenAI Responses/Gemini Interactions stream chunk 转换、Claude/OpenRouter/NanoGPT prompt cache、Vertex full OAuth 的验证样例和期望观察点，作为后续真实 provider 回归入口。
-- 2026-05-03：新增 `LlmApiLogger.ets` 并接入 `ChatCompletionRepository`。非流式请求记录原始上游 JSON、归一化 readable response 和错误信息；流式请求记录原始 SSE，普通 OpenAI-compatible 透传保持不变，Responses/Interactions 记录上游 raw SSE，同时从转换后的 OpenAI chunk 提取 readable 文本。日志写入 `data/_cache/llm-api-logs/`，默认保留最近 5 条，并通过 `/api/dev/llm-api-logs`、`/api/dev/llm-api-logs/preview?id=<id>`、`/api/dev/llm-api-logs/raw?id=<id>` 查看。HAP 构建通过。限制：尚未实现 TauriTavern 的 UI 事件订阅和 keep 数量设置。
+- 2026-05-03：新增 `LlmApiLogger.ets` 并接入 `ChatCompletionRepository`。非流式请求记录原始上游 JSON、归一化 readable response 和错误信息；流式请求记录原始 SSE，普通 OpenAI-compatible 透传保持不变，Responses/Interactions 记录上游 raw SSE，同时从转换后的 OpenAI chunk 提取 readable 文本。日志写入 `data/_cache/llm-api-logs/`，默认保留最近 5 条，并通过 `/api/dev/llm-api-logs`、`/api/dev/llm-api-logs/preview?id=<id>`、`/api/dev/llm-api-logs/raw?id=<id>` 查看。随后补齐 `/settings`、`/keep`、`/stream-enabled`、`/stream`，支持可配置 keep、HTTP SSE 实时事件订阅，以及 rawfile 前端扩展抽屉里的 `LLM API Logs` 面板。HAP 构建通过。限制：OHOS 这里不是 Tauri event bus，而是 HTTP SSE；订阅清理依赖心跳/发送失败。
 - 2026-05-03：`CustomParameters.ets` 从简单 `key: value` parser 升级为常用 YAML/JSON override parser：支持嵌套 map、list、inline map/list、quoted string、bool/null/number、注释 stripping 和 exclude key list；继续保持 JSON 优先。HAP 构建通过。限制：不实现完整 YAML anchors、merge keys、多行 block scalar。
 - 2026-05-03：`VectorService.ets` 对齐原版 SillyTavern embedding provider 形状：insert 改为 10 条一批生成 embedding；OpenAI-compatible/Mistral/TogetherAI/OpenRouter/ElectronHub/NanoGPT/SiliconFlow/Chutes 使用批量 `/embeddings`；Cohere 改为 v2 `/embed` + `texts/embedding_types/input_type/truncate`；Ollama 改为 `/api/embed`；Extras 使用 `{ text }`；NomicAI、MakerSuite/Google、Vertex AI 增加基础 embedding 请求与响应解析；llamacpp/vllm 去掉重复 `/v1` 后拼 `/v1/embeddings`。失败或未配置仍回退本地 hash vector。HAP 构建通过。限制：本地索引仍是 JSON + cosine scan，不是 `vectra.LocalIndex` 性能等价实现；Vertex embedding 只覆盖 express API key 基础路径，未复用 full service account OAuth。

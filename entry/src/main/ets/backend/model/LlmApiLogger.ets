@@ -43,6 +43,17 @@ class LlmApiLogMeta extends LlmApiLogIndexEntry {
   responseRawKind: string | null = null;
 }
 
+class LlmApiLogSubscriber {
+  id: number;
+  send: HttpStreamSend;
+  active: boolean = true;
+
+  constructor(id: number, send: HttpStreamSend) {
+    this.id = id;
+    this.send = send;
+  }
+}
+
 export class LlmApiStreamLogSink {
   private logger: LlmApiLogger;
   private context: LlmApiLogContext;
@@ -119,10 +130,15 @@ export class LlmApiLogger {
   private store: FileStore;
   private dirs: DataDirectories;
   private nextId: number = 1;
+  private keep: number = DEFAULT_KEEP;
+  private streamEnabled: boolean = false;
+  private nextSubscriberId: number = 1;
+  private subscribers: LlmApiLogSubscriber[] = [];
 
   constructor(store: FileStore, dirs: DataDirectories) {
     this.store = store;
     this.dirs = dirs;
+    this.loadSettings();
     this.ensureNextId();
   }
 
@@ -197,6 +213,89 @@ export class LlmApiLogger {
     return HttpResponse.json(response);
   }
 
+  settings(request: HttpRequest): HttpResponse {
+    if (request.method === 'POST') {
+      const body = request.body;
+      if (body !== null && !Array.isArray(body) && typeof body === 'object') {
+        const record = body as JsonRecord;
+        const keep = asNumber(record['keep'], this.keep);
+        if (Number.isFinite(keep) && keep > 0) {
+          this.keep = Math.min(100, Math.floor(keep));
+        }
+        if (typeof record['streamEnabled'] === 'boolean') {
+          this.streamEnabled = record['streamEnabled'] as boolean;
+        }
+        if (typeof record['enabled'] === 'boolean') {
+          this.streamEnabled = record['enabled'] as boolean;
+        }
+        this.saveSettings();
+        this.writeIndexAndPrune(this.readIndex());
+      }
+    }
+    return HttpResponse.json(this.settingsRecord());
+  }
+
+  keepSettings(request: HttpRequest): HttpResponse {
+    if (request.method === 'POST') {
+      const body = request.body;
+      if (body !== null && !Array.isArray(body) && typeof body === 'object') {
+        const keep = asNumber((body as JsonRecord)['keep'], this.keep);
+        if (Number.isFinite(keep) && keep > 0) {
+          this.keep = Math.min(100, Math.floor(keep));
+          this.saveSettings();
+          this.writeIndexAndPrune(this.readIndex());
+        }
+      }
+    }
+    const response = emptyJsonRecord();
+    response['keep'] = this.keep;
+    return HttpResponse.json(response);
+  }
+
+  streamEnabledSettings(request: HttpRequest): HttpResponse {
+    if (request.method === 'POST') {
+      const body = request.body;
+      if (body !== null && !Array.isArray(body) && typeof body === 'object') {
+        const record = body as JsonRecord;
+        if (typeof record['enabled'] === 'boolean') {
+          this.streamEnabled = record['enabled'] as boolean;
+          this.saveSettings();
+        }
+      }
+    }
+    const response = emptyJsonRecord();
+    response['enabled'] = this.streamEnabled;
+    return HttpResponse.json(response);
+  }
+
+  stream(request: HttpRequest): HttpResponse {
+    return HttpResponse.stream('text/event-stream; charset=utf-8', async (send: HttpStreamSend): Promise<void> => {
+      let active = true;
+      await send(': connected\n\n');
+      if (this.streamEnabled) {
+        const entries = this.readIndex();
+        for (const entry of entries) {
+          await send(`event: llm-api-log\ndata: ${JSON.stringify(entry)}\n\n`);
+        }
+      }
+      const subscriber = new LlmApiLogSubscriber(this.nextSubscriberId, send);
+      this.nextSubscriberId += 1;
+      this.subscribers.push(subscriber);
+      while (active && subscriber.active) {
+        try {
+          await send(': heartbeat\n\n');
+        } catch (_err) {
+          active = false;
+          subscriber.active = false;
+        }
+        if (active && subscriber.active) {
+          await this.delay(15000);
+        }
+      }
+      this.subscribers = this.subscribers.filter((item: LlmApiLogSubscriber): boolean => item.id !== subscriber.id);
+    });
+  }
+
   private writeEntry(meta: LlmApiLogMeta, requestRaw: string, responseRaw: string): void {
     this.store.writeJson(this.metaPath(meta.id), meta);
     if (requestRaw.length > 0 && !this.store.exists(this.requestPath(meta.id))) {
@@ -207,9 +306,11 @@ export class LlmApiLogger {
     } else if (meta.responseRawKind === 'sse') {
       this.store.writeText(this.responseSsePath(meta.id), responseRaw);
     }
+    const entry = this.indexEntry(meta);
     const next = this.readIndex();
-    next.push(this.indexEntry(meta));
+    next.push(entry);
     this.writeIndexAndPrune(next);
+    this.publish(entry);
   }
 
   private metaFromContext(context: LlmApiLogContext, ok: boolean, errorMessage: string, responseReadable: string,
@@ -247,7 +348,7 @@ export class LlmApiLogger {
   }
 
   private writeIndexAndPrune(entries: LlmApiLogIndexEntry[]): void {
-    const keep = DEFAULT_KEEP;
+    const keep = this.keep;
     const sorted = entries.sort((left: LlmApiLogIndexEntry, right: LlmApiLogIndexEntry): number => left.id - right.id);
     const survivors = sorted.slice(Math.max(0, sorted.length - keep));
     const survivorIds = new Set<number>();
@@ -260,6 +361,47 @@ export class LlmApiLogger {
       }
     }
     this.store.writeJson(this.indexPath(), survivors);
+  }
+
+  private publish(entry: LlmApiLogIndexEntry): void {
+    if (!this.streamEnabled || this.subscribers.length === 0) {
+      return;
+    }
+    const survivors: LlmApiLogSubscriber[] = [];
+    for (const subscriber of this.subscribers) {
+      if (!subscriber.active) {
+        continue;
+      }
+      survivors.push(subscriber);
+      subscriber.send(`event: llm-api-log\ndata: ${JSON.stringify(entry)}\n\n`).catch((_err: Error) => {
+        subscriber.active = false;
+      });
+    }
+    this.subscribers = survivors.filter((subscriber: LlmApiLogSubscriber): boolean => subscriber.active);
+  }
+
+  private loadSettings(): void {
+    const settings = this.store.readJsonRecord(this.settingsPath());
+    const keep = asNumber(settings['keep'], DEFAULT_KEEP);
+    this.keep = Number.isFinite(keep) && keep > 0 ? Math.min(100, Math.floor(keep)) : DEFAULT_KEEP;
+    this.streamEnabled = settings['streamEnabled'] === true;
+  }
+
+  private saveSettings(): void {
+    this.store.writeJson(this.settingsPath(), this.settingsRecord());
+  }
+
+  private async delay(ms: number): Promise<void> {
+    return new Promise<void>((resolve: () => void) => {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  private settingsRecord(): JsonRecord {
+    const response = emptyJsonRecord();
+    response['keep'] = this.keep;
+    response['streamEnabled'] = this.streamEnabled;
+    return response;
   }
 
   private readIndex(): LlmApiLogIndexEntry[] {
@@ -493,6 +635,10 @@ export class LlmApiLogger {
 
   private responseSsePath(id: number): string {
     return joinPath(this.dirs.llmApiLogRoot, `llm-api-${id}.response.sse`);
+  }
+
+  private settingsPath(): string {
+    return joinPath(this.dirs.llmApiLogRoot, 'llm-api-settings.json');
   }
 }
 

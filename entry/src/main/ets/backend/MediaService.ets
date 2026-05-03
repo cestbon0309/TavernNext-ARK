@@ -6,6 +6,8 @@ import { FileEntry, FileStore } from './FileStore';
 import { emptyJsonRecord, HttpRequest, HttpResponse, HttpUploadedFile, JsonArray, JsonRecord, JsonScalar } from './HttpTypes';
 import { extensionOf, joinPath, sanitizeFileName, withoutExtension } from './PathUtils';
 import { CryptoUtils } from './CryptoUtils';
+import { RemoteHttpClient, RemoteHttpResult } from './RemoteHttpClient';
+import { PngCardStore } from './PngCardStore';
 
 type JsonValue = JsonScalar | JsonArray;
 
@@ -47,6 +49,19 @@ class CropParams {
   want_resize: boolean = false;
 }
 
+class RemoteContentResult {
+  bytes: Uint8Array = new Uint8Array();
+  fileName: string = '';
+  contentType: string = 'application/octet-stream';
+  contentKind: string = 'character';
+}
+
+class PerchanceContent {
+  slug: string = '';
+  charUrl: string = '';
+  record: JsonRecord = emptyJsonRecord();
+}
+
 export class MediaService {
   private static readonly bgThumbWidth: number = 160;
   private static readonly bgThumbHeight: number = 90;
@@ -72,13 +87,17 @@ export class MediaService {
   private dirs: DataDirectories;
   private userDirs: UserDirectories;
   private crypto: CryptoUtils;
+  private http: RemoteHttpClient = new RemoteHttpClient();
+  private cardStore: PngCardStore;
   private base64: util.Base64Helper = new util.Base64Helper();
+  private decoder: util.TextDecoder = new util.TextDecoder('utf-8');
 
   constructor(store: FileStore, dirs: DataDirectories, crypto: CryptoUtils) {
     this.store = store;
     this.dirs = dirs;
     this.userDirs = dirs.defaultUser;
     this.crypto = crypto;
+    this.cardStore = new PngCardStore(store);
   }
 
   async getDataFile(request: HttpRequest): Promise<HttpResponse> {
@@ -378,6 +397,119 @@ export class MediaService {
       verified[url] = this.store.exists(path);
     }
     return HttpResponse.json(verified);
+  }
+
+  assetsGet(): HttpResponse {
+    this.ensureAssetFolders();
+    const response = emptyJsonRecord();
+    response['bgm'] = this.assetFileList('bgm');
+    response['ambient'] = this.assetFileList('ambient');
+    response['blip'] = this.assetFileList('blip');
+    response['live2d'] = this.live2dAssets(joinPath(this.userDirs.assets, 'live2d'), 'assets/live2d');
+    response['character'] = this.assetFileList('character');
+    const vrm = emptyJsonRecord();
+    vrm['model'] = this.recursiveClientFiles(joinPath(this.userDirs.assets, 'vrm', 'model'));
+    vrm['animation'] = this.recursiveClientFiles(joinPath(this.userDirs.assets, 'vrm', 'animation'));
+    response['vrm'] = vrm;
+    return HttpResponse.json(response);
+  }
+
+  async assetsDownload(request: HttpRequest): Promise<HttpResponse> {
+    const body = this.bodyAsRecord(request);
+    const url = this.asString(body['url']);
+    const category = this.asString(body['category']);
+    const filename = this.asString(body['filename']);
+    if (!this.isValidHttpUrl(url) || !this.isHostWhitelisted(this.hostFromUrl(url)) || !this.validAssetCategory(category)) {
+      return HttpResponse.empty(!this.isHostWhitelisted(this.hostFromUrl(url)) ? 404 : 400);
+    }
+    const validation = this.validateAssetFileName(filename);
+    if (validation.length > 0) {
+      return HttpResponse.text(validation, 400);
+    }
+    try {
+      this.ensureAssetFolders();
+      const result = await this.http.getBytes(url, { 'User-Agent': 'SillyTavern' }, 120000);
+      if (result.statusCode < 200 || result.statusCode >= 300 || result.bytes === null) {
+        return HttpResponse.empty(500);
+      }
+      if (category === 'character') {
+        return HttpResponse.bytes(result.bytes, 200, result.headers['content-type'] ?? this.contentTypeForFile(filename));
+      }
+      this.store.writeBytes(joinPath(this.userDirs.assets, category, filename), result.bytes);
+      return HttpResponse.empty(200);
+    } catch (_err) {
+      return HttpResponse.empty(500);
+    }
+  }
+
+  assetsDelete(request: HttpRequest): HttpResponse {
+    const body = this.bodyAsRecord(request);
+    const category = this.asString(body['category']);
+    const filename = this.asString(body['filename']);
+    if (!this.validAssetCategory(category)) {
+      return HttpResponse.empty(400);
+    }
+    const validation = this.validateAssetFileName(filename);
+    if (validation.length > 0) {
+      return HttpResponse.text(validation, 400);
+    }
+    const path = joinPath(this.userDirs.assets, category, filename);
+    if (!this.store.exists(path)) {
+      return HttpResponse.empty(400);
+    }
+    this.store.deleteFile(path);
+    return HttpResponse.empty(200);
+  }
+
+  assetsCharacter(request: HttpRequest): HttpResponse {
+    const name = sanitizeFileName(this.asString(request.query['name']));
+    const category = this.asString(request.query['category']);
+    if (name.length === 0 || !this.validAssetCategory(category)) {
+      return HttpResponse.empty(400);
+    }
+    const directory = joinPath(this.userDirs.characters, name, category);
+    if (category === 'live2d') {
+      return HttpResponse.json(this.live2dAssets(directory, `characters/${name}/${category}`));
+    }
+    const files: string[] = [];
+    for (const entry of this.store.list(directory)) {
+      if (entry.isFile && entry.name !== '.placeholder') {
+        files.push(`/characters/${name}/${category}/${entry.name}`);
+      }
+    }
+    return HttpResponse.json(files);
+  }
+
+  async contentImportUrl(request: HttpRequest): Promise<HttpResponse> {
+    const url = this.asString(this.bodyAsRecord(request)['url']);
+    if (url.length === 0) {
+      return HttpResponse.empty(400);
+    }
+    try {
+      const result = await this.downloadContentFromUrl(url);
+      if (result === null) {
+        return HttpResponse.empty(404);
+      }
+      return this.contentDownloadResponse(result);
+    } catch (_err) {
+      return HttpResponse.empty(500);
+    }
+  }
+
+  async contentImportUuid(request: HttpRequest): Promise<HttpResponse> {
+    const uuid = this.asString(this.bodyAsRecord(request)['url']);
+    if (uuid.length === 0) {
+      return HttpResponse.empty(400);
+    }
+    try {
+      const result = await this.downloadContentFromUuid(uuid);
+      if (result === null) {
+        return HttpResponse.empty(404);
+      }
+      return this.contentDownloadResponse(result);
+    } catch (_err) {
+      return HttpResponse.empty(500);
+    }
   }
 
   spritesGet(request: HttpRequest): HttpResponse {
@@ -1136,6 +1268,13 @@ export class MediaService {
       }
       return joinPath(this.userDirs.files, relative);
     }
+    if (requestPath.startsWith('/assets/')) {
+      const relative = requestPath.slice('/assets/'.length);
+      if (!this.validRelativePath(relative)) {
+        return '';
+      }
+      return joinPath(this.userDirs.assets, relative);
+    }
     return '';
   }
 
@@ -1203,6 +1342,559 @@ export class MediaService {
       }
     }
     return '';
+  }
+
+  private ensureAssetFolders(): void {
+    for (const category of ['bgm', 'ambient', 'blip', 'live2d', 'vrm', 'character', 'temp']) {
+      this.store.ensureDir(joinPath(this.userDirs.assets, category));
+    }
+    this.store.ensureDir(joinPath(this.userDirs.assets, 'vrm', 'model'));
+    this.store.ensureDir(joinPath(this.userDirs.assets, 'vrm', 'animation'));
+  }
+
+  private validAssetCategory(category: string): boolean {
+    return ['bgm', 'ambient', 'blip', 'live2d', 'vrm', 'character', 'temp'].includes(category);
+  }
+
+  private assetFileList(category: string): string[] {
+    const files: string[] = [];
+    for (const entry of this.store.list(joinPath(this.userDirs.assets, category))) {
+      if (entry.isFile && entry.name !== '.placeholder') {
+        files.push(`assets/${category}/${entry.name}`);
+      }
+    }
+    return files;
+  }
+
+  private live2dAssets(root: string, clientRoot: string): string[] {
+    const files: string[] = [];
+    for (const entry of this.collectFiles(root)) {
+      if (entry.isFile && entry.name.includes('model') && extensionOf(entry.name) === '.json') {
+        const relative = this.clientRelativePath(root, entry.path);
+        if (relative.length > 0) {
+          files.push(`${clientRoot}/${relative}`);
+        }
+      }
+    }
+    return files;
+  }
+
+  private recursiveClientFiles(root: string): string[] {
+    const files: string[] = [];
+    for (const entry of this.collectFiles(root)) {
+      if (entry.isFile && entry.name !== '.placeholder') {
+        const relative = this.clientRelativePath(this.userDirs.root, entry.path);
+        if (relative.length > 0) {
+          files.push(relative);
+        }
+      }
+    }
+    return files;
+  }
+
+  private collectFiles(root: string): FileEntry[] {
+    const results: FileEntry[] = [];
+    for (const entry of this.store.list(root)) {
+      if (entry.isDirectory) {
+        results.push(...this.collectFiles(entry.path));
+      } else if (entry.isFile) {
+        results.push(entry);
+      }
+    }
+    return results;
+  }
+
+  private async downloadContentFromUrl(url: string): Promise<RemoteContentResult | null> {
+    if (!this.isValidHttpUrl(url)) {
+      return null;
+    }
+    const host = this.hostFromUrl(url);
+    if (host.includes('chub.ai') || host.includes('characterhub.org')) {
+      const parsed = this.parseChubUrl(url);
+      if (parsed.length === 0) {
+        return null;
+      }
+      return parsed.startsWith('lorebooks/') ? await this.downloadChubLorebook(parsed) :
+        await this.downloadChubCharacter(parsed);
+    }
+    if (host.includes('pygmalion.chat')) {
+      const uuid = this.uuidFromText(url);
+      return uuid.length > 0 ? await this.downloadPygmalionCharacter(uuid) : null;
+    }
+    if (host.includes('janitorai')) {
+      const uuid = this.uuidFromText(url);
+      return uuid.length > 0 ? await this.downloadJanitorCharacter(uuid) : null;
+    }
+    if (host.includes('realm.risuai.net')) {
+      const uuid = this.risuUuid(url);
+      return uuid.length > 0 ? await this.downloadDirectCharacter(`https://realm.risuai.net/api/v1/download/png-v3/${uuid}?non_commercial=true`,
+        `${uuid}.png`) : null;
+    }
+    if (host.includes('aicharactercards.com')) {
+      const path = this.lastPathSegments(url, 2);
+      return path.length > 0 ? await this.downloadDirectCharacter(`https://aicharactercards.com/wp-json/pngapi/v1/image/${path}`,
+        `${path.replace(/\//g, '_')}.png`) : null;
+    }
+    if (host.includes('perchance.org')) {
+      const slug = this.perchanceSlug(url);
+      return slug.length > 0 ? await this.downloadPerchanceCharacter(slug) : null;
+    }
+    if (this.isHostWhitelisted(host)) {
+      return await this.downloadGenericPng(url);
+    }
+    return null;
+  }
+
+  private async downloadContentFromUuid(uuid: string): Promise<RemoteContentResult | null> {
+    if (this.isPerchanceUuid(uuid)) {
+      return await this.downloadPerchanceCharacter(this.perchanceSlug(uuid));
+    }
+    if (uuid.includes('_character')) {
+      const characterId = uuid.split('_')[0];
+      return characterId.length > 0 ? await this.downloadJanitorCharacter(characterId) : null;
+    }
+    if (uuid.length === 36 && this.uuidFromText(uuid) === uuid) {
+      return await this.downloadPygmalionCharacter(uuid);
+    }
+    if (uuid.startsWith('AICC/')) {
+      const parts = uuid.split('/');
+      if (parts.length >= 3) {
+        return await this.downloadDirectCharacter(`https://aicharactercards.com/wp-json/pngapi/v1/image/${parts[1]}/${parts[2]}`,
+          `${sanitizeFileName(parts[2])}.png`);
+      }
+    }
+    if (uuid.includes('lorebook')) {
+      return await this.downloadChubLorebook(uuid);
+    }
+    return await this.downloadChubCharacter(uuid);
+  }
+
+  private async downloadChubLorebook(id: string): Promise<RemoteContentResult | null> {
+    const parts = id.split('/').filter((part: string): boolean => part.length > 0);
+    if (parts.length < 3) {
+      return null;
+    }
+    const metadataUrl = `https://api.chub.ai/api/${parts[0]}/${parts[1]}/${parts.slice(2).join('/')}`;
+    const metadata = await this.http.getText(metadataUrl, { 'Accept': 'application/json', 'User-Agent': 'SillyTavern' }, 120000);
+    if (metadata.statusCode < 200 || metadata.statusCode >= 300) {
+      return null;
+    }
+    const record = this.parseJsonRecord(metadata.text);
+    const node = this.asRecord(record['node']);
+    const projectId = this.asString(node['id']);
+    if (projectId.length === 0) {
+      return null;
+    }
+    const raw = await this.http.getBytes(`https://api.chub.ai/api/v4/projects/${projectId}/repository/files/raw%252Fsillytavern_raw.json/raw`,
+      { 'Accept': 'application/json', 'User-Agent': 'SillyTavern' }, 120000);
+    if (raw.statusCode < 200 || raw.statusCode >= 300 || raw.bytes === null) {
+      return null;
+    }
+    const result = new RemoteContentResult();
+    result.bytes = raw.bytes;
+    result.fileName = `${sanitizeFileName(parts[parts.length - 1])}.json`;
+    result.contentType = raw.headers['content-type'] ?? 'application/json; charset=utf-8';
+    result.contentKind = 'lorebook';
+    return result;
+  }
+
+  private async downloadChubCharacter(id: string): Promise<RemoteContentResult | null> {
+    const parts = id.replace(/^characters\//, '').split('/').filter((part: string): boolean => part.length > 0);
+    if (parts.length < 2) {
+      return null;
+    }
+    const metadata = await this.http.getText(`https://api.chub.ai/api/characters/${parts[0]}/${parts.slice(1).join('/')}?full=true`,
+      { 'Accept': 'application/json', 'User-Agent': 'SillyTavern' }, 120000);
+    if (metadata.statusCode < 200 || metadata.statusCode >= 300) {
+      return null;
+    }
+    const record = this.parseJsonRecord(metadata.text);
+    const node = this.asRecord(record['node']);
+    const definition = this.asRecord(node['definition']);
+    const card = this.chubCharacterCard(parts[0], definition, this.asArray(node['topics']));
+    let avatar = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0,
+      0, 0, 31, 21, 196, 137, 0, 0, 0, 11, 73, 68, 65, 84, 120, 156, 99, 96, 0, 2, 0, 0, 5, 0, 1,
+      122, 94, 171, 63, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]);
+    const imageUrl = this.asString(node['max_res_url']);
+    if (imageUrl.length > 0) {
+      const downloaded = await this.http.getBytes(imageUrl, { 'User-Agent': 'SillyTavern' }, 120000);
+      if (downloaded.statusCode >= 200 && downloaded.statusCode < 300 && downloaded.bytes !== null) {
+        avatar = downloaded.bytes;
+      }
+    }
+    const output = this.cardStore.writeCardToBytes(avatar, card);
+    if (output === null) {
+      return null;
+    }
+    const result = new RemoteContentResult();
+    result.bytes = output;
+    result.fileName = `${sanitizeFileName(this.asString(this.asRecord(card['data'])['name']) || parts[parts.length - 1])}.png`;
+    result.contentType = 'image/png';
+    result.contentKind = 'character';
+    return result;
+  }
+
+  private async downloadPygmalionCharacter(uuid: string): Promise<RemoteContentResult | null> {
+    const data = await this.http.getText(`https://server.pygmalion.chat/api/export/character/${uuid}/v2`,
+      { 'User-Agent': 'SillyTavern' }, 120000);
+    if (data.statusCode < 200 || data.statusCode >= 300) {
+      return null;
+    }
+    const result = new RemoteContentResult();
+    result.fileName = `${sanitizeFileName(uuid)}.json`;
+    result.contentType = 'application/json; charset=utf-8';
+    result.contentKind = 'character';
+    result.bytes = this.utf8Bytes(data.text);
+    const parsed = this.parseJsonRecord(data.text);
+    const character = this.asRecord(parsed['character']);
+    const characterData = this.asRecord(character['data']);
+    const avatarUrl = this.asString(characterData['avatar']);
+    if (avatarUrl.length > 0) {
+      const avatar = await this.http.getBytes(avatarUrl, { 'User-Agent': 'SillyTavern' }, 120000);
+      if (avatar.statusCode >= 200 && avatar.statusCode < 300 && avatar.bytes !== null) {
+        const cardBytes = this.cardStore.writeCardToBytes(avatar.bytes, character);
+        if (cardBytes !== null) {
+          result.bytes = cardBytes;
+          result.fileName = `${sanitizeFileName(uuid)}.png`;
+          result.contentType = 'image/png';
+        }
+      }
+    }
+    return result;
+  }
+
+  private async downloadJanitorCharacter(uuid: string): Promise<RemoteContentResult | null> {
+    const payload = emptyJsonRecord();
+    payload['characterId'] = uuid;
+    const response = await this.http.postJsonBytes('https://api.jannyai.com/api/v1/download',
+      payload, { 'Content-Type': 'application/json', 'User-Agent': 'SillyTavern' }, 120000);
+    if (response.statusCode < 200 || response.statusCode >= 300 || response.bytes === null) {
+      return null;
+    }
+    const record = this.parseJsonRecord(response.text);
+    if (this.asString(record['status']) !== 'ok') {
+      return null;
+    }
+    const downloadUrl = this.asString(record['downloadUrl']);
+    if (downloadUrl.length === 0) {
+      return null;
+    }
+    return await this.downloadDirectCharacter(downloadUrl, `${sanitizeFileName(uuid)}.png`);
+  }
+
+  private async downloadPerchanceCharacter(slug: string): Promise<RemoteContentResult | null> {
+    const content = await this.fetchPerchanceContent(slug);
+    if (content === null) {
+      return null;
+    }
+    const perchance = content.record;
+    const avatarUrl = this.asString(this.asRecord(perchance['avatar'])['url']);
+    const card = this.perchanceCharacterCard(content, avatarUrl);
+    const avatar = await this.fetchPerchanceAvatar(avatarUrl);
+    const output = this.cardStore.writeCardToBytes(avatar, card);
+    if (output === null) {
+      return null;
+    }
+    const name = this.asString(this.asRecord(card['data'])['name']) || 'Unnamed Perchance Character';
+    const result = new RemoteContentResult();
+    result.bytes = output;
+    result.fileName = `${sanitizeFileName(name)}.png`;
+    result.contentType = 'image/png';
+    result.contentKind = 'character';
+    return result;
+  }
+
+  private async fetchPerchanceContent(slug: string): Promise<PerchanceContent | null> {
+    const safeSlug = sanitizeFileName(slug);
+    if (safeSlug.length === 0 || !safeSlug.endsWith('.gz')) {
+      return null;
+    }
+    const charUrl = `https://user.uploads.dev/file/${safeSlug}`;
+    const downloaded = await this.http.getBytes(charUrl, { 'Content-Type': 'application/json', 'User-Agent': 'SillyTavern' }, 120000);
+    if (downloaded.statusCode < 200 || downloaded.statusCode >= 300 || downloaded.bytes === null) {
+      return null;
+    }
+    const gzipPath = joinPath(this.dirs.uploadRoot, `perchance-${Date.now()}-${safeSlug}`);
+    this.store.writeBytes(gzipPath, downloaded.bytes);
+    try {
+      const gzip = zlib.createGZipSync();
+      await gzip.gzopen(gzipPath, 'rb');
+      try {
+        const chunks: Uint8Array[] = [];
+        while (await gzip.gzeof() === 0) {
+          const buffer = new ArrayBuffer(32768);
+          const read = await gzip.gzfread(buffer, 1, 32768);
+          if (read <= 0) {
+            break;
+          }
+          chunks.push(new Uint8Array(buffer).slice(0, read));
+        }
+        const text = this.decoder.decodeToString(this.concatByteArrays(chunks));
+        const root = this.parseJsonRecord(text);
+        const addCharacter = this.asRecord(root['addCharacter']);
+        if (Object.keys(addCharacter).length === 0) {
+          return null;
+        }
+        const content = new PerchanceContent();
+        content.slug = safeSlug;
+        content.charUrl = charUrl;
+        content.record = addCharacter;
+        return content;
+      } finally {
+        await gzip.gzclose();
+      }
+    } catch (_err) {
+      return null;
+    } finally {
+      this.store.deleteFile(gzipPath);
+    }
+  }
+
+  private async fetchPerchanceAvatar(avatarUrl: string): Promise<Uint8Array> {
+    if (avatarUrl.startsWith('data:image/')) {
+      try {
+        const raw = this.base64.decodeSync(this.stripDataUrl(avatarUrl), util.Type.BASIC);
+        return avatarUrl.startsWith('data:image/png;base64,') ? raw : await this.convertImageToPng(raw);
+      } catch (_err) {
+        return this.defaultPngBytes();
+      }
+    }
+    if (!this.isValidHttpUrl(avatarUrl)) {
+      return this.defaultPngBytes();
+    }
+    try {
+      const avatar = await this.http.getBytes(avatarUrl, { 'User-Agent': 'SillyTavern' }, 120000);
+      if (avatar.statusCode < 200 || avatar.statusCode >= 300 || avatar.bytes === null) {
+        return this.defaultPngBytes();
+      }
+      const contentType = avatar.headers['content-type'] ?? '';
+      return contentType.includes('image/png') ? avatar.bytes : await this.convertImageToPng(avatar.bytes);
+    } catch (_err) {
+      return this.defaultPngBytes();
+    }
+  }
+
+  private perchanceCharacterCard(content: PerchanceContent, avatarUrl: string): JsonRecord {
+    const perchance = content.record;
+    const data = emptyJsonRecord();
+    data['name'] = this.asString(perchance['name']) || 'Unnamed Perchance Character';
+    data['first_mes'] = '';
+    data['tags'] = [];
+    data['description'] = this.asString(perchance['roleInstruction']);
+    data['creator'] = this.asString(perchance['metaTitle']);
+    data['creator_notes'] = this.asString(perchance['metaDescription']);
+    data['alternate_greetings'] = [];
+    data['character_version'] = '';
+    data['mes_example'] = '';
+    data['post_history_instructions'] = '';
+    data['system_prompt'] = '';
+    data['scenario'] = '';
+    data['personality'] = this.asString(perchance['reminderMessage']);
+    const extensions = emptyJsonRecord();
+    const perchanceData = emptyJsonRecord();
+    perchanceData['slug'] = content.slug;
+    perchanceData['char_url'] = content.charUrl;
+    perchanceData['uuid'] = this.asString(perchance['uuid']) || null;
+    perchanceData['avatar_url'] = avatarUrl.startsWith('data:image/') ? null : (avatarUrl || null);
+    perchanceData['folder_path'] = this.asString(perchance['folderPath']) || null;
+    perchanceData['folder_name'] = this.asString(perchance['folderName']) || null;
+    perchanceData['custom_data'] = this.asRecord(perchance['customData']);
+    extensions['perchance_data'] = perchanceData;
+    data['extensions'] = extensions;
+    const card = emptyJsonRecord();
+    card['spec'] = 'chara_card_v2';
+    card['spec_version'] = '2.0';
+    card['data'] = data;
+    return card;
+  }
+
+  private async downloadDirectCharacter(url: string, filename: string): Promise<RemoteContentResult | null> {
+    const downloaded = await this.http.getBytes(url, { 'User-Agent': 'SillyTavern' }, 120000);
+    if (downloaded.statusCode < 200 || downloaded.statusCode >= 300 || downloaded.bytes === null) {
+      return null;
+    }
+    const result = new RemoteContentResult();
+    result.bytes = downloaded.bytes;
+    result.fileName = sanitizeFileName(filename);
+    result.contentType = downloaded.headers['content-type'] ?? this.contentTypeForFile(filename);
+    result.contentKind = 'character';
+    return result;
+  }
+
+  private async downloadGenericPng(url: string): Promise<RemoteContentResult | null> {
+    const downloaded = await this.http.getBytes(url, { 'User-Agent': 'SillyTavern' }, 120000);
+    if (downloaded.statusCode < 200 || downloaded.statusCode >= 300 || downloaded.bytes === null) {
+      return null;
+    }
+    const result = new RemoteContentResult();
+    result.bytes = downloaded.bytes;
+    result.contentType = downloaded.headers['content-type'] ?? 'image/png';
+    result.contentKind = 'character';
+    let fileName = sanitizeFileName(this.urlFileName(url));
+    if (fileName.length === 0 || fileName === 'unnamed') {
+      fileName = `${Date.now()}.png`;
+    }
+    if (result.contentType.includes('image/png') && extensionOf(fileName).length === 0) {
+      fileName = `${fileName}.png`;
+    }
+    result.fileName = fileName;
+    return result;
+  }
+
+  private contentDownloadResponse(result: RemoteContentResult): HttpResponse {
+    const response = HttpResponse.bytes(result.bytes, 200, result.contentType);
+    response.headers['content-disposition'] = `attachment; filename="${encodeURIComponent(result.fileName)}"`;
+    response.headers['x-custom-content-type'] = result.contentKind;
+    return response;
+  }
+
+  private chubCharacterCard(creator: string, definition: JsonRecord, topics: JsonArray): JsonRecord {
+    const data = emptyJsonRecord();
+    data['name'] = this.asString(definition['name']) || 'Chub Character';
+    data['description'] = this.asString(definition['personality']);
+    data['personality'] = this.asString(definition['tavern_personality']);
+    data['scenario'] = this.asString(definition['scenario']);
+    data['first_mes'] = this.asString(definition['first_message']);
+    data['mes_example'] = this.asString(definition['example_dialogs']);
+    data['creator_notes'] = this.asString(definition['description']);
+    data['system_prompt'] = this.asString(definition['system_prompt']);
+    data['post_history_instructions'] = this.asString(definition['post_history_instructions']);
+    data['alternate_greetings'] = this.asArray(definition['alternate_greetings']);
+    data['tags'] = topics;
+    data['creator'] = creator;
+    data['character_version'] = '';
+    data['character_book'] = definition['embedded_lorebook'] ?? emptyJsonRecord();
+    data['extensions'] = this.asRecord(definition['extensions']);
+    const card = emptyJsonRecord();
+    card['spec'] = 'chara_card_v2';
+    card['spec_version'] = '2.0';
+    card['data'] = data;
+    return card;
+  }
+
+  private parseChubUrl(url: string): string {
+    const marker = this.hostFromUrl(url);
+    const path = this.urlPath(url);
+    const parts = path.split('/').filter((part: string): boolean => part.length > 0);
+    if (!(marker.includes('chub.ai') || marker.includes('characterhub.org'))) {
+      return '';
+    }
+    if (parts.length >= 3 && (parts[0] === 'characters' || parts[0] === 'lorebooks')) {
+      return parts.join('/');
+    }
+    if (parts.length >= 2) {
+      return parts.join('/');
+    }
+    return '';
+  }
+
+  private hostFromUrl(url: string): string {
+    const match = url.match(/^https?:\/\/([^/?#:]+)(?::\d+)?/i);
+    return match === null ? '' : match[1].toLowerCase();
+  }
+
+  private urlPath(url: string): string {
+    const match = url.match(/^https?:\/\/[^/?#:]+(?::\d+)?([^?#]*)/i);
+    return match === null ? '' : match[1];
+  }
+
+  private urlFileName(url: string): string {
+    const path = this.urlPath(url);
+    const parts = path.split('/').filter((part: string): boolean => part.length > 0);
+    return parts.length === 0 ? '' : parts[parts.length - 1];
+  }
+
+  private uuidFromText(text: string): string {
+    const match = text.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
+    return match === null ? '' : match[0];
+  }
+
+  private risuUuid(url: string): string {
+    const parts = this.urlPath(url).split('/').filter((part: string): boolean => part.length > 0);
+    if (parts.length >= 2 && parts[0] === 'character') {
+      return sanitizeFileName(parts[1]);
+    }
+    return '';
+  }
+
+  private perchanceSlug(url: string): string {
+    const marker = url.indexOf('~');
+    if (marker < 0) {
+      return '';
+    }
+    const afterMarker = url.slice(marker + 1);
+    const gzIndex = afterMarker.indexOf('.gz');
+    if (gzIndex < 0) {
+      return '';
+    }
+    return sanitizeFileName(afterMarker.slice(0, gzIndex + 3));
+  }
+
+  private isPerchanceUuid(value: string): boolean {
+    return /^\w+~[a-f0-9]{32}\.gz$/i.test(value);
+  }
+
+  private lastPathSegments(url: string, count: number): string {
+    const parts = this.urlPath(url).split('/').filter((part: string): boolean => part.length > 0);
+    if (parts.length < count) {
+      return '';
+    }
+    return parts.slice(parts.length - count).map((part: string): string => sanitizeFileName(part)).join('/');
+  }
+
+  private isValidHttpUrl(url: string): boolean {
+    return /^https?:\/\/[^/?#]+\.[^/?#]+/i.test(url) || /^https?:\/\/localhost(?::\d+)?/i.test(url) ||
+      /^https?:\/\/127\.0\.0\.1(?::\d+)?/i.test(url);
+  }
+
+  private isHostWhitelisted(host: string): boolean {
+    return ['localhost', '127.0.0.1', 'cdn.discordapp.com', 'media.discordapp.net', 'files.catbox.moe',
+      'raw.githubusercontent.com'].includes(host);
+  }
+
+  private parseJsonRecord(text: string): JsonRecord {
+    try {
+      const parsed = JSON.parse(text) as Object;
+      if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+        return emptyJsonRecord();
+      }
+      return parsed as JsonRecord;
+    } catch (_err) {
+      return emptyJsonRecord();
+    }
+  }
+
+  private utf8Bytes(value: string): Uint8Array {
+    return new util.TextEncoder('utf-8').encodeInto(value);
+  }
+
+  private concatByteArrays(chunks: Uint8Array[]): Uint8Array {
+    let total = 0;
+    for (const chunk of chunks) {
+      total += chunk.byteLength;
+    }
+    const output = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      output.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return output;
+  }
+
+  private async convertImageToPng(bytes: Uint8Array): Promise<Uint8Array> {
+    const pixelMap = await this.createPixelMap(bytes);
+    try {
+      return await this.packPixelMap(pixelMap, 'image/png', 100);
+    } finally {
+      await this.releasePixelMap(pixelMap);
+    }
+  }
+
+  private defaultPngBytes(): Uint8Array {
+    return new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0,
+      0, 0, 31, 21, 196, 137, 0, 0, 0, 11, 73, 68, 65, 84, 120, 156, 99, 96, 0, 2, 0, 0, 5, 0, 1,
+      122, 94, 171, 63, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]);
   }
 
   private validateAssetFileName(inputFilename: string): string {

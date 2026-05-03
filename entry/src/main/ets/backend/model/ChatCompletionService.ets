@@ -155,6 +155,22 @@ export class ChatCompletionService {
     return this.llmLogger.raw(request);
   }
 
+  logsSettings(request: HttpRequest): HttpResponse {
+    return this.llmLogger.settings(request);
+  }
+
+  logsKeep(request: HttpRequest): HttpResponse {
+    return this.llmLogger.keepSettings(request);
+  }
+
+  logsStreamEnabled(request: HttpRequest): HttpResponse {
+    return this.llmLogger.streamEnabledSettings(request);
+  }
+
+  logsStream(request: HttpRequest): HttpResponse {
+    return this.llmLogger.stream(request);
+  }
+
   private hasMissingRequiredKey(config: ChatCompletionApiConfig): boolean {
     return config.requiresKey && config.apiKey.length === 0 && config.authorizationHeader.length === 0;
   }

@@ -10,6 +10,7 @@ import { addLocaleData, getCurrentLocale, t } from './i18n.js';
 import { debounce_timeout } from './constants.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { SimpleMutex } from './util/SimpleMutex.js';
+import { initOhosLlmApiLogs } from './ohos-llm-api-logs.js';
 
 export {
     getContext,
@@ -1933,4 +1934,5 @@ export async function initExtensions() {
     $('#third_party_extension_button').on('click', () => openThirdPartyExtensionMenu());
     $('#data_export_button').on('click', exportDataArchive);
     $('#data_restore_button').on('click', () => importDataArchive());
+    initOhosLlmApiLogs();
 }
