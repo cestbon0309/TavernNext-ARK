@@ -224,18 +224,197 @@ struct Index {
 
     try {
       const result = await this.controller.runJavaScript(`(() => {
-        const state = window.__tavernNextBackBridge;
-        if (state && typeof state.handleBack === 'function') {
-          return state.handleBack();
+        const intersectsViewport = (rect) => rect.right > 0 &&
+          rect.bottom > 0 &&
+          rect.left < window.innerWidth &&
+          rect.top < window.innerHeight;
+        const visible = (element) => {
+          if (!element) {
+            return false;
+          }
+          const style = getComputedStyle(element);
+          if (style.display === 'none' || style.visibility === 'hidden') {
+            return false;
+          }
+          const rect = element.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0 && intersectsViewport(rect);
+        };
+        const hideElement = (element) => {
+          if (!element) {
+            return false;
+          }
+          try {
+            if (window.jQuery) {
+              window.jQuery(element).stop(true, true).hide();
+            } else {
+              element.style.display = 'none';
+            }
+          } catch (_) {
+            element.style.display = 'none';
+          }
+          return true;
+        };
+        const clickIfVisible = (selector) => {
+          const elements = Array.from(document.querySelectorAll(selector)).reverse();
+          const target = elements.find(visible);
+          if (!target) {
+            return false;
+          }
+          target.click();
+          return true;
+        };
+        const hideIfVisible = (selector) => {
+          const elements = Array.from(document.querySelectorAll(selector)).reverse();
+          const target = elements.find(visible);
+          return hideElement(target);
+        };
+        const closeExtensionsMenu = () => {
+          const menu = document.querySelector('#extensionsMenu');
+          if (!visible(menu)) {
+            return false;
+          }
+          hideElement(menu);
+          const button = document.querySelector('#extensionsMenuButton');
+          if (button instanceof HTMLElement) {
+            button.blur();
+          }
+          return true;
+        };
+        const closeOptionsMenu = () => {
+          if (closeExtensionsMenu()) {
+            return true;
+          }
+          return hideIfVisible('.options-content');
+        };
+        const closeSelect2 = () => {
+          const openSelect = Array.from(document.querySelectorAll('.select2-container--open, .select2-dropdown')).find(visible);
+          if (!openSelect) {
+            return false;
+          }
+          if (window.jQuery) {
+            try {
+              window.jQuery('select.select2-hidden-accessible').select2('close');
+              return true;
+            } catch (_) {
+            }
+          }
+          document.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Escape',
+            code: 'Escape',
+            keyCode: 27,
+            which: 27,
+            bubbles: true,
+            cancelable: true
+          }));
+          return true;
+        };
+        const closeFloatingPanel = () => {
+          if (clickIfVisible('#logprobsViewerClose, #CFGClose, #ANClose')) {
+            return true;
+          }
+          const panels = Array.from(document.querySelectorAll('#movingDivs > div, .draggable, .zoomed_avatar_container, .zoomed_avatar')).reverse();
+          const panel = panels.find(visible);
+          if (!panel) {
+            return false;
+          }
+          const close = panel.querySelector('.floating_panel_close, .dragClose');
+          if (close instanceof HTMLElement && visible(close)) {
+            close.click();
+          } else {
+            panel.remove();
+          }
+          return true;
+        };
+        const toggleDrawerForContent = (drawer) => {
+          const wrapper = drawer.closest('.drawer');
+          const toggle = wrapper && wrapper.querySelector('.drawer-toggle');
+          if (toggle instanceof HTMLElement && visible(toggle)) {
+            toggle.click();
+            return true;
+          }
+          document.querySelectorAll('.openIcon:not(.drawerPinnedOpen)').forEach((icon) => {
+            icon.classList.remove('openIcon');
+            icon.classList.add('closedIcon');
+          });
+          drawer.classList.remove('openDrawer');
+          drawer.classList.add('closedDrawer');
+          return true;
+        };
+        const closeOpenDrawer = () => {
+          const drawers = Array.from(document.querySelectorAll('.drawer-content.openDrawer:not(.pinnedOpen)'))
+            .filter(visible)
+            .reverse();
+          const drawer = drawers.find((item) => !item.matches('#left-nav-panel.pinnedOpen, #right-nav-panel.pinnedOpen')) || drawers[0];
+          return drawer ? toggleDrawerForContent(drawer) : false;
+        };
+        const closeRightMenuSubview = () => clickIfVisible('#rm_button_back_from_group, #rm_button_back');
+        const closeActiveChatToWelcome = () => {
+          if (document.querySelector('#chat .welcomePanel')) {
+            return false;
+          }
+          let context = null;
+          try {
+            context = window.SillyTavern && typeof window.SillyTavern.getContext === 'function'
+              ? window.SillyTavern.getContext()
+              : null;
+          } catch (_) {
+          }
+          const hasValue = (value) => value !== undefined && value !== null && value !== '';
+          const hasTemporaryChat = context &&
+            context.name2 === 'Assistant' &&
+            Array.isArray(context.chat) &&
+            context.chat.length > 0;
+          const hasActiveChat = context &&
+            (hasValue(context.chatId) ||
+              hasValue(context.characterId) ||
+              hasValue(context.groupId) ||
+              hasTemporaryChat);
+          if (!hasActiveChat) {
+            return false;
+          }
+          const closeButtons = Array.from(document.querySelectorAll('#options [id="option_close_chat"], [id="option_close_chat"]'));
+          const closeButton = closeButtons.find((button) => button instanceof HTMLElement && !button.classList.contains('displayNone')) ||
+            closeButtons.find((button) => button instanceof HTMLElement);
+          if (!(closeButton instanceof HTMLElement)) {
+            return false;
+          }
+          closeButton.click();
+          return true;
+        };
+        const closeLegacyPopup = () => {
+          if (clickIfVisible('#dialogue_popup_cancel, #dialogue_popup_ok, #dialogue_del_mes_cancel, #select_chat_cross, #character_cross, #bulk_tag_popup_cancel')) {
+            return true;
+          }
+          return hideIfVisible('#shadow_popup, #shadow_select_chat_popup, #bulk_tag_shadow_popup, #character_popup, #select_chat_popup');
+        };
+        const closeHtmlDialog = () => {
+          const dialogs = Array.from(document.querySelectorAll('dialog.popup[open]')).reverse();
+          const dialog = dialogs.find(visible);
+          if (!dialog) {
+            return false;
+          }
+          const cancel = dialog.querySelector('.popup-button-cancel, .popup-button-close, [data-result="0"]');
+          if (cancel instanceof HTMLElement && visible(cancel)) {
+            cancel.click();
+          } else {
+            dialog.dispatchEvent(new Event('cancel', { bubbles: true, cancelable: true }));
+          }
+          return true;
+        };
+        if (closeSelect2() ||
+          closeHtmlDialog() ||
+          closeLegacyPopup() ||
+          closeOptionsMenu() ||
+          closeFloatingPanel() ||
+          closeOpenDrawer() ||
+          closeActiveChatToWelcome() ||
+          closeRightMenuSubview()) {
+          return 'handled';
         }
-        if (history.length > 1) {
-          history.back();
-          return 'history';
-        }
-        return 'exit';
+        return 'idle';
       })();`);
-      const normalized = result.replace(/"/g, '');
-      if (normalized === 'handled' || normalized === 'history') {
+      const normalized = (result ?? '').replace(/"/g, '');
+      if (normalized.startsWith('handled')) {
         return true;
       }
     } catch (_err) {
@@ -248,16 +427,27 @@ struct Index {
       }
     } catch (_err) {
     }
+
+    try {
+      const result = await this.controller.runJavaScript(`(() => {
+        const state = window.__tavernNextBackBridge;
+        if (state && typeof state.navigateBack === 'function') {
+          return state.navigateBack();
+        }
+        return 'idle';
+      })();`);
+      const normalized = (result ?? '').replace(/"/g, '');
+      if (normalized === 'history') {
+        return true;
+      }
+    } catch (_err) {
+    }
     return false;
   }
 
   private injectShellThemeProbe(): void {
     this.controller.runJavaScript(`(() => {
-      if (window.__tavernNextShellThemeProbeInstalled) {
-        window.__tavernNextShellThemeProbeReport && window.__tavernNextShellThemeProbeReport();
-        window.__tavernNextBackBridgeInstall && window.__tavernNextBackBridgeInstall();
-        return 'already-installed';
-      }
+      const shellThemeProbeAlreadyInstalled = !!window.__tavernNextShellThemeProbeInstalled;
       window.__tavernNextShellThemeProbeInstalled = true;
 
       const transparent = new Set(['', 'transparent', 'rgba(0, 0, 0, 0)']);
@@ -329,23 +519,25 @@ struct Index {
           location.href = href;
         }, true);
       };
-      new MutationObserver(schedule).observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ['style', 'class']
-      });
-      new MutationObserver(schedule).observe(document.body, {
-        attributes: true,
-        attributeFilter: ['style', 'class']
-      });
-      window.addEventListener('load', schedule);
-      window.addEventListener('resize', schedule);
-      document.addEventListener('visibilitychange', schedule);
+      if (!shellThemeProbeAlreadyInstalled) {
+        new MutationObserver(schedule).observe(document.documentElement, {
+          attributes: true,
+          attributeFilter: ['style', 'class']
+        });
+        new MutationObserver(schedule).observe(document.body, {
+          attributes: true,
+          attributeFilter: ['style', 'class']
+        });
+        window.addEventListener('load', schedule);
+        window.addEventListener('resize', schedule);
+        document.addEventListener('visibilitychange', schedule);
+        setInterval(report, 2000);
+      }
       schedule();
-      setInterval(report, 2000);
       window.__tavernNextExternalLinkBridgeInstall();
 
       window.__tavernNextBackBridgeInstall = () => {
-        if (window.__tavernNextBackBridge) {
+        if (window.__tavernNextBackBridge && window.__tavernNextBackBridge.version === 2) {
           return;
         }
 
@@ -358,7 +550,11 @@ struct Index {
             return false;
           }
           const rect = element.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0;
+          const intersectsViewport = rect.right > 0 &&
+            rect.bottom > 0 &&
+            rect.left < window.innerWidth &&
+            rect.top < window.innerHeight;
+          return rect.width > 0 && rect.height > 0 && intersectsViewport;
         };
 
         const clickIfVisible = (selector) => {
@@ -371,41 +567,108 @@ struct Index {
           return true;
         };
 
+        const pressEscape = () => {
+          const event = new KeyboardEvent('keydown', {
+            key: 'Escape',
+            code: 'Escape',
+            keyCode: 27,
+            which: 27,
+            bubbles: true,
+            cancelable: true
+          });
+          document.dispatchEvent(event);
+          return event.defaultPrevented;
+        };
+
+        const hideIfVisible = (selector) => {
+          const elements = Array.from(document.querySelectorAll(selector)).reverse();
+          const target = elements.find(visible);
+          if (!target) {
+            return false;
+          }
+          target.style.display = 'none';
+          return true;
+        };
+
+        const closeSelect2 = () => {
+          const openSelect = Array.from(document.querySelectorAll('.select2-container--open, .select2-dropdown')).find(visible);
+          if (!openSelect) {
+            return false;
+          }
+          if (window.jQuery) {
+            try {
+              window.jQuery('select.select2-hidden-accessible').select2('close');
+              return true;
+            } catch (_) {
+            }
+          }
+          return pressEscape();
+        };
+
+        const closeOptionsMenu = () => {
+          if (hideIfVisible('#extensionsMenu.options-content, .options-content')) {
+            return true;
+          }
+          return false;
+        };
+
+        const closeFloatingPanel = () => {
+          if (clickIfVisible('#logprobsViewerClose, #CFGClose, #ANClose')) {
+            return true;
+          }
+          const panels = Array.from(document.querySelectorAll('#movingDivs > div, .draggable, .zoomed_avatar_container, .zoomed_avatar')).reverse();
+          const panel = panels.find(visible);
+          if (!panel) {
+            return false;
+          }
+          const close = panel.querySelector('.floating_panel_close, .dragClose');
+          if (close instanceof HTMLElement && visible(close)) {
+            close.click();
+          } else {
+            panel.remove();
+          }
+          return true;
+        };
+
+        const toggleDrawerForContent = (drawer) => {
+          const wrapper = drawer.closest('.drawer');
+          const toggle = wrapper && wrapper.querySelector('.drawer-toggle');
+          if (toggle instanceof HTMLElement && visible(toggle)) {
+            toggle.click();
+            return true;
+          }
+
+          const icons = Array.from(document.querySelectorAll('.openIcon:not(.drawerPinnedOpen)'));
+          icons.forEach((icon) => {
+            icon.classList.remove('openIcon');
+            icon.classList.add('closedIcon');
+          });
+          drawer.classList.remove('openDrawer');
+          drawer.classList.add('closedDrawer');
+          return true;
+        };
+
         const closeOpenDrawer = () => {
           if (clickIfVisible('#rm_button_back_from_group, #rm_button_back')) {
             return true;
           }
 
-          const drawers = Array.from(document.querySelectorAll('.drawer-content.openDrawer:not(.pinnedOpen)'))
+          const drawers = Array.from(document.querySelectorAll('.drawer-content.openDrawer:not(.pinnedOpen), .drawer-content:not(.closedDrawer)'))
             .filter(visible)
             .reverse();
-          const drawer = drawers[0];
+          const drawer = drawers.find((item) => !item.matches('#left-nav-panel.pinnedOpen, #right-nav-panel.pinnedOpen')) || drawers[0];
           if (!drawer) {
             return false;
           }
 
-          const wrapper = drawer.closest('.drawer');
-          const toggle = wrapper && wrapper.querySelector('.drawer-toggle');
-          if (toggle) {
-            toggle.click();
-          } else {
-            drawer.classList.remove('openDrawer');
-            drawer.classList.add('closedDrawer');
-            document.querySelectorAll('.openIcon:not(.drawerPinnedOpen)').forEach((icon) => {
-              icon.classList.remove('openIcon');
-              icon.classList.add('closedIcon');
-            });
-          }
-          return true;
+          return toggleDrawerForContent(drawer);
         };
 
         const closeLegacyPopup = () => {
-          if (clickIfVisible('#dialogue_popup_cancel, #dialogue_popup_ok, #select_chat_cross, #character_cross')) {
+          if (clickIfVisible('#dialogue_popup_cancel, #dialogue_popup_ok, #dialogue_del_mes_cancel, #select_chat_cross, #character_cross, #bulk_tag_popup_cancel')) {
             return true;
           }
-          const shadowPopup = document.querySelector('#shadow_popup');
-          if (visible(shadowPopup)) {
-            shadowPopup.style.display = 'none';
+          if (hideIfVisible('#shadow_popup, #shadow_select_chat_popup, #bulk_tag_shadow_popup, #character_popup, #select_chat_popup')) {
             return true;
           }
           return false;
@@ -427,44 +690,68 @@ struct Index {
         };
 
         const bridge = {
-          depth: 0,
-          ignoreNextPop: false,
-          handleBack() {
-            if (closeHtmlDialog() || closeLegacyPopup() || closeOpenDrawer()) {
+          version: 2,
+          historyDepth: 0,
+          initialHref: location.href,
+          closeTopmostUi() {
+            if (closeSelect2() ||
+              closeHtmlDialog() ||
+              closeLegacyPopup() ||
+              closeOptionsMenu() ||
+              closeFloatingPanel() ||
+              closeOpenDrawer()) {
               return 'handled';
             }
-            if (bridge.depth > 0 || location.hash) {
-              bridge.ignoreNextPop = true;
+            return 'idle';
+          },
+          navigateBack() {
+            if (bridge.historyDepth > 0 || (location.href !== bridge.initialHref && history.length > 1)) {
+              bridge.historyDepth = Math.max(0, bridge.historyDepth - 1);
               history.back();
               return 'history';
             }
-            return 'exit';
+            return 'idle';
           }
         };
 
-        const originalPushState = history.pushState.bind(history);
-        const originalReplaceState = history.replaceState.bind(history);
-        history.pushState = (...args) => {
-          bridge.depth++;
-          return originalPushState(...args);
-        };
-        history.replaceState = (...args) => originalReplaceState(...args);
-
-        window.addEventListener('popstate', () => {
-          if (bridge.ignoreNextPop) {
-            bridge.ignoreNextPop = false;
-          }
-          bridge.depth = Math.max(0, bridge.depth - 1);
-        });
-        window.addEventListener('hashchange', () => {
-          bridge.depth = Math.max(bridge.depth, location.hash ? 1 : 0);
-        });
-
-        bridge.depth = location.hash ? 1 : 0;
+        if (!window.__tavernNextBackBridgeHistoryPatched) {
+          window.__tavernNextBackBridgeHistoryPatched = true;
+          const originalPushState = history.pushState.bind(history);
+          const originalReplaceState = history.replaceState.bind(history);
+          history.pushState = (...args) => {
+            const before = location.href;
+            const result = originalPushState(...args);
+            if (location.href !== before) {
+              const state = window.__tavernNextBackBridge;
+              if (state) {
+                state.historyDepth = Math.max(0, state.historyDepth || 0) + 1;
+              }
+            }
+            return result;
+          };
+          history.replaceState = (...args) => originalReplaceState(...args);
+          window.addEventListener('popstate', () => {
+            const state = window.__tavernNextBackBridge;
+            if (state) {
+              state.historyDepth = Math.max(0, state.historyDepth || 0);
+            }
+          });
+          window.addEventListener('hashchange', () => {
+            const state = window.__tavernNextBackBridge;
+            if (!state) {
+              return;
+            }
+            if (location.href === state.initialHref) {
+              state.historyDepth = 0;
+            } else {
+              state.historyDepth = Math.max(1, state.historyDepth || 0);
+            }
+          });
+        }
         window.__tavernNextBackBridge = bridge;
       };
       window.__tavernNextBackBridgeInstall();
-      return 'installed';
+      return shellThemeProbeAlreadyInstalled ? 'already-installed' : 'installed';
     })();`).catch((_err: Error) => {
     });
   }
