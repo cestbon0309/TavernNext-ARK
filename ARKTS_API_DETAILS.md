@@ -22,7 +22,7 @@
 - 多用户明确暂缓：当前 App 形态不需要多用户运行模型，后端固定使用 `data/default-user/`；`/api/users/*` 只保留为本地账号弹窗、密码校验和备份恢复的兼容层，不启用真实 session、cookie-session、当前用户切换和权限中间件。
 - 模型 provider 仍不完整：OpenAI/OpenAI-compatible `openai` 和 `custom` 主路径已可用；text-completions、NovelAI、Horde、Stable Diffusion 等已有基础代理或查询路由，但还没有完整对齐原版 provider 行为、错误格式、请求取消和流式转换。
 - Tokenizer 本地路由已基本补齐：剩余风险主要是特殊 token、异常 token id、chunks 展示和包体积等边界细节；不再使用 byte 估算承担这些模型的主路径计数。
-- Vector 已有最小实现：支持本地 JSON 索引、insert/list/delete/query/query-multi/purge，以及部分 embedding provider 调用和 hash fallback；但尚未对齐原版 `vectra.LocalIndex` 的完整行为和性能。
+- Vector 已有可用实现：支持本地 JSON 索引、insert/list/delete/query/query-multi/purge、批量 remote embedding provider 调用和 hash fallback；已对齐 OpenAI-compatible、Cohere、Ollama、Extras、NomicAI、Google/MakerSuite、Vertex 等常用 embedding 请求/响应形状，但尚未对齐原版 `vectra.LocalIndex` 的完整行为和性能。
 - Git 后续增强：私有仓库认证、SSH、submodule、非 fast-forward merge 冲突处理、hooks 执行仍暂缓。
 - settings snapshots、presets、themes、moving UI、assets/content-manager、聊天备份等管理类接口仍需后续补齐。
 
@@ -2619,9 +2619,9 @@ UI 截图：
 
 - 已有本地账号兼容 API 和密码校验；多用户系统明确暂缓，当前固定使用 `default-user`，不支持真实多用户会话、cookie-session、当前用户切换、权限中间件和真实 CSRF。
 - multipart 解析已支持，角色卡 JSON/PNG 导入、头像上传、背景上传、sprites 上传、聊天导入已接入；世界书导入等 multipart 接口仍需补。
-- OpenAI/OpenAI-compatible chat-completions 已有最小可用代理，支持 `openai` 和 `custom` 来源、状态检查、非流式生成和流式 SSE 透传；其他 provider 或外部服务仍未完整对齐。
+- Chat-completions provider 主路径已覆盖 OpenAI/OpenAI-compatible、OpenRouter、DeepSeek、Moonshot、Z.AI、NanoGPT、Chutes、Groq、SiliconFlow、Claude、Gemini/MakerSuite、Vertex AI、Cohere，支持常用 payload builder、状态检查、非流式归一化、关键流式转换、prompt cache、取消和 LLM API 文件日志；其他外部服务仍未完整对齐。
 - SillyTavern 本地 tokenizer 路由已接入 native MikTik；上下文裁剪和模型精确 token 计数已覆盖 GPT-2、Llama/Llama 3、Mistral、Yi、Gemma、Jamba、Nerdstash、Qwen2、Command、Nemo、Claude、DeepSeek 和 OpenAI/tiktoken。剩余是特殊 token/chunks/包体积等边界优化。
-- Vector 已有最小本地 JSON 索引和 embedding/hash fallback，但还不是原版 `vectra.LocalIndex` 等价实现。
+- Vector 已有本地 JSON 索引、批量 remote embedding provider 调用和 hash fallback；OpenAI-compatible、Cohere、Ollama、Extras、NomicAI、Google/MakerSuite、Vertex 等常用请求形状已补，但还不是原版 `vectra.LocalIndex` 等价实现。
 - 背景、头像、聊天图片、附件、sprites、缩略图和 `image-metadata` 已接入本地文件实现；其中图片处理依赖 Harmony `ImageKit`，与 Node/Jimp 在极端格式上的像素级结果可能存在细微差异。
 - `extensions/discover` 已扫描 rawfile 系统扩展和本地/全局第三方扩展目录；扩展 Git 已支持 HTTPS 公共仓库，但私有仓库认证、SSH、submodule、merge 冲突处理和 hooks 仍暂缓。
 - `users/backup` 已使用 Harmony zlib 生成 zip 并调用 ShareKit；扩展页新入口已适配 OHOS JSON/ShareKit 结果，但 rawfile `user.js` 账号弹窗里的备份按钮仍保留浏览器 blob 下载逻辑。
@@ -2952,7 +2952,7 @@ avatar
 - `POST /api/tokenizers/remote/textgenerationwebui/encode`：按 tabby/koboldcpp/llamacpp/vllm/aphrodite 等 API 类型转发远程 encode/tokenize。
 - `/api/vector/insert`、`list`、`delete`、`query`、`query-multi`、`purge`、`purge-all`。
 - vector 索引写入 `data/default-user/vectors/<source>/<collectionId>/<model>/index.json`。
-- embedding 支持 OpenAI-compatible、Mistral、OpenRouter、ElectronHub、NanoGPT、SiliconFlow、Chutes、llamacpp、vllm、ollama、extras、cohere 等基础 endpoint；请求失败或未配置时回退到本地 hash vector。
+- embedding 支持 OpenAI-compatible、Mistral、TogetherAI、OpenRouter、ElectronHub、NanoGPT、SiliconFlow、Chutes、NomicAI、llamacpp、vllm、ollama、extras、cohere、MakerSuite/Google、Vertex AI 等常用 endpoint；insert 会按 10 条一批请求远端；请求失败或未配置时回退到本地 hash vector。
 
 仍缺失或不完善：
 
@@ -2961,7 +2961,7 @@ avatar
   - SentencePiece/web tokenizer chunks 展示在更多样本文本下是否完全一致
   - 全部 gzip tokenizer 资源内置后的 HAP 体积取舍
 - 原版 `vectra.LocalIndex` 等价索引、性能优化、大数据量索引格式和精确排序行为。
-- 各 embedding provider 的完整请求参数、鉴权细节、错误透传和前端配置字段对齐。
+- 各 embedding provider 的完整错误透传、前端配置字段边界和真实服务回归；Vertex embedding full service account OAuth 仍未接入。
 
 ### 17.9 模型代理和外部服务
 

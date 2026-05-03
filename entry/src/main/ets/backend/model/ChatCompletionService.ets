@@ -12,18 +12,22 @@ import { PayloadBuilderRegistry } from './payload/PayloadBuilderRegistry';
 import { parseChatCompletionSource } from './SourceRegistry';
 import { asBooleanValue } from './JsonHelpers';
 import { PromptCachingService } from './PromptCaching';
+import { LlmApiLogger } from './LlmApiLogger';
 
 export class ChatCompletionService {
   private configResolver: ChatCompletionConfigResolver;
   private payloadBuilders: PayloadBuilderRegistry = new PayloadBuilderRegistry();
   private repository: ChatCompletionRepository = new ChatCompletionRepository();
   private promptCaching: PromptCachingService;
+  private llmLogger: LlmApiLogger;
   private activeStreams: Record<string, CancellationToken | null> = {};
   private activeGenerations: Record<string, CancellationToken | null> = {};
 
   constructor(secrets: SecretsService, dirs: DataDirectories, store: FileStore) {
     this.configResolver = new ChatCompletionConfigResolver(secrets);
     this.promptCaching = new PromptCachingService(dirs, store);
+    this.llmLogger = new LlmApiLogger(store, dirs);
+    this.repository.setLogger(this.llmLogger);
   }
 
   async generate(request: HttpRequest): Promise<HttpResponse> {
@@ -137,6 +141,18 @@ export class ChatCompletionService {
     } catch (_err) {
       return HttpResponse.json([]);
     }
+  }
+
+  logsIndex(request: HttpRequest): HttpResponse {
+    return this.llmLogger.index(request);
+  }
+
+  logPreview(request: HttpRequest): HttpResponse {
+    return this.llmLogger.preview(request);
+  }
+
+  logRaw(request: HttpRequest): HttpResponse {
+    return this.llmLogger.raw(request);
   }
 
   private hasMissingRequiredKey(config: ChatCompletionApiConfig): boolean {

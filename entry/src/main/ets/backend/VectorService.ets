@@ -3,7 +3,7 @@ import { FileEntry, FileStore } from './FileStore';
 import { SecretsService } from './SecretsService';
 import { HttpRequest, HttpResponse, JsonArray, JsonRecord, emptyJsonRecord } from './HttpTypes';
 import { RemoteHttpClient } from './RemoteHttpClient';
-import { asArray, asNumber, asString, bodyAsRecord, parseJsonRecord } from './JsonUtils';
+import { asArray, asNumber, asRecord, asString, bodyAsRecord, parseJsonRecord } from './JsonUtils';
 import { joinPath, sanitizeFileName } from './PathUtils';
 
 class VectorItem {
@@ -169,60 +169,72 @@ export class VectorService {
   }
 
   private async getBatchVectors(source: string, settings: JsonRecord, texts: string[], isQuery: boolean): Promise<number[][]> {
+    if (texts.length === 0) {
+      return [];
+    }
+    if (source === 'webllm' || source === 'koboldcpp') {
+      const output: number[][] = [];
+      const embeddings = settings['embeddings'];
+      const records = embeddings !== null && embeddings !== undefined && !Array.isArray(embeddings) &&
+        typeof embeddings === 'object' ? embeddings as JsonRecord : emptyJsonRecord();
+      for (const text of texts) {
+        const vector = records[text];
+        output.push(Array.isArray(vector) ? this.numbers(vector) : this.hashVector(text));
+      }
+      return output;
+    }
+    if (source === 'transformers') {
+      return texts.map((text: string): number[] => this.hashVector(text));
+    }
+    const endpoint = this.embeddingEndpoint(source, settings, isQuery);
+    if (endpoint.url.length === 0) {
+      return texts.map((text: string): number[] => this.hashVector(text));
+    }
     const output: number[][] = [];
-    for (const text of texts) {
-      output.push(await this.getVector(source, settings, text, isQuery));
+    const batchSize = 10;
+    for (let index = 0; index < texts.length; index += batchSize) {
+      const batch = texts.slice(index, index + batchSize);
+      const vectors = await this.remoteBatchVectors(source, endpoint, batch, isQuery);
+      for (let itemIndex = 0; itemIndex < batch.length; itemIndex += 1) {
+        const vector = itemIndex < vectors.length ? vectors[itemIndex] : [];
+        output.push(vector.length > 0 ? vector : this.hashVector(batch[itemIndex]));
+      }
     }
     return output;
   }
 
   private async getVector(source: string, settings: JsonRecord, text: string, isQuery: boolean): Promise<number[]> {
-    if (source === 'webllm' || source === 'koboldcpp') {
-      const embeddings = settings['embeddings'];
-      if (embeddings !== null && embeddings !== undefined && !Array.isArray(embeddings) && typeof embeddings === 'object') {
-        const record = embeddings as JsonRecord;
-        const vector = record[text];
-        if (Array.isArray(vector)) {
-          return this.numbers(vector);
-        }
-      }
-    }
-    if (source === 'transformers') {
-      return this.hashVector(text);
-    }
-    return this.remoteVector(source, settings, text, isQuery);
+    const vectors = await this.getBatchVectors(source, settings, [text], isQuery);
+    return vectors.length > 0 ? vectors[0] : this.hashVector(text);
   }
 
-  private async remoteVector(source: string, settings: JsonRecord, text: string, isQuery: boolean): Promise<number[]> {
-    const endpoint = this.embeddingEndpoint(source, settings, isQuery);
-    if (endpoint.url.length === 0) {
-      return this.hashVector(text);
-    }
-    const request = emptyJsonRecord();
-    request['input'] = text;
-    request['model'] = endpoint.model;
+  private async remoteBatchVectors(source: string, endpoint: EmbeddingEndpoint, texts: string[],
+    isQuery: boolean): Promise<number[][]> {
+    const request = this.embeddingRequest(source, endpoint, texts, isQuery);
     try {
       const result = await this.http.postJson(endpoint.url, request, endpoint.headers, 120000);
       if (result.statusCode < 200 || result.statusCode >= 300) {
-        return this.hashVector(text);
+        return [];
       }
       const data = parseJsonRecord(result.text);
-      const vector = this.extractEmbedding(data);
-      return vector.length > 0 ? vector : this.hashVector(text);
+      return this.extractEmbeddings(source, data);
     } catch (_err) {
-      return this.hashVector(text);
+      return [];
     }
   }
 
   private embeddingEndpoint(source: string, settings: JsonRecord, isQuery: boolean): EmbeddingEndpoint {
     const endpoint = new EmbeddingEndpoint();
-    endpoint.model = asString(settings['model']) || 'text-embedding-3-small';
+    endpoint.model = this.embeddingModel(source, settings);
     endpoint.headers['Content-Type'] = 'application/json';
     switch (source) {
+      case 'nomicai':
+        endpoint.url = 'https://api-atlas.nomic.ai/v1/embedding/text';
+        endpoint.headers['Authorization'] = `Bearer ${this.secrets.activeSecretValue('api_key_nomicai')}`;
+        break;
       case 'openai':
       case 'togetherai':
       case 'mistral':
-      case 'chutes':
       case 'nanogpt':
       case 'siliconflow':
       case 'openrouter':
@@ -230,12 +242,16 @@ export class VectorService {
         endpoint.url = this.http.joinUrl(this.embeddingBase(source, settings), '/embeddings');
         endpoint.headers['Authorization'] = `Bearer ${this.embeddingKey(source)}`;
         break;
+      case 'chutes':
+        endpoint.url = this.http.joinUrl(`https://${endpoint.model}.chutes.ai/v1`, '/embeddings');
+        endpoint.headers['Authorization'] = `Bearer ${this.embeddingKey(source)}`;
+        break;
       case 'llamacpp':
       case 'vllm':
-        endpoint.url = this.http.joinUrl(asString(settings['apiUrl']), '/v1/embeddings');
+        endpoint.url = this.http.joinUrl(this.trimV1(asString(settings['apiUrl'])), '/v1/embeddings');
         break;
       case 'ollama':
-        endpoint.url = this.http.joinUrl(asString(settings['apiUrl']), '/api/embeddings');
+        endpoint.url = this.http.joinUrl(asString(settings['apiUrl']), '/api/embed');
         break;
       case 'extras':
         endpoint.url = this.http.joinUrl(asString(settings['extrasUrl']), '/api/embeddings/compute');
@@ -243,16 +259,91 @@ export class VectorService {
           endpoint.headers['Authorization'] = `Bearer ${asString(settings['extrasKey'])}`;
         }
         break;
+      case 'palm':
+      case 'makersuite':
+        endpoint.url = this.withGoogleKey(this.http.joinUrl('https://generativelanguage.googleapis.com',
+          `/v1beta/models/${endpoint.model}:batchEmbedContents`), this.secrets.activeSecretValue('api_key_makersuite'));
+        break;
+      case 'vertexai':
+        endpoint.url = this.http.joinUrl(this.vertexBase(settings), `/publishers/google/models/${endpoint.model}:predict`);
+        const vertexKey = this.secrets.activeSecretValue('api_key_vertexai');
+        if (vertexKey.length > 0) {
+          endpoint.url = this.withGoogleKey(endpoint.url, vertexKey);
+        }
+        break;
       case 'cohere':
-        endpoint.url = 'https://api.cohere.ai/v1/embed';
+        endpoint.url = 'https://api.cohere.ai/v2/embed';
         endpoint.headers['Authorization'] = `Bearer ${this.secrets.activeSecretValue('api_key_cohere')}`;
-        endpoint.headers['input_type'] = isQuery ? 'search_query' : 'search_document';
         break;
       default:
         endpoint.url = '';
         break;
     }
     return endpoint;
+  }
+
+  private embeddingRequest(source: string, endpoint: EmbeddingEndpoint, texts: string[], isQuery: boolean): JsonRecord {
+    const request = emptyJsonRecord();
+    switch (source) {
+      case 'extras':
+        request['text'] = texts.length === 1 ? texts[0] : texts;
+        return request;
+      case 'cohere':
+        request['texts'] = texts;
+        request['model'] = endpoint.model;
+        request['embedding_types'] = ['float'];
+        request['input_type'] = isQuery ? 'search_query' : 'search_document';
+        request['truncate'] = 'END';
+        return request;
+      case 'ollama':
+        request['input'] = texts;
+        request['model'] = endpoint.model;
+        request['truncate'] = true;
+        return request;
+      case 'nomicai':
+        request['texts'] = texts;
+        request['model'] = endpoint.model;
+        return request;
+      case 'palm':
+      case 'makersuite':
+        const googleRequests: JsonArray = [];
+        for (const text of texts) {
+          const content = emptyJsonRecord();
+          content['parts'] = [this.textPart(text)];
+          const row = emptyJsonRecord();
+          row['model'] = `models/${endpoint.model}`;
+          row['content'] = content;
+          googleRequests.push(row);
+        }
+        request['requests'] = googleRequests;
+        return request;
+      case 'vertexai':
+        const instances: JsonArray = [];
+        for (const text of texts) {
+          const row = emptyJsonRecord();
+          row['content'] = text;
+          instances.push(row);
+        }
+        request['instances'] = instances;
+        return request;
+      case 'llamacpp':
+        request['input'] = texts;
+        return request;
+      case 'chutes':
+        request['input'] = texts;
+        request['model'] = null;
+        return request;
+      default:
+        request['input'] = texts;
+        request['model'] = endpoint.model;
+        return request;
+    }
+  }
+
+  private textPart(text: string): JsonRecord {
+    const part = emptyJsonRecord();
+    part['text'] = text;
+    return part;
   }
 
   private embeddingBase(source: string, settings: JsonRecord): string {
@@ -280,6 +371,38 @@ export class VectorService {
     return 'https://api.openai.com/v1';
   }
 
+  private embeddingModel(source: string, settings: JsonRecord): string {
+    const model = asString(settings['model']);
+    if (model.length > 0) {
+      return model;
+    }
+    switch (source) {
+      case 'openai':
+        return 'text-embedding-ada-002';
+      case 'togetherai':
+        return 'togethercomputer/m2-bert-80M-32k-retrieval';
+      case 'mistral':
+        return 'mistral-embed';
+      case 'openrouter':
+        return 'openai/text-embedding-3-large';
+      case 'electronhub':
+      case 'nanogpt':
+        return 'text-embedding-3-small';
+      case 'chutes':
+        return 'chutes-qwen-qwen3-embedding-8b';
+      case 'siliconflow':
+        return 'Qwen/Qwen3-Embedding-0.6B';
+      case 'nomicai':
+        return 'nomic-embed-text-v1.5';
+      case 'palm':
+      case 'makersuite':
+      case 'vertexai':
+        return 'text-embedding-005';
+      default:
+        return 'text-embedding-3-small';
+    }
+  }
+
   private embeddingKey(source: string): string {
     switch (source) {
       case 'openrouter':
@@ -295,29 +418,123 @@ export class VectorService {
       case 'mistral':
         return this.secrets.activeSecretValue('api_key_mistralai');
       case 'togetherai':
-        return this.secrets.activeSecretValue('api_key_openai');
+        return this.secrets.activeSecretValue('api_key_togetherai');
       default:
         return this.secrets.activeSecretValue('api_key_openai');
     }
   }
 
-  private extractEmbedding(data: JsonRecord): number[] {
+  private extractEmbeddings(source: string, data: JsonRecord): number[][] {
+    if (source === 'extras') {
+      const embedding = data['embedding'];
+      if (Array.isArray(embedding)) {
+        const values: JsonArray = embedding;
+        if (values.length > 0 && Array.isArray(values[0])) {
+          const rows: number[][] = [];
+          for (let index = 0; index < values.length; index += 1) {
+            const row: Object | string | number | boolean | null = values[index];
+            if (Array.isArray(row)) {
+              rows.push(this.numbers(row));
+            }
+          }
+          return rows;
+        }
+        return [this.numbers(values)];
+      }
+    }
+    if (source === 'cohere') {
+      const embeddings = asRecord(data['embeddings']);
+      const rows = embeddings['float'];
+      if (Array.isArray(rows)) {
+        return this.numberRows(rows);
+      }
+    }
+    if (source === 'ollama' || source === 'nomicai') {
+      const rows = data['embeddings'];
+      if (Array.isArray(rows)) {
+        return this.numberRows(rows);
+      }
+    }
+    if (source === 'palm' || source === 'makersuite') {
+      const rows = data['embeddings'];
+      if (Array.isArray(rows)) {
+        const output: number[][] = [];
+        for (const row of rows as JsonArray) {
+          if (row !== null && !Array.isArray(row) && typeof row === 'object') {
+            output.push(this.numbers(asArray((row as JsonRecord)['values'])));
+          }
+        }
+        return output;
+      }
+    }
+    if (source === 'vertexai') {
+      const rows = data['predictions'];
+      if (Array.isArray(rows)) {
+        const output: number[][] = [];
+        for (const row of rows as JsonArray) {
+          if (row !== null && !Array.isArray(row) && typeof row === 'object') {
+            const embeddings = asRecord((row as JsonRecord)['embeddings']);
+            output.push(this.numbers(asArray(embeddings['values'])));
+          }
+        }
+        return output;
+      }
+    }
     const rows = data['data'];
     if (Array.isArray(rows) && rows.length > 0) {
       const values = rows as JsonArray;
-      const first = values[0];
-      if (first !== null && !Array.isArray(first) && typeof first === 'object') {
-        const embedding = (first as JsonRecord)['embedding'];
-        if (Array.isArray(embedding)) {
-          return this.numbers(embedding);
+      const records: JsonRecord[] = [];
+      for (const value of values) {
+        if (value !== null && !Array.isArray(value) && typeof value === 'object') {
+          records.push(value as JsonRecord);
         }
       }
+      records.sort((left: JsonRecord, right: JsonRecord): number => asNumber(left['index']) - asNumber(right['index']));
+      const output: number[][] = [];
+      for (const record of records) {
+        output.push(this.numbers(asArray(record['embedding'])));
+      }
+      return output;
     }
     const embedding = data['embedding'];
     if (Array.isArray(embedding)) {
-      return this.numbers(embedding);
+      return [this.numbers(embedding)];
     }
     return [];
+  }
+
+  private numberRows(rows: JsonArray): number[][] {
+    const output: number[][] = [];
+    for (const row of rows) {
+      if (Array.isArray(row)) {
+        output.push(this.numbers(row));
+      }
+    }
+    return output;
+  }
+
+  private trimV1(value: string): string {
+    const trimmed = this.http.normalizeBaseUrl(value);
+    return trimmed.endsWith('/v1') ? trimmed.slice(0, trimmed.length - 3) : trimmed;
+  }
+
+  private withGoogleKey(url: string, key: string): string {
+    if (key.length === 0) {
+      return url;
+    }
+    return url.includes('?') ? `${url}&key=${encodeURIComponent(key)}` : `${url}?key=${encodeURIComponent(key)}`;
+  }
+
+  private vertexBase(settings: JsonRecord): string {
+    const region = asString(settings['vertexai_region']) || asString(settings['region']) || 'us-central1';
+    const projectId = asString(settings['vertexai_express_project_id']) || asString(settings['projectId']);
+    if (projectId.length === 0) {
+      return region === 'global' ? 'https://aiplatform.googleapis.com/v1' :
+        `https://${region}-aiplatform.googleapis.com/v1`;
+    }
+    const host = region === 'global' ? 'https://aiplatform.googleapis.com' :
+      `https://${region}-aiplatform.googleapis.com`;
+    return `${host}/v1/projects/${projectId}/locations/${region}`;
   }
 
   private indexPath(collectionId: string, source: string, settings: JsonRecord): string {

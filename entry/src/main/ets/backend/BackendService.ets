@@ -337,6 +337,14 @@ export class BackendService {
     this.server.route('POST', '/api/horde/user-info', async () => await this.modelProxy.hordeUserInfo());
     this.server.route('POST', '/api/openai/models', async () => await this.modelProxy.openAiModelList('openai'));
     this.server.route('POST', '/api/openrouter/models', async () => await this.modelProxy.openAiModelList('openrouter'));
+    this.server.route('GET', '/api/dev/llm-api-logs', async (request) => this.modelProxy.llmApiLogsIndex(request));
+    this.server.route('POST', '/api/dev/llm-api-logs', async (request) => this.modelProxy.llmApiLogsIndex(request));
+    this.server.route('GET', '/api/dev/llm-api-logs/preview',
+      async (request) => this.modelProxy.llmApiLogPreview(request));
+    this.server.route('POST', '/api/dev/llm-api-logs/preview',
+      async (request) => this.modelProxy.llmApiLogPreview(request));
+    this.server.route('GET', '/api/dev/llm-api-logs/raw', async (request) => this.modelProxy.llmApiLogRaw(request));
+    this.server.route('POST', '/api/dev/llm-api-logs/raw', async (request) => this.modelProxy.llmApiLogRaw(request));
     this.server.route('POST', '/api/sd/ping', async (request) => await this.modelProxy.sdProxy(request, '/sdapi/v1/progress'));
     this.server.route('POST', '/api/sd/models', async (request) => await this.modelProxy.sdProxy(request, '/sdapi/v1/sd-models'));
     this.server.route('POST', '/api/sd/samplers',

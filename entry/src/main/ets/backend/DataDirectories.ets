@@ -76,6 +76,7 @@ export class DataDirectories {
   storageRoot: string;
   cacheRoot: string;
   characterCacheRoot: string;
+  llmApiLogRoot: string;
   exportRoot: string;
   characterExportRoot: string;
   restoreRoot: string;
@@ -89,6 +90,7 @@ export class DataDirectories {
     this.storageRoot = joinPath(this.dataRoot, '_storage');
     this.cacheRoot = joinPath(this.dataRoot, '_cache');
     this.characterCacheRoot = joinPath(this.cacheRoot, 'characters');
+    this.llmApiLogRoot = joinPath(this.cacheRoot, 'llm-api-logs');
     this.exportRoot = joinPath(filesDir, 'exports');
     this.characterExportRoot = joinPath(this.exportRoot, 'characters');
     this.restoreRoot = joinPath(filesDir, '_restore');
@@ -107,6 +109,7 @@ export class DataDirectories {
     this.store.ensureDir(this.storageRoot);
     this.store.ensureDir(this.cacheRoot);
     this.store.ensureDir(this.characterCacheRoot);
+    this.store.ensureDir(this.llmApiLogRoot);
     this.ensureUserDirectories(this.defaultUser);
     this.ensureRootFile('cookie-secret.txt', this.generateCookieSecret());
 

@@ -228,6 +228,18 @@ export class ModelProxyService {
     return this.chatCompletions.modelList(source);
   }
 
+  llmApiLogsIndex(request: HttpRequest): HttpResponse {
+    return this.chatCompletions.logsIndex(request);
+  }
+
+  llmApiLogPreview(request: HttpRequest): HttpResponse {
+    return this.chatCompletions.logPreview(request);
+  }
+
+  llmApiLogRaw(request: HttpRequest): HttpResponse {
+    return this.chatCompletions.logRaw(request);
+  }
+
   private textCompletionModelsPath(apiType: string): string {
     switch (apiType) {
       case 'dreamgen':

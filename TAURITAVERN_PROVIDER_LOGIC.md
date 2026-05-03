@@ -1075,11 +1075,11 @@ entry/src/main/ets/backend/model/
 
 - Prompt post processing 已迁移 `none/merge/merge_tools/semi/semi_tools/strict/strict_tools/single`，后续主要需要真实请求样例回归。
 - Prompt caching 已迁移 plan、digest、cache_control、持久化快照、usage 日志；TTL 默认按 TauriTavern 从 settings 读取，默认 off。
-- LLM API logging 已有轻量 source/endpoint/model/stream/base 日志与 prompt cache usage 日志，但尚未做到 TauriTavern 的完整 request/response/readable stream 文件日志。
+- LLM API logging 已补 ArkTS 文件日志：每次 generate 会写入最近 5 条 `index/meta/request/response`，保存 raw JSON 或 raw SSE，并生成 request/response readable 预览；新增 `/api/dev/llm-api-logs`、`/preview`、`/raw` 便于调试查看。和 TauriTavern 相比，当前还没有前端实时事件订阅和可配置 keep 数量。
 - Claude 已补常用 model contract，但仍需要用真实新旧 Claude 模型做 sampling/thinking/assistant prefill 的边界回归。
 - Gemini/Vertex 已补常用多模态、function output、Gemini 2.5/3 thinking 映射；仍需要用真实 Gemini/Vertex 端点做全路径回归。
 - OpenAI Responses 和 Gemini Interactions 的非流式已做基础归一化，流式已转换成 OpenAI chat completion chunk；还需要更多真实 provider 回归样例。
-- Custom YAML 解析仍是简化实现，不等价于 Rust `serde_yaml`。
+- Custom YAML/JSON override 解析已增强：JSON 优先，YAML 支持常用顶层/嵌套 map、list、inline map/list、引号、布尔/null/数字和行内注释，可覆盖 include/exclude body/header 的常见形状；仍不是完整 `serde_yaml` 等价实现，复杂 anchors、merge keys、多行 block scalar 暂不支持。
 - Vertex AI full service account OAuth 已实现 JWT/OAuth access token 流程；需要在真机/模拟器上用真实 service account 验证 CryptoFramework 的 RSA 算法名兼容性。
 
 验证状态：
@@ -1100,6 +1100,8 @@ entry/src/main/ets/backend/model/
 - [x] OpenAI Responses / Gemini Interactions：补原生 SSE 到 OpenAI chat chunk 的流式转换。
 - [x] Prompt caching：补 Claude/OpenRouter/NanoGPT cache plan、digest、cache_control 插入和 usage 记录。
 - [x] 取消、日志、错误映射：补 generation/stream cancel registry、LLM API readable logs、上游错误分类。
+- [x] Custom overrides：补常用 YAML/JSON include/exclude body/header 解析。
+- [x] Vector embedding provider：补 SillyTavern 常用 provider 请求形状和批量 embedding。
 
 迁移日志：
 
@@ -1114,3 +1116,6 @@ entry/src/main/ets/backend/model/
 - 2026-05-03：补齐 Vertex AI full service account OAuth：新增 `VertexAiAuth.ets`，解析 `vertexai_service_account_json`，用 HarmonyOS `cryptoFramework` 导入 PEM private key、生成 RS256 JWT assertion，请求 `oauth2.googleapis.com/token`，并按 service account JSON 的 SHA256 digest 缓存 access token；`ChatCompletionConfigResolver.resolveGenerateConfig()` 改为 async，full 模式现在使用 `Authorization: Bearer <access_token>` 和 service account 内的 `project_id` 拼 Vertex base URL。HAP 构建通过。限制：RSA 签名算法名已通过 ArkTS 编译，仍需要用真实 service account 在模拟器/真机验证运行时兼容性。
 - 2026-05-03：补齐 prompt cache 持久化与 usage 日志：`PromptCaching.ets` 现在从请求字段或 `default-user/settings.json` 的 `models.claude.prompt_cache_ttl` 读取 TTL，默认 off；支持 `5m/1h`，拒绝自动缓存与手动 `cache_control` 混用；Claude/OpenRouter digest snapshot 写入 `data/_cache/prompt-cache/*.json`；NanoGPT Claude 使用 `{ enabled: true, ttl }` 形状。`RemoteHttpClient.streamPostJsonWithEventHook()` 能在保持 SSE 原样透传时旁路解析 `data:` 事件，`ChatCompletionRepository` 会记录 `cache_creation_input_tokens/cache_read_input_tokens/input_tokens`。HAP 构建通过。
 - 2026-05-03：新增 `PROVIDER_BEHAVIOR_VALIDATION.md`，记录 OpenAI-compatible SSE 透传、OpenAI Responses/Gemini Interactions stream chunk 转换、Claude/OpenRouter/NanoGPT prompt cache、Vertex full OAuth 的验证样例和期望观察点，作为后续真实 provider 回归入口。
+- 2026-05-03：新增 `LlmApiLogger.ets` 并接入 `ChatCompletionRepository`。非流式请求记录原始上游 JSON、归一化 readable response 和错误信息；流式请求记录原始 SSE，普通 OpenAI-compatible 透传保持不变，Responses/Interactions 记录上游 raw SSE，同时从转换后的 OpenAI chunk 提取 readable 文本。日志写入 `data/_cache/llm-api-logs/`，默认保留最近 5 条，并通过 `/api/dev/llm-api-logs`、`/api/dev/llm-api-logs/preview?id=<id>`、`/api/dev/llm-api-logs/raw?id=<id>` 查看。HAP 构建通过。限制：尚未实现 TauriTavern 的 UI 事件订阅和 keep 数量设置。
+- 2026-05-03：`CustomParameters.ets` 从简单 `key: value` parser 升级为常用 YAML/JSON override parser：支持嵌套 map、list、inline map/list、quoted string、bool/null/number、注释 stripping 和 exclude key list；继续保持 JSON 优先。HAP 构建通过。限制：不实现完整 YAML anchors、merge keys、多行 block scalar。
+- 2026-05-03：`VectorService.ets` 对齐原版 SillyTavern embedding provider 形状：insert 改为 10 条一批生成 embedding；OpenAI-compatible/Mistral/TogetherAI/OpenRouter/ElectronHub/NanoGPT/SiliconFlow/Chutes 使用批量 `/embeddings`；Cohere 改为 v2 `/embed` + `texts/embedding_types/input_type/truncate`；Ollama 改为 `/api/embed`；Extras 使用 `{ text }`；NomicAI、MakerSuite/Google、Vertex AI 增加基础 embedding 请求与响应解析；llamacpp/vllm 去掉重复 `/v1` 后拼 `/v1/embeddings`。失败或未配置仍回退本地 hash vector。HAP 构建通过。限制：本地索引仍是 JSON + cosine scan，不是 `vectra.LocalIndex` 性能等价实现；Vertex embedding 只覆盖 express API key 基础路径，未复用 full service account OAuth。

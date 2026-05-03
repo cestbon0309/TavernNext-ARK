@@ -20,7 +20,8 @@ http://127.0.0.1:8000
 - `/version` 现在返回 SillyTavern 兼容 agent，例如 `SillyTavern:1.17.0:TavernNext-OHOS`，用于通过第三方扩展的 `minimum_client_version` 检查。
 - OpenAI chat-completions 最小可用代理：支持 `openai` 和 `custom` 两种来源，`status` 请求 `/v1/models`，`generate` 请求 `/v1/chat/completions`，支持非流式 JSON 和流式 `text/event-stream` 透传。
 - Tokenizer native bridge：native `libtavern_tokenizer.so` 基于 Rust `miktik`，已接管 SillyTavern 本地 tokenizer 路由的真实 encode/decode/count，覆盖 OpenAI/tiktoken、GPT-2、旧 OpenAI text/embedding 模型、Claude、DeepSeek、Gemma、Llama/Llama 3、Mistral、Yi、Jamba、Nerdstash/Nerdstash v2、Qwen2、Command-R/Command-A 和 Nemo；`/api/tokenizers/openai/count` 会按原版模型分支分别走 OpenAI chat overhead、Claude-style prompt 计数或 SentencePiece flatten 计数。
-- Vector 最小实现：本地 JSON 索引、insert/list/delete/query/query-multi/purge、部分 embedding provider 调用和 hash fallback。
+- Vector 可用实现：本地 JSON 索引、insert/list/delete/query/query-multi/purge、批量 remote embedding provider 调用和 hash fallback；已对齐 OpenAI-compatible、Cohere、Ollama、Extras、NomicAI、Google/MakerSuite、Vertex 等常用 embedding 请求/响应形状。
+- Provider 调试日志：chat-completion generate 会把最近 5 次请求写到 `data/_cache/llm-api-logs/`，包含 index/meta/request raw/response raw 和 readable 预览；可通过 `/api/dev/llm-api-logs`、`/preview?id=<id>`、`/raw?id=<id>` 查看。
 
 本次确认的模型调用状态：
 - 前端 OpenAI/Chat Completion 面板中的 `Streaming` 开关打开后，请求体会发送 `stream: true`。
@@ -29,9 +30,9 @@ http://127.0.0.1:8000
 
 仍缺失或不完善的重点：
 - 多用户明确暂缓：`/api/users/*` 只满足本地弹窗、密码校验和备份恢复流程；当前不做真实 session、cookie-session、当前用户切换和权限中间件。
-- 模型 provider 仍不完整：OpenAI/OpenAI-compatible 主路径已可用；text-completions、NovelAI、Horde、Stable Diffusion 等已有基础代理或查询路由，但还没有完整对齐原版 provider 行为、错误格式、请求取消和流式转换。
+- 模型 provider 已覆盖 OpenAI/OpenAI-compatible、OpenRouter、DeepSeek、Moonshot、Z.AI、NanoGPT、Chutes、Groq、SiliconFlow、Claude、Gemini/MakerSuite、Vertex AI、Cohere 的 chat-completion 主路径、常用 payload builder、非流式归一化和关键流式转换；text-completions、NovelAI、Horde、Stable Diffusion 等已有基础代理或查询路由，但还没有完整对齐原版 provider 行为。
 - Tokenizer 本地路由已基本全量 native：剩余风险主要是特殊 token、异常 token id、chunks 展示和全部资源内置导致的 HAP 体积取舍。
-- Vector 仍不完善：已有最小本地索引和 embedding/hash fallback，但还不是原版 `vectra.LocalIndex` 等价实现。
+- Vector 仍不完善：embedding provider 请求形状已明显补齐，但本地索引仍是 JSON + 全量 cosine scan，不是原版 `vectra.LocalIndex` 性能/持久化等价实现；Transformers 本地 embedding 仍是 hash fallback。
 - 第三方扩展 Git 仍有后续项：私有仓库认证、SSH、submodule、非 fast-forward merge 冲突处理和 hooks 执行暂缓。
 - settings snapshots、presets、themes、moving UI、assets/content-manager、聊天备份等管理类接口仍有缺口。
 

@@ -16,8 +16,8 @@
 - 2026-05-03 已验证流式链路：前端打开 OpenAI/Chat Completion 的 `Streaming` 后会发送 `stream: true`；ArkTS 后端使用 Harmony `requestInStream()` 监听 `dataReceive`，SSE 分块可以即时到达前端。
 - text-completions、NovelAI、Horde、Stable Diffusion 已有基础代理/查询路由；OpenRouter/DeepSeek/Groq/Mistral 等 OpenAI-compatible provider 目前应通过 `custom` 端点使用，专门 source 尚未逐项放行和验证。
 - Tokenizer native bridge 已按推荐路线落地：MikTik 作为 Rust FFI staticlib 编译到 OHOS native module，ArkTS 通过 NAPI 调用真实 encode/decode/count；当前已覆盖 SillyTavern 本地 tokenizer 路由，包括 OpenAI/tiktoken、GPT-2、旧 OpenAI text/embedding 模型、Claude、DeepSeek、Gemma、Llama/Llama 3、Mistral、Yi、Jamba、Nerdstash/Nerdstash v2、Qwen2、Command-R/Command-A 和 Nemo。
-- Vector 已有最小 ArkTS 实现：本地 JSON 索引、insert/list/delete/query/query-multi/purge、部分 embedding provider 调用和 hash fallback；还不是原版 `vectra.LocalIndex` 等价实现。
-- Claude/Gemini 等模型 provider builder 仍需后续实现；tokenizer 当前主要剩余风险是和原版 WASM/Node 实现在极端特殊 token、chunks 展示和大资源包体积上的细节差异。
+- Vector 已有 ArkTS 可用实现：本地 JSON 索引、insert/list/delete/query/query-multi/purge、批量 remote embedding provider 调用和 hash fallback；常用 provider 请求形状已补，但还不是原版 `vectra.LocalIndex` 等价实现。
+- Claude/Gemini/OpenRouter/DeepSeek/Cohere/Vertex 等 chat-completion provider builder 已按 TauriTavern 逻辑完成常用主路径；tokenizer 当前主要剩余风险是和原版 WASM/Node 实现在极端特殊 token、chunks 展示和大资源包体积上的细节差异。
 
 ## 0. 当前落地结论
 
@@ -491,12 +491,34 @@ OpenAI/tiktoken、GPT-2、Claude、DeepSeek、Gemma、Llama/Llama 3、Mistral、
 
 ### 4.3 Vector
 
-当前可以分两阶段：
+当前 ArkTS 已有可用 vector 最小实现，并在 2026-05-03 对齐了原版 SillyTavern 的常用 embedding provider 请求形状。
 
-1. 先保持 ArkTS 简单本地 index + remote embedding provider 调用，确保接口形状与原版一致。
-2. 后续考虑 native vector index：
-   - Rust 自实现 cosine scan + JSON/二进制持久化。
-   - 或使用可编译到 OHOS 的 Rust 向量索引库。
+已完成：
+
+1. HTTP 接口保持原版形状：`insert/list/delete/query/query-multi/purge/purge-all`。
+2. 本地索引写入 `data/default-user/vectors/<source>/<collectionId>/<model>/index.json`，query 使用 cosine similarity，返回 `{ hashes, metadata }` 或按 collectionId 分组的 multi-query 结果。
+3. `insert` 改为 10 条一批生成 embedding，避免逐条请求远端。
+4. remote embedding provider 请求体/响应解析已覆盖：
+   - OpenAI-compatible、Mistral、TogetherAI、OpenRouter、ElectronHub、NanoGPT、SiliconFlow、Chutes：批量 `/embeddings`。
+   - Cohere：v2 `/embed`，使用 `texts`、`embedding_types: ["float"]`、`input_type` 和 `truncate: "END"`。
+   - Ollama：`/api/embed`，使用 `input` 数组。
+   - Extras：`/api/embeddings/compute`，使用 `{ text }`，兼容单条和数组。
+   - NomicAI：`/v1/embedding/text`，使用 `texts/model`。
+   - llama.cpp/vLLM：去掉可能重复的 `/v1` 后拼 `/v1/embeddings`。
+   - MakerSuite/Google 与 Vertex AI：补基础 batch embedding/predict 请求和响应解析。
+5. provider 未配置、请求失败或响应无法解析时，仍回退到本地 hash vector，保证前端流程不中断。
+
+仍不完善：
+
+1. 本地 index 仍是 JSON + 全量 cosine scan，不是原版 `vectra.LocalIndex` 的性能/持久化等价实现。
+2. Transformers 本地 embedding 仍是 hash fallback，还没有引入真正本地 embedding 模型。
+3. Vertex embedding 当前只覆盖 express API key 基础路径，未复用 chat provider 已实现的 full service account OAuth。
+4. 还需要用真实 provider 做回归，尤其是 Cohere、Ollama、Chutes、Google/Vertex 的实际响应边界。
+
+后续考虑 native vector index：
+
+1. Rust 自实现 cosine scan + JSON/二进制持久化。
+2. 或使用可编译到 OHOS 的 Rust 向量索引库。
 
 Vector 不建议依赖 TauriTavern，因为它当前没有完整实现。
 

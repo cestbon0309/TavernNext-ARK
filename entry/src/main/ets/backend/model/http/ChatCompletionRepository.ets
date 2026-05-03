@@ -1,9 +1,10 @@
 import { HttpResponse, JsonArray, JsonRecord, emptyJsonRecord } from '../../HttpTypes';
 import { CancellationToken } from '../../CancellationToken';
 import { parseJsonRecord } from '../../JsonUtils';
-import { RemoteHttpClient } from '../../RemoteHttpClient';
+import { RemoteHttpClient, RemoteHttpResult } from '../../RemoteHttpClient';
 import { ChatCompletionApiConfig, ChatCompletionSource, ChatStreamSend } from '../ChatCompletionTypes';
 import { asArrayValue, asRecordValue, asStringValue } from '../JsonHelpers';
+import { LlmApiLogContext, LlmApiLogger } from '../LlmApiLogger';
 import {
   normalizeClaudeResponse,
   normalizeCohereResponse,
@@ -15,6 +16,11 @@ import { GeminiInteractionsStreamNormalizer, OpenAiResponsesStreamNormalizer } f
 
 export class ChatCompletionRepository {
   private http: RemoteHttpClient = new RemoteHttpClient();
+  private logger: LlmApiLogger | null = null;
+
+  setLogger(logger: LlmApiLogger): void {
+    this.logger = logger;
+  }
 
   async listModels(source: ChatCompletionSource, config: ChatCompletionApiConfig): Promise<HttpResponse> {
     if (source === 'vertexai') {
@@ -39,10 +45,19 @@ export class ChatCompletionRepository {
 
   async generate(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string,
     payload: JsonRecord): Promise<HttpResponse> {
+    const logContext = this.logger?.begin(source, config, endpointPath, payload, false) ?? null;
     const url = this.urlForGenerate(source, config, endpointPath);
     const headers = this.headers(source, config, endpointPath, 'application/json');
-    const result = await this.http.postJson(url, payload, headers);
+    let result: RemoteHttpResult;
+    try {
+      result = await this.http.postJson(url, payload, headers);
+    } catch (err) {
+      this.finishJsonLog(logContext, false, null, '', err instanceof Error ? err.message : JSON.stringify(err));
+      throw new Error(err instanceof Error ? err.message : JSON.stringify(err));
+    }
     if (result.statusCode < 200 || result.statusCode >= 300) {
+      this.finishJsonLog(logContext, false, null, result.text, this.providerErrorMessage(source, result.statusCode,
+        result.text));
       return HttpResponse.json(this.providerError(source, result.statusCode, result.text), 200);
     }
     const parsed = parseJsonRecord(result.text);
@@ -50,56 +65,85 @@ export class ChatCompletionRepository {
       this.logPromptCacheUsage(source, asStringValue(payload['model']), parsed);
     }
     if (source === 'claude' || endpointPath === '/messages') {
-      return HttpResponse.json(normalizeClaudeResponse(parsed));
+      const normalized = normalizeClaudeResponse(parsed);
+      this.finishJsonLog(logContext, true, normalized, result.text, '');
+      return HttpResponse.json(normalized);
     }
     if (source === 'makersuite' || source === 'vertexai') {
-      return HttpResponse.json(normalizeGeminiResponse(parsed));
+      const normalized = normalizeGeminiResponse(parsed);
+      this.finishJsonLog(logContext, true, normalized, result.text, '');
+      return HttpResponse.json(normalized);
     }
     if (source === 'cohere') {
-      return HttpResponse.json(normalizeCohereResponse(parsed));
+      const normalized = normalizeCohereResponse(parsed);
+      this.finishJsonLog(logContext, true, normalized, result.text, '');
+      return HttpResponse.json(normalized);
     }
     if (endpointPath === '/responses') {
-      return HttpResponse.json(normalizeOpenAiResponsesResponse(parsed));
+      const normalized = normalizeOpenAiResponsesResponse(parsed);
+      this.finishJsonLog(logContext, true, normalized, result.text, '');
+      return HttpResponse.json(normalized);
     }
     if (endpointPath === '/interactions') {
-      return HttpResponse.json(normalizeGeminiInteractionsResponse(parsed));
+      const normalized = normalizeGeminiInteractionsResponse(parsed);
+      this.finishJsonLog(logContext, true, normalized, result.text, '');
+      return HttpResponse.json(normalized);
     }
+    this.finishJsonLog(logContext, true, parsed, result.text, '');
     return this.http.responseFromRemote(result);
   }
 
   async generateStream(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string,
     payload: JsonRecord, send: ChatStreamSend, cancelToken?: CancellationToken): Promise<void> {
+    const logContext = this.logger?.begin(source, config, endpointPath, payload, true) ?? null;
+    const streamLog = logContext === null ? null : this.logger?.createStreamSink(logContext);
+    const loggingSend = streamLog === null || streamLog === undefined ? send : streamLog.wrapSend(send);
     const url = this.urlForGenerate(source, config, endpointPath);
     const headers = this.headers(source, config, endpointPath, 'text/event-stream');
-    if (endpointPath === '/responses') {
-      const normalizer = new OpenAiResponsesStreamNormalizer(asStringValue(payload['model']));
-      let loggedCacheUsage = false;
-      await this.http.streamPostJsonEvents(url, payload, headers, async (event: string): Promise<void> => {
-        loggedCacheUsage = this.logPromptCacheUsageFromEvent(source, asStringValue(payload['model']), payload, event,
-          loggedCacheUsage);
-        await normalizer.handleEvent(event, send);
-      }, 300000, cancelToken);
-      return;
+    try {
+      if (endpointPath === '/responses') {
+        const normalizer = new OpenAiResponsesStreamNormalizer(asStringValue(payload['model']));
+        const readableSend = streamLog === null || streamLog === undefined ? loggingSend :
+          streamLog.wrapReadableSend(send);
+        let loggedCacheUsage = false;
+        await this.http.streamPostJsonEvents(url, payload, headers, async (event: string): Promise<void> => {
+          streamLog?.recordEvent(event);
+          loggedCacheUsage = this.logPromptCacheUsageFromEvent(source, asStringValue(payload['model']), payload, event,
+            loggedCacheUsage);
+          await normalizer.handleEvent(event, readableSend);
+        }, 300000, cancelToken);
+        streamLog?.finishOk();
+        return;
+      }
+      if (endpointPath === '/interactions') {
+        const normalizer = new GeminiInteractionsStreamNormalizer(asStringValue(payload['model']));
+        const readableSend = streamLog === null || streamLog === undefined ? loggingSend :
+          streamLog.wrapReadableSend(send);
+        let loggedCacheUsage = false;
+        await this.http.streamPostJsonEvents(url, payload, headers, async (event: string): Promise<void> => {
+          streamLog?.recordEvent(event);
+          loggedCacheUsage = this.logPromptCacheUsageFromEvent(source, asStringValue(payload['model']), payload, event,
+            loggedCacheUsage);
+          await normalizer.handleEvent(event, readableSend);
+        }, 300000, cancelToken);
+        streamLog?.finishOk();
+        return;
+      }
+      if (this.containsCacheControl(payload)) {
+        let loggedCacheUsage = false;
+        await this.http.streamPostJsonWithEventHook(url, payload, headers, loggingSend, async (event: string): Promise<void> => {
+          loggedCacheUsage = this.logPromptCacheUsageFromEvent(source, asStringValue(payload['model']), payload, event,
+            loggedCacheUsage);
+        }, 300000, cancelToken);
+        streamLog?.finishOk();
+        return;
+      }
+      await this.http.streamPostJson(url, payload, headers, loggingSend, 300000, cancelToken);
+      streamLog?.finishOk();
+    } catch (err) {
+      streamLog?.finishError(err instanceof Error ? err.message : JSON.stringify(err));
+      throw new Error(err instanceof Error ? err.message : JSON.stringify(err));
     }
-    if (endpointPath === '/interactions') {
-      const normalizer = new GeminiInteractionsStreamNormalizer(asStringValue(payload['model']));
-      let loggedCacheUsage = false;
-      await this.http.streamPostJsonEvents(url, payload, headers, async (event: string): Promise<void> => {
-        loggedCacheUsage = this.logPromptCacheUsageFromEvent(source, asStringValue(payload['model']), payload, event,
-          loggedCacheUsage);
-        await normalizer.handleEvent(event, send);
-      }, 300000, cancelToken);
-      return;
-    }
-    if (this.containsCacheControl(payload)) {
-      let loggedCacheUsage = false;
-      await this.http.streamPostJsonWithEventHook(url, payload, headers, send, async (event: string): Promise<void> => {
-        loggedCacheUsage = this.logPromptCacheUsageFromEvent(source, asStringValue(payload['model']), payload, event,
-          loggedCacheUsage);
-      }, 300000, cancelToken);
-      return;
-    }
-    await this.http.streamPostJson(url, payload, headers, send, 300000, cancelToken);
   }
 
   private async listGeminiModels(config: ChatCompletionApiConfig): Promise<HttpResponse> {
@@ -212,6 +256,14 @@ export class ChatCompletionRepository {
     const value = emptyJsonRecord();
     value['error'] = true;
     return value;
+  }
+
+  private finishJsonLog(context: LlmApiLogContext | null, ok: boolean, response: JsonRecord | null, rawText: string,
+    errorMessage: string): void {
+    if (context === null || this.logger === null) {
+      return;
+    }
+    this.logger.finishJson(context, ok, response, rawText, errorMessage);
   }
 
   private providerError(source: ChatCompletionSource, statusCode: number, rawText: string): JsonRecord {
