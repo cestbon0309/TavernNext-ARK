@@ -6,6 +6,7 @@ import { ExtensionsService } from './ExtensionsService';
 import { FileStore } from './FileStore';
 import { GitService } from './GitService';
 import { HttpServer } from './HttpServer';
+import { LlmBackgroundTaskService } from './LlmBackgroundTaskService';
 import { MediaService } from './MediaService';
 import { ModelProxyService } from './ModelProxyService';
 import { joinPath } from './PathUtils';
@@ -45,6 +46,7 @@ export class BackendService {
   private git: GitService;
   private extensions: ExtensionsService;
   private modelProxy: ModelProxyService;
+  private llmBackgroundTasks: LlmBackgroundTaskService;
   private tokenizers: TokenizerService;
   private vectors: VectorService;
   private shareExports: ShareExportService;
@@ -68,7 +70,8 @@ export class BackendService {
     this.shellTheme = ShellThemeService.getInstance(context);
     this.git = new GitService(this.store, this.prepareGitCaBundle(context));
     this.extensions = new ExtensionsService(this.store, this.directories, context.resourceManager, this.git);
-    this.modelProxy = new ModelProxyService(this.directories, this.secrets);
+    this.llmBackgroundTasks = new LlmBackgroundTaskService(context as common.UIAbilityContext);
+    this.modelProxy = new ModelProxyService(this.directories, this.secrets, this.llmBackgroundTasks);
     this.tokenizers = new TokenizerService();
     this.vectors = new VectorService(this.store, this.directories, this.secrets);
     this.staticFiles = new StaticFileServer(context.resourceManager);

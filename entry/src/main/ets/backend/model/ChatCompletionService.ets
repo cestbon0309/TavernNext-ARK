@@ -13,6 +13,7 @@ import { parseChatCompletionSource } from './SourceRegistry';
 import { asBooleanValue } from './JsonHelpers';
 import { PromptCachingService } from './PromptCaching';
 import { LlmApiLogger } from './LlmApiLogger';
+import { LlmBackgroundTaskService } from '../LlmBackgroundTaskService';
 
 export class ChatCompletionService {
   private configResolver: ChatCompletionConfigResolver;
@@ -20,13 +21,16 @@ export class ChatCompletionService {
   private repository: ChatCompletionRepository = new ChatCompletionRepository();
   private promptCaching: PromptCachingService;
   private llmLogger: LlmApiLogger;
+  private backgroundTasks: LlmBackgroundTaskService;
   private activeStreams: Record<string, CancellationToken | null> = {};
   private activeGenerations: Record<string, CancellationToken | null> = {};
 
-  constructor(secrets: SecretsService, dirs: DataDirectories, store: FileStore) {
+  constructor(secrets: SecretsService, dirs: DataDirectories, store: FileStore,
+    backgroundTasks: LlmBackgroundTaskService) {
     this.configResolver = new ChatCompletionConfigResolver(secrets);
     this.promptCaching = new PromptCachingService(dirs, store);
     this.llmLogger = new LlmApiLogger(store, dirs);
+    this.backgroundTasks = backgroundTasks;
     this.repository.setLogger(this.llmLogger);
   }
 
@@ -53,8 +57,11 @@ export class ChatCompletionService {
         const streamId = this.requestId(body, 'stream_id');
         const cancelToken = this.register(this.activeStreams, streamId);
         const response = HttpResponse.stream('text/event-stream; charset=utf-8', async (send) => {
+          const backgroundHandle = await this.backgroundTasks.beginResponse();
+          let completed = false;
           try {
             await this.repository.generateStream(source, config, built.endpointPath, built.body, send, cancelToken);
+            completed = !cancelToken.isCancelled();
           } catch (err) {
             if (!cancelToken.isCancelled()) {
               const message = err instanceof Error ? err.message : JSON.stringify(err);
@@ -62,6 +69,7 @@ export class ChatCompletionService {
             }
           } finally {
             this.complete(this.activeStreams, streamId);
+            await this.backgroundTasks.finishResponse(backgroundHandle, completed);
           }
         });
         response.headers['x-accel-buffering'] = 'no';
@@ -69,13 +77,18 @@ export class ChatCompletionService {
       }
       const requestId = this.requestId(body, 'request_id');
       const cancelToken = this.register(this.activeGenerations, requestId);
+      const backgroundHandle = await this.backgroundTasks.beginResponse();
+      let completed = false;
       try {
         if (cancelToken.isCancelled()) {
           return HttpResponse.json(this.errorFromText('Generation cancelled by user'), 200);
         }
-        return await this.repository.generate(source, config, built.endpointPath, built.body);
+        const response = await this.repository.generate(source, config, built.endpointPath, built.body);
+        completed = this.isGenerationSuccess(response);
+        return response;
       } finally {
         this.complete(this.activeGenerations, requestId);
+        await this.backgroundTasks.finishResponse(backgroundHandle, completed);
       }
     } catch (err) {
       return proxyErrorResponse(err instanceof Error ? err.message : JSON.stringify(err), 502);
@@ -234,6 +247,25 @@ export class ChatCompletionService {
     const response = emptyJsonRecord();
     response['cancelled'] = cancelled;
     return HttpResponse.json(response);
+  }
+
+  private isGenerationSuccess(response: HttpResponse): boolean {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return false;
+    }
+    if (response.body.length === 0) {
+      return true;
+    }
+    try {
+      const parsed = JSON.parse(response.body) as Object;
+      if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+        return true;
+      }
+      const error = (parsed as JsonRecord)['error'];
+      return error === undefined || error === null || error === false;
+    } catch (_err) {
+      return true;
+    }
   }
 
   private logRequest(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string,

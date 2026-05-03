@@ -5,6 +5,7 @@ import { RemoteHttpClient, proxyErrorResponse } from './RemoteHttpClient';
 import { asString, bodyAsRecord, parseJsonRecord } from './JsonUtils';
 import { ChatCompletionService } from './model/ChatCompletionService';
 import { FileStore } from './FileStore';
+import { LlmBackgroundTaskService } from './LlmBackgroundTaskService';
 
 class HordeStatusResponse {
   ok: boolean = false;
@@ -19,11 +20,13 @@ export class ModelProxyService {
   private secrets: SecretsService;
   private dirs: DataDirectories;
   private chatCompletions: ChatCompletionService;
+  private llmBackgroundTasks: LlmBackgroundTaskService;
 
-  constructor(dirs: DataDirectories, secrets: SecretsService) {
+  constructor(dirs: DataDirectories, secrets: SecretsService, llmBackgroundTasks: LlmBackgroundTaskService) {
     this.dirs = dirs;
     this.secrets = secrets;
-    this.chatCompletions = new ChatCompletionService(secrets, dirs, new FileStore());
+    this.llmBackgroundTasks = llmBackgroundTasks;
+    this.chatCompletions = new ChatCompletionService(secrets, dirs, new FileStore(), llmBackgroundTasks);
   }
 
   async chatCompletionsGenerate(request: HttpRequest): Promise<HttpResponse> {
@@ -84,9 +87,11 @@ export class ModelProxyService {
     const baseUrl = this.trimV1(this.http.normalizeBaseUrl(apiServer));
     const path = apiType === 'koboldcpp' ? '/api/v1/generate' : '/v1/completions';
     try {
-      const result = await this.http.postJson(this.http.joinUrl(baseUrl, path), request.body ?? emptyJsonRecord(),
-        this.additionalHeaders(request));
-      return this.http.responseFromRemote(result);
+      return await this.withLlmBackgroundResponse(async () => {
+        const result = await this.http.postJson(this.http.joinUrl(baseUrl, path), request.body ?? emptyJsonRecord(),
+          this.additionalHeaders(request));
+        return this.http.responseFromRemote(result);
+      });
     } catch (err) {
       return proxyErrorResponse(err instanceof Error ? err.message : JSON.stringify(err), 502);
     }
@@ -113,11 +118,13 @@ export class ModelProxyService {
       return HttpResponse.empty(400);
     }
     try {
-      const result = await this.http.postJson('https://api.novelai.net/ai/generate', request.body ?? emptyJsonRecord(), {
-        'Authorization': `Bearer ${key}`,
-        'Content-Type': 'application/json',
-      }, 300000);
-      return this.http.responseFromRemote(result);
+      return await this.withLlmBackgroundResponse(async () => {
+        const result = await this.http.postJson('https://api.novelai.net/ai/generate', request.body ?? emptyJsonRecord(), {
+          'Authorization': `Bearer ${key}`,
+          'Content-Type': 'application/json',
+        }, 300000);
+        return this.http.responseFromRemote(result);
+      });
     } catch (_err) {
       return HttpResponse.empty(500);
     }
@@ -362,6 +369,37 @@ export class ModelProxyService {
     error['message'] = text.length > 0 ? text : 'Unknown error';
     value['error'] = error;
     return value;
+  }
+
+  private async withLlmBackgroundResponse(action: () => Promise<HttpResponse>): Promise<HttpResponse> {
+    const handle = await this.llmBackgroundTasks.beginResponse();
+    let completed = false;
+    try {
+      const response = await action();
+      completed = this.isGenerationSuccess(response);
+      return response;
+    } finally {
+      await this.llmBackgroundTasks.finishResponse(handle, completed);
+    }
+  }
+
+  private isGenerationSuccess(response: HttpResponse): boolean {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      return false;
+    }
+    if (response.body.length === 0) {
+      return true;
+    }
+    try {
+      const parsed = JSON.parse(response.body) as Object;
+      if (parsed === null || Array.isArray(parsed) || typeof parsed !== 'object') {
+        return true;
+      }
+      const error = (parsed as JsonRecord)['error'];
+      return error === undefined || error === null || error === false;
+    } catch (_err) {
+      return true;
+    }
   }
 
   private secret(key: string): string {
