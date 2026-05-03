@@ -8,6 +8,7 @@ import { joinPath } from './PathUtils';
 const DOMAIN = 0x544156;
 const TAG = 'ShellTheme';
 const DEFAULT_BACKGROUND = '#171717';
+const TRANSPARENT = '#00000000';
 const SETTINGS_FILE = 'shell-theme.json';
 
 type BackgroundListener = (color: string) => void;
@@ -36,6 +37,7 @@ export class ShellThemeService {
     this.settingsPath = joinPath(context.filesDir, '_shell', SETTINGS_FILE);
     const saved = this.store.readJsonRecord(this.settingsPath);
     this.backgroundColor = this.normalizeColor(this.asString(saved['backgroundColor'])) ?? DEFAULT_BACKGROUND;
+    this.applyToStartWindow();
   }
 
   static getInstance(context: Context): ShellThemeService {
@@ -55,7 +57,11 @@ export class ShellThemeService {
 
   attachWindow(mainWindow: window.Window): void {
     this.mainWindow = mainWindow;
-    this.applyToWindow();
+    this.applyShellTheme();
+  }
+
+  refreshWindow(): void {
+    this.applyShellTheme();
   }
 
   reportBackground(request: HttpRequest): HttpResponse {
@@ -68,24 +74,44 @@ export class ShellThemeService {
       return HttpResponse.json(response, 400);
     }
 
-    this.setBackgroundColor(color);
+    this.setBackgroundColor(color, true);
     const response: JsonRecord = {};
     response['ok'] = true;
     response['backgroundColor'] = this.backgroundColor;
     return HttpResponse.json(response);
   }
 
-  private setBackgroundColor(color: string): void {
+  private setBackgroundColor(color: string, forceApply: boolean = false): void {
     if (color === this.backgroundColor) {
+      if (forceApply) {
+        this.applyShellTheme();
+      }
       return;
     }
     this.backgroundColor = color;
     const settings: JsonRecord = {};
     settings['backgroundColor'] = color;
     this.store.writeJson(this.settingsPath, settings);
-    this.applyToWindow();
+    this.applyShellTheme();
     for (const listener of this.listeners) {
       listener(color);
+    }
+  }
+
+  private applyShellTheme(): void {
+    this.applyToStartWindow();
+    this.applyToWindow();
+  }
+
+  private applyToStartWindow(): void {
+    try {
+      const rgba = this.hexToRgba(this.backgroundColor);
+      window.setStartWindowBackgroundColor('entry', 'EntryAbility',
+        ColorMetrics.rgba(rgba.red, rgba.green, rgba.blue, 1)).catch((err: Error) => {
+        hilog.warn(DOMAIN, TAG, 'Failed to set start window color. Cause: %{public}s', JSON.stringify(err));
+      });
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, 'Failed to apply start window theme. Cause: %{public}s', JSON.stringify(err));
     }
   }
 
@@ -98,7 +124,7 @@ export class ShellThemeService {
       this.mainWindow.setWindowBackgroundColor(this.backgroundColor);
       const contentColor = this.contentColorFor(this.backgroundColor);
       this.mainWindow.setWindowSystemBarProperties({
-        statusBarColor: this.backgroundColor,
+        statusBarColor: TRANSPARENT,
         navigationBarColor: this.backgroundColor,
         isStatusBarLightIcon: contentColor === '#FFFFFF',
         isNavigationBarLightIcon: contentColor === '#FFFFFF',
@@ -106,15 +132,6 @@ export class ShellThemeService {
         navigationBarContentColor: contentColor
       }).catch((err: Error) => {
         hilog.warn(DOMAIN, TAG, 'Failed to set system bar theme. Cause: %{public}s', JSON.stringify(err));
-      });
-
-      const rgba = this.hexToRgba(this.backgroundColor);
-      this.mainWindow.setStatusBarColor(ColorMetrics.rgba(rgba.red, rgba.green, rgba.blue, 1)).catch((err: Error) => {
-        hilog.warn(DOMAIN, TAG, 'Failed to set status bar color. Cause: %{public}s', JSON.stringify(err));
-      });
-      window.setStartWindowBackgroundColor('entry', 'EntryAbility',
-        ColorMetrics.rgba(rgba.red, rgba.green, rgba.blue, 1)).catch((err: Error) => {
-        hilog.warn(DOMAIN, TAG, 'Failed to set start window color. Cause: %{public}s', JSON.stringify(err));
       });
     } catch (err) {
       hilog.warn(DOMAIN, TAG, 'Failed to apply shell theme. Cause: %{public}s', JSON.stringify(err));

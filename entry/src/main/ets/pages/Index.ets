@@ -13,15 +13,17 @@ struct Index {
   @State pageError: string = '';
   @State message: string = 'Starting ArkTS backend...';
   @State shellBackground: string = DEFAULT_SHELL_BACKGROUND;
+  @State webReady: boolean = false;
   private controller: webview.WebviewController = new webview.WebviewController();
+  private webRevealToken: number = 0;
 
   aboutToAppear(): void {
     webview.WebviewController.setWebDebuggingAccess(true);
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     const theme = ShellThemeService.getInstance(context);
-    this.shellBackground = theme.getBackgroundColor();
+    this.applyShellBackground(theme.getBackgroundColor());
     theme.subscribe((color: string) => {
-      this.shellBackground = color;
+      this.applyShellBackground(color);
     });
     const service = BackendService.getInstance(context);
     service.start().then((status: BackendStatus) => {
@@ -30,9 +32,16 @@ struct Index {
   }
 
   private applyStatus(status: BackendStatus): void {
+    if (!this.running && status.running) {
+      this.hideWebUntilReady();
+    }
     this.running = status.running;
     this.url = status.url;
     this.message = status.message;
+  }
+
+  private applyShellBackground(color: string): void {
+    this.shellBackground = color;
   }
 
   build() {
@@ -48,20 +57,26 @@ struct Index {
           .cacheMode(CacheMode.Online)
           .width('100%')
           .height('100%')
+          .backgroundColor(this.shellBackground)
+          .opacity(this.webReady ? 1 : 0)
           .onPageBegin(() => {
             this.pageError = '';
+            this.hideWebUntilReady();
           })
           .onPageEnd(() => {
             this.injectShellThemeProbe();
+            this.revealWebAfterFirstPaint();
           })
           .onErrorReceive((event) => {
             if (event.request.isMainFrame()) {
               this.pageError = `WebView failed to load SillyTavern: ${event.error.getErrorInfo()}`;
+              this.webReady = true;
             }
           })
           .onHttpErrorReceive((event) => {
             if (event.request.isMainFrame()) {
               this.pageError = 'SillyTavern page returned an HTTP error.';
+              this.webReady = true;
             }
           })
       } else {
@@ -93,6 +108,26 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor(this.shellBackground)
+  }
+
+  private revealWebAfterFirstPaint(): void {
+    const token = this.webRevealToken;
+    setTimeout(() => {
+      if (token === this.webRevealToken) {
+        this.webReady = true;
+      }
+    }, 80);
+  }
+
+  private hideWebUntilReady(): void {
+    this.webReady = false;
+    this.webRevealToken++;
+    const token = this.webRevealToken;
+    setTimeout(() => {
+      if (token === this.webRevealToken) {
+        this.webReady = true;
+      }
+    }, 700);
   }
 
   private injectShellThemeProbe(): void {

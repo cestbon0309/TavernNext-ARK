@@ -14,6 +14,7 @@ export default class EntryAbility extends UIAbility {
       hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+    ShellThemeService.getInstance(this.context).refreshWindow();
     BackendService.getInstance(this.context).start();
   }
 
@@ -31,6 +32,7 @@ export default class EntryAbility extends UIAbility {
         hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;
       }
+      ShellThemeService.getInstance(this.context).refreshWindow();
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
     });
   }
