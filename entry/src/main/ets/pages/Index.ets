@@ -62,6 +62,7 @@ struct Index {
           .height('100%')
           .backgroundColor(this.shellBackground)
           .opacity(this.webReady ? 1 : 0)
+          .onOverrideUrlLoading((request) => this.handleWebNavigation(request))
           .onPageBegin(() => {
             this.pageError = '';
             this.hideWebUntilReady();
@@ -111,6 +112,46 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor(this.shellBackground)
+  }
+
+  private handleWebNavigation(request: WebResourceRequest): boolean {
+    const targetUrl = request.getRequestUrl();
+    if (!request.isMainFrame() || !this.shouldOpenExternally(targetUrl)) {
+      return false;
+    }
+
+    this.openExternalUrl(targetUrl);
+    return true;
+  }
+
+  private shouldOpenExternally(targetUrl: string): boolean {
+    const normalized = targetUrl.trim().toLowerCase();
+    if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
+      return false;
+    }
+    return !this.isLocalTavernUrl(normalized);
+  }
+
+  private isLocalTavernUrl(targetUrl: string): boolean {
+    const match = targetUrl.match(/^https?:\/\/([^/?#:]+)(?::(\d+))?(?:[/?#]|$)/i);
+    if (match === null) {
+      return false;
+    }
+
+    const host = match[1].toLowerCase();
+    const port = match[2] ?? (targetUrl.startsWith('https://') ? '443' : '80');
+    return (host === '127.0.0.1' || host === 'localhost') && port === '8000';
+  }
+
+  private openExternalUrl(targetUrl: string): void {
+    const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    context.openLink(targetUrl, { appLinkingOnly: false }).catch((_err: Error) => {
+      context.startAbility({
+        action: 'ohos.want.action.viewData',
+        uri: targetUrl
+      }).catch((_fallbackErr: Error) => {
+      });
+    });
   }
 
   onBackPress(): boolean {
@@ -258,6 +299,36 @@ struct Index {
       };
 
       window.__tavernNextShellThemeProbeReport = report;
+      window.__tavernNextExternalLinkBridgeInstall = () => {
+        if (window.__tavernNextExternalLinkBridgeInstalled) {
+          return;
+        }
+        window.__tavernNextExternalLinkBridgeInstalled = true;
+
+        const isLocalUrl = (url) => {
+          try {
+            const parsed = new URL(url, location.href);
+            const localHost = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost';
+            return localHost && parsed.port === '8000';
+          } catch (_) {
+            return false;
+          }
+        };
+
+        document.addEventListener('click', (event) => {
+          const target = event.target && event.target.closest && event.target.closest('a[href]');
+          if (!target) {
+            return;
+          }
+          const href = target.href || '';
+          if (!/^https?:\/\//i.test(href) || isLocalUrl(href)) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          location.href = href;
+        }, true);
+      };
       new MutationObserver(schedule).observe(document.documentElement, {
         attributes: true,
         attributeFilter: ['style', 'class']
@@ -271,6 +342,7 @@ struct Index {
       document.addEventListener('visibilitychange', schedule);
       schedule();
       setInterval(report, 2000);
+      window.__tavernNextExternalLinkBridgeInstall();
 
       window.__tavernNextBackBridgeInstall = () => {
         if (window.__tavernNextBackBridge) {

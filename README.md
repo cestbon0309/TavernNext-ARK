@@ -259,3 +259,10 @@ git diff --cached
 ```
 
 公开文档和提交记录中应使用 `<repo>`、`<DevEco Studio path>`、`<DevEco SDK path>`、`<device-id>` 这类占位符，不要出现本机绝对路径、用户名、签名文件路径、密码或 API key。
+
+## 致谢
+
+[SillyTavern](https://github.com/SillyTavern/SillyTavern)
+
+[MikTik](https://github.com/Darkatse/MikTik)
+

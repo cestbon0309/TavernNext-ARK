@@ -503,7 +503,7 @@ async function getClientVersion() {
         const response = await fetch('/version');
         const data = await response.json();
         CLIENT_VERSION = data.agent;
-        displayVersion = `SillyTavern ${data.pkgVersion}`;
+        displayVersion = `TavernNext-ohos ${String(data.pkgVersion).replace(/-ohos$/, '')}`;
         currentVersion = data.pkgVersion;
 
         if (data.gitRevision && data.gitBranch) {
