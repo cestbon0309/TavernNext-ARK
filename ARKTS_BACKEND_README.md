@@ -15,8 +15,8 @@ http://127.0.0.1:8000
 - settings、角色卡、聊天、群聊、世界书、groups、QuickReplies、Comfy workflow 列表等本地数据 API 的基础兼容。
 - 角色卡 PNG `tEXt/chara` 元数据读写，JSON/PNG 角色导入导出，聊天导入导出，data zip 导出/恢复。
 - 背景、头像、聊天图片、附件、sprites 和 image-metadata 等媒体上传接口；图片处理已接入 Harmony `ImageKit`，zip 压缩/解压已接入 Harmony `zlib`。
-- secrets、users、extensions 的本地兼容接口；当前 App 形态固定使用默认用户，多用户系统明确暂缓。扩展发现已兼容导入备份里常见的 `extensions/third-party/<name>` 和 `public/scripts/extensions/third-party/<name>` 结构，第三方扩展静态资源也会从这些位置优先读取。
-- 第三方扩展 Git 第一阶段：native `libtavern_git.so` 基于 `libgit2` + mbedTLS，已支持 HTTPS 公共仓库安装、版本状态、分支列表、分支切换和 fast-forward 更新。
+- secrets、users、extensions 的本地兼容接口；当前 App 形态固定使用默认用户，多用户系统明确暂缓。扩展发现已兼容导入备份里常见的 `extensions/third-party/<name>` 和 `public/scripts/extensions/third-party/<name>` 结构，第三方扩展静态资源也会从这些位置优先读取。原版 SillyTavern 和 TauriTavern 都有 local/global 两个作用域，但同名扩展按 local 覆盖 global；TavernNext 对导入备份造成的重复项会以当前 active 目录为准，更新时可把隐藏的同名 Git clone 一次性迁移到 active 目录并移除重复项，避免长期维护两份插件。
+- 第三方扩展 Git 第一阶段：native `libtavern_git.so` 基于 `libgit2` + mbedTLS，目标收敛为兼容 GitHub、GitLab、Gitee、Bitbucket 等常见 Git 托管平台的公开 HTTPS 仓库；已支持安装、版本状态、分支列表、分支切换和 fast-forward 更新。
 - `/version` 现在返回 SillyTavern 兼容 agent，例如 `SillyTavern:1.17.0:TavernNext-OHOS`，用于通过第三方扩展的 `minimum_client_version` 检查。
 - OpenAI chat-completions 最小可用代理：支持 `openai` 和 `custom` 两种来源，`status` 请求 `/v1/models`，`generate` 请求 `/v1/chat/completions`，支持非流式 JSON 和流式 `text/event-stream` 透传。
 - Tokenizer native bridge：native `libtavern_tokenizer.so` 基于 Rust `miktik`，已接管 SillyTavern 本地 tokenizer 路由的真实 encode/decode/count，覆盖 OpenAI/tiktoken、GPT-2、旧 OpenAI text/embedding 模型、Claude、DeepSeek、Gemma、Llama/Llama 3、Mistral、Yi、Jamba、Nerdstash/Nerdstash v2、Qwen2、Command-R/Command-A 和 Nemo；`/api/tokenizers/openai/count` 会按原版模型分支分别走 OpenAI chat overhead、Claude-style prompt 计数或 SentencePiece flatten 计数。
@@ -34,7 +34,7 @@ http://127.0.0.1:8000
 - 模型 provider 已覆盖 OpenAI/OpenAI-compatible、OpenRouter、DeepSeek、Moonshot、Z.AI、NanoGPT、Chutes、Groq、SiliconFlow、Claude、Gemini/MakerSuite、Vertex AI、Cohere 的 chat-completion 主路径、常用 payload builder、非流式归一化和关键流式转换；text-completions、NovelAI、Horde、Stable Diffusion 等已有基础代理或查询路由，但还没有完整对齐原版 provider 行为。
 - Tokenizer 本地路由已基本全量 native：剩余风险主要是特殊 token、异常 token id、chunks 展示和全部资源内置导致的 HAP 体积取舍。
 - Vector 仍不完善：embedding provider 请求形状已明显补齐，但本地索引仍是 JSON + 全量 cosine scan，不是原版 `vectra.LocalIndex` 性能/持久化等价实现；Transformers 本地 embedding 仍是 hash fallback。
-- 第三方扩展 Git 仍有后续项：私有仓库认证、SSH、submodule、非 fast-forward merge 冲突处理和 hooks 执行暂缓。
+- 第三方扩展 Git 当前只要求覆盖常见公开 HTTPS 仓库的插件安装/更新流程；私有仓库认证、SSH、submodule、非 fast-forward merge 冲突处理和 hooks 执行不作为当前目标，仍暂缓。
 - 管理类接口剩余差异：聊天备份目前每次保存都会写入并按单聊天前缀保留 50 条，尚未实现原版节流、全局最大数量和完整 integrity slug 校验；content import 的通用 URL 域名白名单仍是内置列表；data-maid、master import/export 和 Comfy workflow save/delete/rename 仍未完成。
 
 ## 数据目录兼容
@@ -278,7 +278,7 @@ SillyTavern/dist/_webpack/d2f8920b496f6d16/output/lib.js
 - `POST /api/users/restore-data` 已通过非破坏性 HTTP API 验证，坏 zip 和非 data zip 都会返回 `400`，不会覆盖当前 `data/`。
 - `POST /api/users/restore-data-picker` 已在虚拟机中验证可由后端唤起文件选择器，并可恢复导入的 SillyTavern data/user-root 备份；导入后的 `extensions/third-party` 插件能被发现和加载。
 - 扩展抽屉的 `数据导出/恢复` 折叠栏已能在 rawfile HTML 中加载。
-- `GET /api/extensions/discover` 已验证能发现导入备份中的 `third-party/JS-Slash-Runner` 和 `third-party/ST-Prompt-Template`；`/scripts/extensions/third-party/.../manifest.json`、`dist/index.js`、`dist/index.css` 静态资源可正常返回；`JS-Slash-Runner` 的 `minimum_client_version=1.12.13` 可通过当前 `/version` 响应启用。
+- `GET /api/extensions/discover` 已验证能发现导入备份中的 `third-party/JS-Slash-Runner` 和 `third-party/ST-Prompt-Template`；`/scripts/extensions/third-party/.../manifest.json`、`dist/index.js`、`dist/index.css` 静态资源可正常返回；`JS-Slash-Runner` 的 `minimum_client_version=1.12.13` 可通过当前 `/version` 响应启用。扩展 `version/update/branches/switch/delete/move` 现在以发现/静态加载的 active 目录为准；如果 active local 是备份导入的非 Git 旧目录，而隐藏的 global 同名目录是可更新 Git clone，则更新时会迁移 Git clone 到 active local 并清理重复目录，后续只保留一份会被加载和更新的插件。
 - 第三方扩展 Git 已在 x86_64 模拟器通过 native `libgit2` 验证：`POST /api/extensions/version` 可读取 `Extension-Blip` 的 `main`、GitHub remote 和真实 commit；`branches` 返回本地与 `origin/main`；`update` 返回 up-to-date；`switch origin/main` 返回 `204`。
 - 媒体上传回归已通过 hdc 端口映射和 curl 验证：背景上传/列表/缩略图/删除、用户头像上传裁剪/缩略图/删除、聊天图片上传/列表/旧路由兼容/静态读取/删除、附件上传/verify/读取/删除、sprites 单张上传/zip 上传/读取/删除、`image-metadata` 文件夹创建/assign/delete/cleanup，以及 `m4a` 音频媒体列表。
 - OpenAI chat-completions 最小代理已通过本机 mock OpenAI 服务验证：状态检查、非流式生成、流式 SSE 生成均可用，且上游请求体不会包含 `reverse_proxy`、`proxy_password`、`custom_*` 等内部字段。

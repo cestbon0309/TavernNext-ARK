@@ -49,6 +49,7 @@ export interface GitBranchInfo {
 export class GitService {
   private store: FileStore;
   private caBundlePath: string;
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(store: FileStore, caBundlePath: string = '') {
     this.store = store;
@@ -82,33 +83,66 @@ export class GitService {
     if (options.branch !== undefined && options.branch.trim().length > 0) {
       nativeOptions.branch = options.branch.trim();
     }
-    return await nativeClone(url, targetPath, nativeOptions);
+    return await this.runExclusive(async (): Promise<string> => await nativeClone(url, targetPath, nativeOptions));
   }
 
   async update(repoPath: string): Promise<GitUpdateResult> {
-    const result: Object = await nativeUpdate(repoPath, this.nativeOptions());
-    return this.normalizeUpdateResult(result, repoPath);
+    return await this.runExclusive(async (): Promise<GitUpdateResult> => {
+      this.ensureRepository(repoPath);
+      const result: Object = await nativeUpdate(repoPath, this.nativeOptions());
+      return this.normalizeUpdateResult(result, repoPath);
+    });
   }
 
   async version(repoPath: string): Promise<GitVersionResult> {
-    const result: Object = await nativeVersion(repoPath, this.nativeOptions());
-    return this.normalizeVersionResult(result);
+    return await this.runExclusive(async (): Promise<GitVersionResult> => {
+      this.ensureRepository(repoPath);
+      const result: Object = await nativeVersion(repoPath, this.nativeOptions());
+      return this.normalizeVersionResult(result);
+    });
   }
 
   async branches(repoPath: string): Promise<GitBranchInfo[]> {
-    const result: Object[] = await nativeBranches(repoPath, this.nativeOptions());
-    if (!Array.isArray(result)) {
-      return [];
-    }
-    return result.map((item: object): GitBranchInfo => this.normalizeBranch(item));
+    return await this.runExclusive(async (): Promise<GitBranchInfo[]> => {
+      this.ensureRepository(repoPath);
+      const result: Object[] = await nativeBranches(repoPath, this.nativeOptions());
+      if (!Array.isArray(result)) {
+        return [];
+      }
+      return result.map((item: object): GitBranchInfo => this.normalizeBranch(item));
+    });
   }
 
   async switchBranch(repoPath: string, branch: string): Promise<void> {
-    await nativeSwitchBranch(repoPath, branch);
+    await this.runExclusive(async (): Promise<void> => {
+      this.ensureRepository(repoPath);
+      await nativeSwitchBranch(repoPath, branch);
+    });
   }
 
   readManifest(extensionPath: string): JsonRecord {
     return this.store.readJsonRecord(joinPath(extensionPath, 'manifest.json'));
+  }
+
+  private ensureRepository(repoPath: string): void {
+    if (!this.store.exists(joinPath(repoPath, '.git'))) {
+      throw new Error(`Directory is not a Git repository at ${repoPath}`);
+    }
+  }
+
+  private async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.queue;
+    let release: () => void = (): void => {};
+    const current = new Promise<void>((resolve: () => void) => {
+      release = resolve;
+    });
+    this.queue = previous.then((): Promise<void> => current, (): Promise<void> => current);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   private nativeOptions(): NativeGitOptions {

@@ -13,7 +13,7 @@
 - 媒体相关处理已尽量使用 Harmony 官方 API：图片尺寸/裁剪/缩略图/平均色使用 `ImageKit`，zip 压缩/解压使用 `zlib`。
 - data 恢复的前端入口已切换为后端唤起 Harmony 文件选择器，避免 50MB 级 zip 先从 WebView 上传到 ArkTS HTTP 后端再落盘；HTTP multipart 恢复接口仍保留用于调试。
 - 扩展发现和第三方扩展静态资源已兼容导入备份里的 `extensions/third-party/<name>`、`public/scripts/extensions/third-party/<name>` 等结构；`/version` 返回 SillyTavern 兼容 agent 以满足第三方扩展版本门槛。
-- 第三方扩展 Git 第一阶段已接入 native `.so` + `libgit2`：支持 HTTPS 公共仓库安装、版本状态、分支列表、分支切换和 fast-forward 更新。
+- 第三方扩展 Git 第一阶段已接入 native `.so` + `libgit2`：目标收敛为兼容 GitHub、GitLab、Gitee、Bitbucket 等常见 Git 托管平台的公开 HTTPS 仓库，支持安装、版本状态、分支列表、分支切换和 fast-forward 更新。
 - OpenAI chat-completions 支持 `openai` 和 `custom` 来源，支持 `/models` 状态检查、`/chat/completions` 非流式生成和流式 SSE 生成。
 - 流式生成已改为 Harmony `requestInStream()` + `dataReceive` 转发，并通过虚拟机、hdc 端口映射、慢速 mock OpenAI 服务确认分块即时到达。
 - Tokenizer 已接入 native `.so` + Rust `miktik`：SillyTavern 本地 tokenizer 路由已走真实 encode/decode/count，覆盖 OpenAI/tiktoken、GPT-2、旧 OpenAI text/embedding 模型、Claude、DeepSeek、Gemma、Llama/Llama 3、Mistral、Yi、Jamba、Nerdstash/Nerdstash v2、Qwen2、Command-R/Command-A 和 Nemo；`/api/tokenizers/openai/count` 会按原版模型分支进行 OpenAI chat overhead、Claude-style prompt 或 SentencePiece flatten 计数。
@@ -24,7 +24,7 @@
 - 模型 provider 仍不完整：OpenAI/OpenAI-compatible `openai` 和 `custom` 主路径已可用；text-completions、NovelAI、Horde、Stable Diffusion 等已有基础代理或查询路由，但还没有完整对齐原版 provider 行为、错误格式、请求取消和流式转换。
 - Tokenizer 本地路由已基本补齐：剩余风险主要是特殊 token、异常 token id、chunks 展示和包体积等边界细节；不再使用 byte 估算承担这些模型的主路径计数。
 - Vector 已有可用实现：支持本地 JSON 索引、insert/list/delete/query/query-multi/purge、批量 remote embedding provider 调用和 hash fallback；已对齐 OpenAI-compatible、Cohere、Ollama、Extras、NomicAI、Google/MakerSuite、Vertex 等常用 embedding 请求/响应形状，但尚未对齐原版 `vectra.LocalIndex` 的完整行为和性能。
-- Git 后续增强：私有仓库认证、SSH、submodule、非 fast-forward merge 冲突处理、hooks 执行仍暂缓。
+- Git 能力边界：当前只要求覆盖常见公开 HTTPS 仓库的插件安装/更新流程；私有仓库认证、SSH、submodule、非 fast-forward merge 冲突处理、hooks 执行仍暂缓。
 - 管理类接口剩余差异：聊天备份目前每次保存都会写入并按单聊天前缀保留 50 条，尚未实现原版节流/全局最大数量/完整 integrity slug 校验；content import 的通用下载域名仍是内置白名单而非 config 驱动；data-maid、master import/export 和 Comfy workflow save/delete/rename 仍未完成。
 
 代码入口：
@@ -2386,9 +2386,13 @@ GET /scripts/extensions/third-party/<extension>/<file>
 
 当前已接入 native `.so` + `libgit2`，ArkTS 负责 SillyTavern HTTP API 兼容、路径选择和错误响应，native 层负责受限 Git 操作。native module 名为 `libtavern_git.so`，由 `entry/src/main/cpp/git_native.cpp` 导出，当前编译进 HAP 的 ABI 包括 `arm64-v8a` 和 `x86_64`。
 
-- `POST /api/extensions/install`：按 URL basename 生成扩展目录名，clone 到本地或全局扩展目录，读取 `manifest.json` 后返回 `version`、`author`、`display_name`、`extensionPath`、`folderName`。默认 `depth=1`，支持请求体里的 `branch`。
-- `POST /api/extensions/version`：打开仓库，fetch origin，返回 `currentBranchName`、`currentCommitHash`、`isUpToDate`、`remoteUrl`。如果目录不是 Git 仓库，会按原版兼容返回空 branch/commit 且 `isUpToDate=true`。
-- `POST /api/extensions/update`：fetch origin 并只执行 fast-forward 更新，返回 `shortCommitHash`、`currentCommitHash`、`currentBranchName`、`extensionPath`、`isUpToDate`、`remoteUrl`。
+扩展管理接口的路径解析会复用 `discover` 和第三方静态资源的兼容根：优先按请求里的 `global` 查本地或全局根，如果没有找到，会再查另一侧兼容根。Git 管理动作会优先选择带 `.git` 的真实仓库目录，避免把备份里解压出的非 Git 插件目录传给 native；从 SillyTavern data 备份导入、或插件前端缓存的 local/global 类型与真实目录不一致时，`version/update/branches/switch/delete/move` 仍会落到实际存在的插件目录。新安装仍只写入 `data/default-user/extensions/<name>` 或 `<context.filesDir>/extensions/global/<name>`。
+
+能力目标不是完整 Git 客户端，而是覆盖 SillyTavern 第三方扩展最常见的安装/更新场景：GitHub、GitLab、Gitee、Bitbucket 等平台上的公开 HTTPS 仓库。当前优先保证 clone/install、version/status、update、branches、switch 这些前端常用动作可用。
+
+- `POST /api/extensions/install`：按 URL basename 生成扩展目录名，clone 到本地或全局扩展目录，读取 `manifest.json` 后返回 `version`、`author`、`display_name`、`extensionPath`、`folderName`。默认 `depth=1`，支持请求体里的 `branch`；安装前会检查同 scope 的兼容根里是否已存在同名目录，避免导入备份后重复安装覆盖。
+- `POST /api/extensions/version`：解析实际插件目录后打开仓库，fetch origin，返回 `currentBranchName`、`currentCommitHash`、`isUpToDate`、`remoteUrl`。如果目录不是 Git 仓库，会在 ArkTS 侧拦截并按原版兼容返回空 branch/commit 且 `isUpToDate=true`。
+- `POST /api/extensions/update`：解析实际插件目录后 fetch origin 并只执行 fast-forward 更新，返回 `shortCommitHash`、`currentCommitHash`、`currentBranchName`、`extensionPath`、`isUpToDate`、`remoteUrl`。
 - `POST /api/extensions/branches`：必要时 unshallow，并把 origin fetch refspec 扩展为全部远程分支，然后返回本地和 `origin/*` 分支数组。
 - `POST /api/extensions/switch`：支持切换本地分支；传入 `origin/<branch>` 时，如果本地分支不存在，会从远程分支创建同名本地分支后 checkout。
 - `POST /api/extensions/move`：在 `default-user/extensions` 和 `<filesDir>/extensions/global` 之间移动目录。

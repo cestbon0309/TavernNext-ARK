@@ -1,11 +1,11 @@
 {
   "app": {
-    "bundleName": "com.esoteric.tavernnext",
+    "bundleName": "com.esoteric.ark.tavernnext",
     "vendor": "example",
     "versionCode": 1000000,
     "versionName": "1.0.0",
     "buildVersion": "1",
-    "icon": "$media:layered_image",
+    "icon": "$media:icon1024",
     "label": "$string:app_name"
   }
 }

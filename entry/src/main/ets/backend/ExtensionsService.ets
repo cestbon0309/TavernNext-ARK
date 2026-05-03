@@ -13,6 +13,7 @@ export class ExtensionsService {
   private dirs: DataDirectories;
   private manager: resourceManager.ResourceManager;
   private git: GitService;
+  private queue: Promise<void> = Promise.resolve();
 
   constructor(store: FileStore, dirs: DataDirectories, manager: resourceManager.ResourceManager, git: GitService) {
     this.store = store;
@@ -65,165 +66,212 @@ export class ExtensionsService {
   }
 
   async install(request: HttpRequest): Promise<HttpResponse> {
-    const body = this.bodyAsRecord(request);
-    const url = this.asString(body['url']).trim();
-    if (url.length === 0) {
-      return HttpResponse.text('Bad Request: URL is required in the request body.', 400);
-    }
-    const folderName = this.git.folderNameFromUrl(url);
-    if (folderName.length === 0) {
-      return HttpResponse.text('Bad Request: URL does not contain a valid extension folder name.', 400);
-    }
-
-    const global = body['global'] === true;
-    const branch = this.asString(body['branch']).trim();
-    const targetPath = this.extensionPath(folderName, global);
-    if (this.store.exists(targetPath)) {
-      return HttpResponse.text(`Directory already exists at ${targetPath}`, 409);
-    }
-
-    try {
-      this.store.ensureDir(global ? this.dirs.globalExtensionsRoot : this.dirs.defaultUser.extensions);
-      await this.git.clone(url, targetPath, { branch, depth: 1 });
-      const manifest = this.git.readManifest(targetPath);
-      const response = emptyJsonRecord();
-      response['version'] = this.asString(manifest['version']) || '0.0.0';
-      response['author'] = this.asString(manifest['author']) || 'Unknown';
-      response['display_name'] = this.asString(manifest['display_name']) || folderName;
-      response['extensionPath'] = targetPath;
-      response['folderName'] = folderName;
-      return HttpResponse.json(response);
-    } catch (err) {
-      if (this.store.exists(targetPath)) {
-        this.store.deleteDirectory(targetPath);
+    return await this.runExclusive(async (): Promise<HttpResponse> => {
+      const body = this.bodyAsRecord(request);
+      const url = this.asString(body['url']).trim();
+      if (url.length === 0) {
+        return HttpResponse.text('Bad Request: URL is required in the request body.', 400);
       }
-      return HttpResponse.text(`Server Error: ${this.errorMessage(err)}`, 500);
-    }
+      const folderName = this.git.folderNameFromUrl(url);
+      if (folderName.length === 0) {
+        return HttpResponse.text('Bad Request: URL does not contain a valid extension folder name.', 400);
+      }
+
+      const global = body['global'] === true;
+      const branch = this.asString(body['branch']).trim();
+      const targetPath = this.extensionPath(folderName, global);
+      const existingPath = this.resolveExtensionPath(folderName, global, false);
+      if (this.store.exists(existingPath)) {
+        return HttpResponse.text(`Directory already exists at ${existingPath}`, 409);
+      }
+
+      try {
+        this.store.ensureDir(global ? this.dirs.globalExtensionsRoot : this.dirs.defaultUser.extensions);
+        await this.git.clone(url, targetPath, { branch, depth: 1 });
+        const manifest = this.git.readManifest(targetPath);
+        const response = emptyJsonRecord();
+        response['version'] = this.asString(manifest['version']) || '0.0.0';
+        response['author'] = this.asString(manifest['author']) || 'Unknown';
+        response['display_name'] = this.asString(manifest['display_name']) || folderName;
+        response['extensionPath'] = targetPath;
+        response['folderName'] = folderName;
+        return HttpResponse.json(response);
+      } catch (err) {
+        if (this.store.exists(targetPath)) {
+          this.store.deleteDirectory(targetPath);
+        }
+        return HttpResponse.text(`Server Error: ${this.errorMessage(err)}`, 500);
+      }
+    });
   }
 
   async update(request: HttpRequest): Promise<HttpResponse> {
-    const body = this.bodyAsRecord(request);
-    const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
-    if (extensionName.length === 0) {
-      return HttpResponse.text('Bad Request: extensionName is required in the request body.', 400);
-    }
-    const path = this.extensionPath(extensionName, body['global'] === true);
-    if (!this.store.exists(path)) {
-      return HttpResponse.text(`Directory does not exist at ${path}`, 404);
-    }
-    try {
-      return HttpResponse.json(this.gitUpdateToJson(await this.git.update(path)));
-    } catch (err) {
-      return HttpResponse.text(`Internal Server Error. ${this.errorMessage(err)}`, 500);
-    }
+    return await this.runExclusive(async (): Promise<HttpResponse> => {
+      const body = this.bodyAsRecord(request);
+      const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
+      if (extensionName.length === 0) {
+        return HttpResponse.text('Bad Request: extensionName is required in the request body.', 400);
+      }
+      const global = body['global'] === true;
+      const activePath = this.resolveExtensionPath(extensionName, global, false);
+      if (!this.store.exists(activePath)) {
+        return HttpResponse.text(`Directory does not exist at ${activePath}`, 404);
+      }
+      try {
+        if (this.isRepository(activePath)) {
+          return HttpResponse.json(this.gitUpdateToJson(await this.git.update(activePath)));
+        }
+
+        const migrationPath = this.findOtherScopeRepositoryPath(extensionName, global);
+        if (migrationPath.length > 0) {
+          const activeVersion = this.manifestVersion(activePath);
+          const result = await this.git.update(migrationPath);
+          const migrationVersion = this.manifestVersion(migrationPath);
+          if (!this.adoptRepositoryPath(migrationPath, activePath)) {
+            return HttpResponse.text('Internal Server Error. Check the server logs for more details.', 500);
+          }
+          result.extensionPath = activePath;
+          if (activeVersion !== migrationVersion) {
+            result.isUpToDate = false;
+          }
+          return HttpResponse.json(this.gitUpdateToJson(result));
+        }
+
+        return HttpResponse.text(`Internal Server Error. Directory is not a Git repository at ${activePath}`, 500);
+      } catch (err) {
+        return HttpResponse.text(`Internal Server Error. ${this.errorMessage(err)}`, 500);
+      }
+    });
   }
 
   async branches(request: HttpRequest): Promise<HttpResponse> {
-    const body = this.bodyAsRecord(request);
-    const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
-    if (extensionName.length === 0) {
-      return HttpResponse.text('Bad Request: extensionName is required in the request body.', 400);
-    }
-    const path = this.extensionPath(extensionName, body['global'] === true);
-    if (!this.store.exists(path)) {
-      return HttpResponse.text(`Directory does not exist at ${path}`, 404);
-    }
-    try {
-      return HttpResponse.json((await this.git.branches(path)).map((branch: GitBranchInfo): JsonRecord => {
-        const row = emptyJsonRecord();
-        row['name'] = branch.name;
-        row['commit'] = branch.commit;
-        row['current'] = branch.current;
-        row['label'] = branch.label;
-        return row;
-      }));
-    } catch (err) {
-      return HttpResponse.text(`Internal Server Error. ${this.errorMessage(err)}`, 500);
-    }
+    return await this.runExclusive(async (): Promise<HttpResponse> => {
+      const body = this.bodyAsRecord(request);
+      const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
+      if (extensionName.length === 0) {
+        return HttpResponse.text('Bad Request: extensionName is required in the request body.', 400);
+      }
+      const path = this.resolveExtensionPath(extensionName, body['global'] === true, false);
+      if (!this.store.exists(path)) {
+        return HttpResponse.text(`Directory does not exist at ${path}`, 404);
+      }
+      try {
+        return HttpResponse.json((await this.git.branches(path)).map((branch: GitBranchInfo): JsonRecord => {
+          const row = emptyJsonRecord();
+          row['name'] = branch.name;
+          row['commit'] = branch.commit;
+          row['current'] = branch.current;
+          row['label'] = branch.label;
+          return row;
+        }));
+      } catch (err) {
+        return HttpResponse.text(`Internal Server Error. ${this.errorMessage(err)}`, 500);
+      }
+    });
   }
 
   async switchBranch(request: HttpRequest): Promise<HttpResponse> {
-    const body = this.bodyAsRecord(request);
-    const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
-    const branch = this.asString(body['branch']);
-    if (extensionName.length === 0 || branch.length === 0) {
-      return HttpResponse.text('Bad Request: extensionName and branch are required in the request body.', 400);
-    }
-    const path = this.extensionPath(extensionName, body['global'] === true);
-    if (!this.store.exists(path)) {
-      return HttpResponse.text(`Directory does not exist at ${path}`, 404);
-    }
-    try {
-      await this.git.switchBranch(path, branch);
-      return HttpResponse.empty(204);
-    } catch (err) {
-      return HttpResponse.text(`Internal Server Error. ${this.errorMessage(err)}`, 500);
-    }
+    return await this.runExclusive(async (): Promise<HttpResponse> => {
+      const body = this.bodyAsRecord(request);
+      const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
+      const branch = this.asString(body['branch']);
+      if (extensionName.length === 0 || branch.length === 0) {
+        return HttpResponse.text('Bad Request: extensionName and branch are required in the request body.', 400);
+      }
+      const path = this.resolveExtensionPath(extensionName, body['global'] === true, false);
+      if (!this.store.exists(path)) {
+        return HttpResponse.text(`Directory does not exist at ${path}`, 404);
+      }
+      try {
+        await this.git.switchBranch(path, branch);
+        return HttpResponse.empty(204);
+      } catch (err) {
+        return HttpResponse.text(`Internal Server Error. ${this.errorMessage(err)}`, 500);
+      }
+    });
   }
 
-  move(request: HttpRequest): HttpResponse {
-    const body = this.bodyAsRecord(request);
-    const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
-    const source = this.asString(body['source']);
-    const destination = this.asString(body['destination']);
-    if (extensionName.length === 0 || source.length === 0 || destination.length === 0) {
-      return HttpResponse.text('Bad Request. Not all required parameters are provided.', 400);
-    }
-    if (source === destination) {
-      return HttpResponse.text('Source and destination directories are the same.', 409);
-    }
+  async move(request: HttpRequest): Promise<HttpResponse> {
+    return await this.runExclusive(async (): Promise<HttpResponse> => {
+      const body = this.bodyAsRecord(request);
+      const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
+      const source = this.asString(body['source']);
+      const destination = this.asString(body['destination']);
+      if (extensionName.length === 0 || source.length === 0 || destination.length === 0) {
+        return HttpResponse.text('Bad Request. Not all required parameters are provided.', 400);
+      }
+      if (source === destination) {
+        return HttpResponse.text('Source and destination directories are the same.', 409);
+      }
 
-    const sourcePath = this.extensionPath(extensionName, source === 'global');
-    const destinationPath = this.extensionPath(extensionName, destination === 'global');
-    if (!this.store.exists(sourcePath)) {
-      return HttpResponse.text('Source directory does not exist.', 404);
-    }
-    if (this.store.exists(destinationPath)) {
-      return HttpResponse.text('Destination directory already exists.', 409);
-    }
-    if (!this.store.moveDirectory(sourcePath, destinationPath)) {
-      return HttpResponse.text('Internal Server Error. Check the server logs for more details.', 500);
-    }
-    return HttpResponse.empty(204);
+      const sourcePath = this.resolveExtensionPath(extensionName, source === 'global', false);
+      const destinationPath = this.extensionPath(extensionName, destination === 'global');
+      if (sourcePath === destinationPath) {
+        return HttpResponse.text('Source and destination directories are the same.', 409);
+      }
+      if (!this.store.exists(sourcePath)) {
+        return HttpResponse.text('Source directory does not exist.', 404);
+      }
+      if (this.store.exists(destinationPath)) {
+        return HttpResponse.text('Destination directory already exists.', 409);
+      }
+      if (!this.store.moveDirectory(sourcePath, destinationPath)) {
+        return HttpResponse.text('Internal Server Error. Check the server logs for more details.', 500);
+      }
+      return HttpResponse.empty(204);
+    });
   }
 
   async version(request: HttpRequest): Promise<HttpResponse> {
-    const body = this.bodyAsRecord(request);
-    const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
-    if (extensionName.length === 0) {
-      return HttpResponse.text('Bad Request: extensionName is required in the request body.', 400);
-    }
-    const path = this.extensionPath(extensionName, body['global'] === true);
-    if (!this.store.exists(path)) {
-      return HttpResponse.text(`Directory does not exist at ${path}`, 404);
-    }
-    try {
-      return HttpResponse.json(this.gitVersionToJson(await this.git.version(path)));
-    } catch (_err) {
-      const response = emptyJsonRecord();
-      response['currentBranchName'] = '';
-      response['currentCommitHash'] = '';
-      response['isUpToDate'] = true;
-      response['remoteUrl'] = '';
-      return HttpResponse.json(response);
-    }
+    return await this.runExclusive(async (): Promise<HttpResponse> => {
+      const body = this.bodyAsRecord(request);
+      const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
+      if (extensionName.length === 0) {
+        return HttpResponse.text('Bad Request: extensionName is required in the request body.', 400);
+      }
+      const global = body['global'] === true;
+      const activePath = this.resolveExtensionPath(extensionName, global, false);
+      if (!this.store.exists(activePath)) {
+        return HttpResponse.text(`Directory does not exist at ${activePath}`, 404);
+      }
+      try {
+        if (this.isRepository(activePath)) {
+          return HttpResponse.json(this.gitVersionToJson(await this.git.version(activePath)));
+        }
+
+        const migrationPath = this.findOtherScopeRepositoryPath(extensionName, global);
+        if (migrationPath.length > 0) {
+          const result = await this.git.version(migrationPath);
+          if (this.manifestVersion(activePath) !== this.manifestVersion(migrationPath)) {
+            result.isUpToDate = false;
+          }
+          return HttpResponse.json(this.gitVersionToJson(result));
+        }
+
+        return HttpResponse.json(this.emptyGitVersionJson());
+      } catch (_err) {
+        return HttpResponse.json(this.emptyGitVersionJson());
+      }
+    });
   }
 
-  delete(request: HttpRequest): HttpResponse {
-    const body = this.bodyAsRecord(request);
-    const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
-    if (extensionName.length === 0) {
-      return HttpResponse.text('Bad Request: extensionName is required in the request body.', 400);
-    }
-    const global = body['global'] === true;
-    const path = this.extensionPath(extensionName, global);
-    if (!this.store.exists(path)) {
-      return HttpResponse.text(`Directory does not exist at ${path}`, 404);
-    }
-    if (!this.store.deleteDirectory(path)) {
-      return HttpResponse.text('Internal Server Error. Check the server logs for more details.', 500);
-    }
-    return HttpResponse.text(`Extension has been deleted at ${path}`);
+  async delete(request: HttpRequest): Promise<HttpResponse> {
+    return await this.runExclusive(async (): Promise<HttpResponse> => {
+      const body = this.bodyAsRecord(request);
+      const extensionName = this.cleanExtensionName(this.asString(body['extensionName']));
+      if (extensionName.length === 0) {
+        return HttpResponse.text('Bad Request: extensionName is required in the request body.', 400);
+      }
+      const global = body['global'] === true;
+      const path = this.resolveExtensionPath(extensionName, global, false);
+      if (!this.store.exists(path)) {
+        return HttpResponse.text(`Directory does not exist at ${path}`, 404);
+      }
+      if (!this.store.deleteDirectory(path)) {
+        return HttpResponse.text('Internal Server Error. Check the server logs for more details.', 500);
+      }
+      return HttpResponse.text(`Extension has been deleted at ${path}`);
+    });
   }
 
   serveThirdPartyFile(request: HttpRequest): HttpResponse {
@@ -323,6 +371,93 @@ export class ExtensionsService {
     return joinPath(global ? this.dirs.globalExtensionsRoot : this.dirs.defaultUser.extensions, name);
   }
 
+  private adoptRepositoryPath(repositoryPath: string, activePath: string): boolean {
+    if (repositoryPath === activePath) {
+      return true;
+    }
+    if (!this.store.exists(repositoryPath)) {
+      return false;
+    }
+    const backupPath = `${activePath}.backup-${Date.now()}`;
+    if (this.store.exists(backupPath)) {
+      this.store.deleteDirectory(backupPath);
+    }
+    if (this.store.exists(activePath) && !this.store.moveDirectory(activePath, backupPath)) {
+      return false;
+    }
+    if (!this.store.moveDirectory(repositoryPath, activePath)) {
+      if (this.store.exists(backupPath)) {
+        this.store.moveDirectory(backupPath, activePath);
+      }
+      return false;
+    }
+    if (this.store.exists(backupPath)) {
+      this.store.deleteDirectory(backupPath);
+    }
+    return true;
+  }
+
+  private isRepository(path: string): boolean {
+    return this.store.exists(joinPath(path, '.git'));
+  }
+
+  private manifestVersion(path: string): string {
+    return this.asString(this.store.readJsonRecord(joinPath(path, 'manifest.json'))['version']);
+  }
+
+  private findOtherScopeRepositoryPath(extensionName: string, global: boolean): string {
+    return this.findExtensionPathInRoots(extensionName, global ? this.localExtensionRoots() : this.globalExtensionRoots(),
+      true);
+  }
+
+  private resolveExtensionPath(extensionName: string, global: boolean, allowOtherScope: boolean = true): string {
+    const name = this.cleanExtensionName(extensionName);
+    const scopedRoots = global ? this.globalExtensionRoots() : this.localExtensionRoots();
+    const fallbackRoots = global ? this.localExtensionRoots() : this.globalExtensionRoots();
+    const scopedPath = this.findExtensionPathInRoots(name, scopedRoots);
+    if (scopedPath.length > 0) {
+      return scopedPath;
+    }
+
+    if (allowOtherScope) {
+      const fallbackPath = this.findExtensionPathInRoots(name, fallbackRoots);
+      if (fallbackPath.length > 0) {
+        return fallbackPath;
+      }
+    }
+
+    return this.extensionPath(name, global);
+  }
+
+  private findExtensionPathInRoots(extensionName: string, roots: string[], requireRepository: boolean = false): string {
+    const name = this.cleanExtensionName(extensionName);
+    if (name.length === 0) {
+      return '';
+    }
+    for (const root of roots) {
+      const candidate = joinPath(root, name);
+      if (this.store.exists(candidate) && (!requireRepository || this.store.exists(joinPath(candidate, '.git')))) {
+        return candidate;
+      }
+    }
+    return '';
+  }
+
+  private async runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.queue;
+    let release: () => void = (): void => {};
+    const current = new Promise<void>((resolve: () => void) => {
+      release = resolve;
+    });
+    this.queue = previous.then((): Promise<void> => current, (): Promise<void> => current);
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
+
   private cleanExtensionName(name: string): string {
     let cleaned = name.replace(/\\/g, '/');
     if (cleaned.startsWith('third-party/')) {
@@ -378,6 +513,15 @@ export class ExtensionsService {
     response['currentCommitHash'] = result.currentCommitHash;
     response['isUpToDate'] = result.isUpToDate;
     response['remoteUrl'] = result.remoteUrl;
+    return response;
+  }
+
+  private emptyGitVersionJson(): JsonRecord {
+    const response = emptyJsonRecord();
+    response['currentBranchName'] = '';
+    response['currentCommitHash'] = '';
+    response['isUpToDate'] = true;
+    response['remoteUrl'] = '';
     return response;
   }
 

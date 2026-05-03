@@ -407,11 +407,6 @@ void ExecuteBranches(GitTask &task)
 
     git_repository *repo = nullptr;
     CheckGit(git_repository_open(&repo, task.path.c_str()), "Directory is not a Git repository");
-    if (HasRemote(repo)) {
-        EnsureAllOriginBranchesRefspec(repo);
-        bool unshallow = git_repository_is_shallow(repo) == 1;
-        FetchOrigin(repo, task, unshallow);
-    }
 
     git_branch_iterator *iter = nullptr;
     CheckGit(git_branch_iterator_new(&iter, repo, static_cast<git_branch_t>(GIT_BRANCH_LOCAL | GIT_BRANCH_REMOTE)),

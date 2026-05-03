@@ -57,7 +57,9 @@
 
 - ArkTS 后端不手写 Git 协议，也不假设设备里存在系统 `git` 命令。
 - 第三方扩展安装、更新、分支切换、版本状态查询应走 native `.so` + `libgit2` 路线。
-- ArkTS 只负责 SillyTavern HTTP API 兼容、路径校验、local/global 目录策略和错误响应；native 层只暴露 clone/fetch/pull/checkout/status 等受限能力。
+- ArkTS 只负责 SillyTavern HTTP API 兼容、路径校验、local/global 目录策略和错误响应；native 层只暴露 clone/fetch/pull/checkout/status 等受限能力。管理接口必须复用扩展发现/静态加载的兼容目录解析，并在进入 native 前确认目标是带 `.git` 的真实仓库，保证从 SillyTavern data 备份导入的 `extensions/third-party/<name>`、`public/scripts/extensions/third-party/<name>` 等结构可以被查询版本和删除；如果存在同名 Git clone，则更新动作应优先落到 Git clone。
+- Git 目标收敛为常见公开 HTTPS Git 托管平台的基础兼容，例如 GitHub、GitLab、Gitee、Bitbucket；优先保障 SillyTavern 第三方扩展的安装、更新、版本状态、分支列表和分支切换。
+- 当前不把 ArkTS 后端做成完整 Git 客户端，复杂仓库工作流不进入主线目标。
 - Git 操作的目标路径必须限制在扩展目录内，不能写入 `data/default-user/` 之外的任意位置，也不能执行仓库 hooks。
 - 第一阶段已按该路线接入 `libtavern_git.so`，支持 HTTPS 公共仓库 clone/fetch/status/branch/checkout 和 fast-forward 更新。
 - private credential、SSH、submodule、merge 冲突处理和 hooks 执行仍后置。

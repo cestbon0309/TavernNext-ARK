@@ -16,7 +16,19 @@
         body {
             background-color: rgb(36, 36, 37);
         }
+
+        html.tavernnext-arkweb {
+            height: 100%;
+            min-height: 100dvh;
+        }
     </style>
+    <script>
+        (() => {
+            if (/OpenHarmony|ArkWeb/i.test(navigator.userAgent)) {
+                document.documentElement.classList.add('tavernnext-arkweb');
+            }
+        })();
+    </script>
     <link rel="preload" as="style" href="style.css">
     <link rel="manifest" crossorigin="use-credentials" href="manifest.json">
     <link href="webfonts/NotoSans/stylesheet.css" rel="stylesheet">
