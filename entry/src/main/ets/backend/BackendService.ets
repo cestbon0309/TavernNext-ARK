@@ -11,6 +11,7 @@ import { ModelProxyService } from './ModelProxyService';
 import { joinPath } from './PathUtils';
 import { SecretsService } from './SecretsService';
 import { ShareExportService } from './ShareExportService';
+import { ShellThemeService } from './ShellThemeService';
 import { SillyTavernCore } from './SillyTavernCore';
 import { StaticFileServer } from './StaticFileServer';
 import { TokenizerService } from './TokenizerService';
@@ -47,6 +48,7 @@ export class BackendService {
   private tokenizers: TokenizerService;
   private vectors: VectorService;
   private shareExports: ShareExportService;
+  private shellTheme: ShellThemeService;
   private staticFiles: StaticFileServer;
   private lastMessage: string = 'Not started';
 
@@ -63,6 +65,7 @@ export class BackendService {
     this.secrets = new SecretsService(this.store, this.directories.defaultUser, this.crypto);
     this.users = new UsersService(this.store, this.directories, this.crypto, this.shareExports,
       context as common.UIAbilityContext);
+    this.shellTheme = ShellThemeService.getInstance(context);
     this.git = new GitService(this.store, this.prepareGitCaBundle(context));
     this.extensions = new ExtensionsService(this.store, this.directories, context.resourceManager, this.git);
     this.modelProxy = new ModelProxyService(this.directories, this.secrets);
@@ -107,6 +110,8 @@ export class BackendService {
     this.server.route('GET', '/csrf-token', async () => this.core.csrfToken());
     this.server.route('GET', '/version', async () => this.core.version());
     this.server.route('GET', '/thumbnail', async (request) => await this.media.getDataFile(request));
+    this.server.route('POST', '/api/ohos/shell-theme/background',
+      async (request) => this.shellTheme.reportBackground(request));
 
     this.server.route('POST', '/api/ping', async () => this.core.ping());
 
