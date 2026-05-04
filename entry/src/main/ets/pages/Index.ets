@@ -646,7 +646,8 @@ struct Index {
       this.refreshChatBrowserItems(true);
       return;
     }
-    this.refreshChatBrowserItems(false);
+    this.chatBrowserItems = this.backendService.getChatBrowser().cachedList();
+    this.chatBrowserMessage = '';
     this.showToast('聊天已删除。');
     this.controller.runJavaScript(`(() => {
       if (typeof window.__tavernNextRefreshWelcome === 'function') {
@@ -671,11 +672,18 @@ struct Index {
       return await window.__tavernNextDeleteChat(${payload}) ? 'deleted' : 'failed';
     })();`).then((result: string) => {
       const normalized = (result ?? '').replace(/"/g, '');
-      if (normalized !== 'deleted') {
+      if (normalized === 'missing' || normalized === 'failed' || normalized === 'false') {
         this.showToast('删除失败。');
         return;
       }
-      this.refreshChatBrowserItems(true);
+      if (this.backendService !== null) {
+        this.chatBrowserItems = this.backendService.getChatBrowser().removeCachedItem(item);
+        this.chatBrowserMessage = '';
+      } else {
+        this.chatBrowserItems = this.chatBrowserItems.filter((candidate: ChatBrowserItem): boolean => {
+          return candidate.id !== item.id;
+        });
+      }
       this.showToast('聊天已删除。');
     }).catch((_err: Error) => {
       this.showToast('删除失败。');

@@ -521,18 +521,25 @@ globalThis.__tavernNextRefreshWelcome = async () => {
 
 globalThis.__tavernNextDeleteChat = async ({ avatar = '', group = '', file = '', fileName = '' } = {}) => {
     const targetFile = file || fileName;
+    const refreshAfterDelete = async () => {
+        try {
+            await refreshWelcomeScreen();
+        } catch (error) {
+            console.warn('Failed to refresh welcome screen after deleting chat:', error);
+        }
+    };
     if (avatar && targetFile) {
         const characterId = characters.findIndex(x => x.avatar === avatar);
         if (characterId === -1) {
             return false;
         }
         await deleteCharacterChatByName(String(characterId), targetFile);
-        await refreshWelcomeScreen();
+        await refreshAfterDelete();
         return true;
     }
     if (group && targetFile) {
         await deleteGroupChatByName(group, targetFile);
-        await refreshWelcomeScreen();
+        await refreshAfterDelete();
         return true;
     }
     return false;

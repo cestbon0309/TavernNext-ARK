@@ -144,9 +144,19 @@ export class ChatBrowserService {
   deleteItem(item: ChatBrowserItem): boolean {
     const deleted = this.deleteByFields(item.kind, item.avatar, item.group, item.fileName);
     if (deleted) {
-      this.refreshCache();
+      this.removeCachedItem(item);
     }
     return deleted;
+  }
+
+  removeCachedItem(item: ChatBrowserItem): ChatBrowserItem[] {
+    this.ensureCacheLoaded();
+    this.cachedItems = this.cachedItems.filter((candidate: ChatBrowserItem): boolean => {
+      return !this.isSameCachedItem(candidate, item);
+    });
+    this.cacheRefreshedAt = Date.now();
+    this.writeCache();
+    return this.cachedItems;
   }
 
   private ensureCacheLoaded(): void {
@@ -201,6 +211,17 @@ export class ChatBrowserService {
     item.chatItems = asNumber(value['chatItems']);
     item.openable = asBoolean(value['openable']);
     return item;
+  }
+
+  private isSameCachedItem(left: ChatBrowserItem, right: ChatBrowserItem): boolean {
+    if (left.id.length > 0 && right.id.length > 0) {
+      return left.id === right.id;
+    }
+    return left.kind === right.kind &&
+      left.avatar === right.avatar &&
+      left.group === right.group &&
+      left.fileName === right.fileName &&
+      left.chatName === right.chatName;
   }
 
   private deleteByPayload(body: JsonRecord): boolean {
