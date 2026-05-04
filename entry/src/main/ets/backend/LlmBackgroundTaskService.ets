@@ -2,6 +2,7 @@ import { common, wantAgent, Want, WantAgent } from '@kit.AbilityKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { ApplicationStateService } from './ApplicationStateService';
 
 const DOMAIN = 0x544156;
 const TAG = 'LlmBackgroundTask';
@@ -62,7 +63,7 @@ export class LlmBackgroundTaskService {
     if (this.activeCount === 0) {
       await this.stopContinuousTask();
     }
-    if (notifyCompleted) {
+    if (notifyCompleted && ApplicationStateService.getInstance().isBackground()) {
       await this.publishResponseReadyNotification();
     }
   }

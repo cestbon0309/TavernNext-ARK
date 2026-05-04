@@ -1,6 +1,7 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { ApplicationStateService } from '../backend/ApplicationStateService';
 import { BackendService } from '../backend/BackendService';
 import { ShellThemeService } from '../backend/ShellThemeService';
 
@@ -14,6 +15,9 @@ export default class EntryAbility extends UIAbility {
       hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+    const applicationState = ApplicationStateService.getInstance();
+    applicationState.init(this.context.getApplicationContext());
+    applicationState.markForeground();
     ShellThemeService.getInstance(this.context).refreshWindow();
     BackendService.getInstance(this.context).start();
   }
@@ -53,11 +57,13 @@ export default class EntryAbility extends UIAbility {
 
   onForeground(): void {
     // Ability has brought to foreground
+    ApplicationStateService.getInstance().markForeground();
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onForeground');
   }
 
   onBackground(): void {
     // Ability has back to background
+    ApplicationStateService.getInstance().markBackground();
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
   }
 }
