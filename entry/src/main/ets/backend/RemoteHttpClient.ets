@@ -14,6 +14,15 @@ export class RemoteHttpResult {
 
 export class RemoteHttpClient {
   private decoder: util.TextDecoder = new util.TextDecoder('utf-8');
+  private protocol: http.HttpProtocol | undefined = http.HttpProtocol.HTTP1_1;
+
+  static http1_1(): RemoteHttpClient {
+    return new RemoteHttpClient(http.HttpProtocol.HTTP1_1);
+  }
+
+  constructor(protocol: http.HttpProtocol | undefined = http.HttpProtocol.HTTP1_1) {
+    this.protocol = protocol;
+  }
 
   async getText(url: string, headers: Record<string, string> = {}, timeoutMs: number = 120000): Promise<RemoteHttpResult> {
     return this.request(url, 'GET', '', headers, timeoutMs, false);
@@ -99,6 +108,7 @@ export class RemoteHttpClient {
         connectTimeout: timeoutMs,
         expectDataType: expectBytes ? http.HttpDataType.ARRAY_BUFFER : http.HttpDataType.STRING,
       };
+      this.applyProtocol(options);
       if (method !== 'GET') {
         options.extraData = body;
       }
@@ -153,6 +163,7 @@ export class RemoteHttpClient {
         connectTimeout: timeoutMs,
         expectDataType: http.HttpDataType.ARRAY_BUFFER,
       };
+      this.applyProtocol(options);
       if (method !== 'GET') {
         options.extraData = body;
       }
@@ -203,6 +214,7 @@ export class RemoteHttpClient {
         connectTimeout: timeoutMs,
         expectDataType: http.HttpDataType.ARRAY_BUFFER,
       };
+      this.applyProtocol(options);
       if (method !== 'GET') {
         options.extraData = body;
       }
@@ -268,6 +280,7 @@ export class RemoteHttpClient {
         connectTimeout: timeoutMs,
         expectDataType: http.HttpDataType.ARRAY_BUFFER,
       };
+      this.applyProtocol(options);
       if (method !== 'GET') {
         options.extraData = body;
       }
@@ -308,6 +321,12 @@ export class RemoteHttpClient {
 
   private stripTrailingCr(value: string): string {
     return value.endsWith('\r') ? value.slice(0, value.length - 1) : value;
+  }
+
+  private applyProtocol(options: http.HttpRequestOptions): void {
+    if (this.protocol !== undefined) {
+      options.usingProtocol = this.protocol;
+    }
   }
 
   private headersToRecord(value: Object): Record<string, string> {
