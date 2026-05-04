@@ -36,13 +36,17 @@ body.hideChatAvatars .welcomePanel .recentChatList .recentChat .avatar {
     display: flex;
     flex-direction: row;
     align-items: center;
+    flex-wrap: wrap;
     justify-content: flex-end;
+    column-gap: 8px;
+    row-gap: 5px;
 }
 
 .welcomePanel .recentChatsTitle {
-    flex-grow: 1;
+    flex: 0 0 auto;
     font-size: calc(var(--mainFontSize) * 1.15);
     font-weight: 600;
+    white-space: nowrap;
 }
 
 .welcomePanel .welcomeHeaderTitle {
@@ -68,10 +72,16 @@ body.hideChatAvatars .welcomePanel .recentChatList .recentChat .avatar {
 .welcomePanel .welcomeShortcuts {
     display: flex;
     flex-direction: row;
+    flex: 1 1 0;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-end;
     gap: 5px;
+    min-width: 0;
+}
+
+.welcomePanel.recentHidden .welcomeShortcuts {
+    justify-content: center;
 }
 
 .welcomePanel .welcomeShortcuts .welcomeShortcutsSeparator {
