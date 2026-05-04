@@ -35,7 +35,7 @@ import { callGenericPopup, POPUP_TYPE } from './popup.js';
 import { getMessageTimeStamp } from './RossAscends-mods.js';
 import { renderTemplateAsync } from './templates.js';
 import { accountStorage } from './util/AccountStorage.js';
-import { flashHighlight, isElementInViewport, sortMoments, timestampToMoment } from './utils.js';
+import { debounce, flashHighlight, isElementInViewport, sortMoments, timestampToMoment } from './utils.js';
 
 const assistantAvatarKey = 'assistant';
 const pinnedChatsKey = 'pinnedChats';
@@ -43,6 +43,18 @@ const defaultAssistantAvatar = 'default_Assistant.png';
 
 const DEFAULT_DISPLAYED = 3;
 const MAX_DISPLAYED = 15;
+
+const refreshTavernNextChatBrowserCache = debounce(async () => {
+    try {
+        await fetch('/api/ohos/chats/browser/refresh', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            cache: 'no-cache',
+        });
+    } catch (error) {
+        console.debug('Failed to refresh TavernNext chat browser cache.', error);
+    }
+}, 800);
 
 /**
  * @typedef {Pick<RecentChat, 'group' | 'avatar' | 'file_name'>} PinnedChat
@@ -332,6 +344,23 @@ async function sendWelcomePanel(chats, expand = false) {
                 }
             });
         });
+        fragment.querySelectorAll('button.openAllChatsBrowser').forEach((button) => {
+            button.addEventListener('click', async () => {
+                try {
+                    const response = await fetch('/api/ohos/chats/browser/open', {
+                        method: 'POST',
+                        headers: getRequestHeaders(),
+                        cache: 'no-cache',
+                    });
+                    if (!response.ok) {
+                        toastr.error('无法打开全部聊天列表。');
+                    }
+                } catch (error) {
+                    console.error('Error opening native chat browser:', error);
+                    toastr.error('无法打开全部聊天列表。');
+                }
+            });
+        });
         fragment.querySelectorAll('.recentChat.group').forEach((groupChat) => {
             const groupId = groupChat.getAttribute('data-group');
             const group = groups.find(x => x.id === groupId);
@@ -468,6 +497,46 @@ async function openRecentGroupChat(groupId, fileName) {
         toastr.error(t`Failed to open recent group chat. See console for details.`);
     }
 }
+
+globalThis.__tavernNextOpenChat = async ({ avatar = '', group = '', file = '', fileName = '' } = {}) => {
+    const targetFile = file || fileName;
+    if (avatar && targetFile) {
+        await openRecentCharacterChat(avatar, targetFile);
+        return true;
+    }
+    if (group && targetFile) {
+        await openRecentGroupChat(group, targetFile);
+        return true;
+    }
+    return false;
+};
+
+globalThis.__tavernNextRefreshWelcome = async () => {
+    if (!document.querySelector('#chat .welcomePanel')) {
+        return false;
+    }
+    await refreshWelcomeScreen();
+    return true;
+};
+
+globalThis.__tavernNextDeleteChat = async ({ avatar = '', group = '', file = '', fileName = '' } = {}) => {
+    const targetFile = file || fileName;
+    if (avatar && targetFile) {
+        const characterId = characters.findIndex(x => x.avatar === avatar);
+        if (characterId === -1) {
+            return false;
+        }
+        await deleteCharacterChatByName(String(characterId), targetFile);
+        await refreshWelcomeScreen();
+        return true;
+    }
+    if (group && targetFile) {
+        await deleteGroupChatByName(group, targetFile);
+        await refreshWelcomeScreen();
+        return true;
+    }
+    return false;
+};
 
 /**
  * Renames a recent character chat.
@@ -829,4 +898,17 @@ export function initWelcomeScreen() {
             accountStorage.setItem(assistantAvatarKey, newAvatar);
         }
     });
+
+    const cacheRefreshEvents = [
+        event_types.CHAT_CREATED,
+        event_types.CHAT_DELETED,
+        event_types.GROUP_CHAT_CREATED,
+        event_types.GROUP_CHAT_DELETED,
+        event_types.CHARACTER_DELETED,
+        event_types.CHARACTER_RENAMED,
+        event_types.GROUP_UPDATED,
+    ];
+    for (const event of cacheRefreshEvents) {
+        eventSource.on(event, refreshTavernNextChatBrowserCache);
+    }
 }

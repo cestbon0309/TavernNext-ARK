@@ -1,11 +1,18 @@
 import { resourceManager } from '@kit.LocalizationKit';
+import { util } from '@kit.ArkTS';
 import { HttpRequest, HttpResponse, jsonMessage } from './HttpTypes';
+
+type ThemeColorProvider = () => string;
 
 export class StaticFileServer {
   private manager: resourceManager.ResourceManager;
+  private themeColorProvider: ThemeColorProvider | null;
+  private decoder: util.TextDecoder = new util.TextDecoder('utf-8');
+  private encoder: util.TextEncoder = new util.TextEncoder('utf-8');
 
-  constructor(manager: resourceManager.ResourceManager) {
+  constructor(manager: resourceManager.ResourceManager, themeColorProvider: ThemeColorProvider | null = null) {
     this.manager = manager;
+    this.themeColorProvider = themeColorProvider;
   }
 
   serve(request: HttpRequest): HttpResponse {
@@ -20,15 +27,44 @@ export class StaticFileServer {
 
     try {
       const bytes = this.manager.getRawFileContentSync(rawPath);
-      const response = HttpResponse.bytes(bytes, 200, this.contentType(rawPath));
+      const response = rawPath === 'public/index.html' ?
+        this.indexHtmlResponse(bytes) :
+        HttpResponse.bytes(bytes, 200, this.contentType(rawPath));
       response.headers['cache-control'] = rawPath.endsWith('.html') ? 'no-cache' : 'public, max-age=3600';
       if (request.method === 'HEAD') {
         response.bodyBytes = new Uint8Array();
+        response.body = '';
       }
       return response;
     } catch (_err) {
       return HttpResponse.json(jsonMessage('not_found'), 404);
     }
+  }
+
+  private indexHtmlResponse(bytes: Uint8Array): HttpResponse {
+    const html = this.decoder.decodeToString(bytes);
+    return HttpResponse.bytes(this.encoder.encodeInto(this.injectEarlyThemeColor(html)), 200, this.contentType('public/index.html'));
+  }
+
+  private injectEarlyThemeColor(html: string): string {
+    const color = this.safeThemeColor();
+    if (color.length === 0) {
+      return html;
+    }
+
+    const marker = '</head>';
+    const markerIndex = html.indexOf(marker);
+    if (markerIndex < 0) {
+      return html;
+    }
+
+    const style = `<style id="tavernnext-early-theme">:root{--SmartThemeBlurTintColor:${color};--SmartThemeChatTintColor:${color}}body,#preloader{background-color:${color}}</style>`;
+    return `${html.slice(0, markerIndex)}${style}${html.slice(markerIndex)}`;
+  }
+
+  private safeThemeColor(): string {
+    const color = this.themeColorProvider === null ? '' : this.themeColorProvider();
+    return /^#[0-9A-Fa-f]{6}$/.test(color) ? color : '';
   }
 
   private rawFilePathForRequest(path: string): string {

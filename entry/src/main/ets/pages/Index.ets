@@ -1,6 +1,7 @@
 import { common } from '@kit.AbilityKit';
 import { webview } from '@kit.ArkWeb';
 import { BackendService, BackendStatus } from '../backend/BackendService';
+import { ChatBrowserItem } from '../backend/ChatBrowserService';
 import { ShellThemeService } from '../backend/ShellThemeService';
 
 const DEFAULT_SHELL_BACKGROUND = '#171717';
@@ -15,10 +16,17 @@ struct Index {
   @State message: string = 'Starting ArkTS backend...';
   @State shellBackground: string = DEFAULT_SHELL_BACKGROUND;
   @State webReady: boolean = false;
+  @State chatBrowserOpen: boolean = false;
+  @State chatBrowserItems: ChatBrowserItem[] = [];
+  @State chatBrowserQuery: string = '';
+  @State chatBrowserMessage: string = '';
+  @State chatBrowserDarkMode: boolean = true;
+  @State chatBrowserRefreshing: boolean = false;
   private controller: webview.WebviewController = new webview.WebviewController();
   private webRevealToken: number = 0;
   private lastBackPressTime: number = 0;
   private handlingBackPress: boolean = false;
+  private backendService: BackendService | null = null;
 
   aboutToAppear(): void {
     webview.WebviewController.setWebDebuggingAccess(true);
@@ -29,6 +37,11 @@ struct Index {
       this.applyShellBackground(color);
     });
     const service = BackendService.getInstance(context);
+    this.backendService = service;
+    this.chatBrowserDarkMode = service.getChatBrowser().isDarkMode();
+    service.getChatBrowser().subscribeOpen(() => {
+      this.openChatBrowser();
+    });
     service.start().then((status: BackendStatus) => {
       this.applyStatus(status);
     });
@@ -108,10 +121,246 @@ struct Index {
           .borderRadius(6)
           .position({ x: 12, y: 12 })
       }
+
+      if (this.chatBrowserOpen) {
+        this.chatBrowserView()
+      }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(this.shellBackground)
+  }
+
+  @Builder
+  private chatBrowserView() {
+    Stack() {
+      Column() {
+        Row({ space: 10 }) {
+          Button() {
+            Image($r('app.media.ic_controlcenter_dark_filled'))
+              .width(20)
+              .height(20)
+              .fillColor(this.chatBrowserPrimaryTextColor())
+          }
+          .width(36)
+          .height(36)
+          .backgroundColor(this.chatBrowserChromeColor())
+          .onClick(() => {
+            this.setChatBrowserDarkMode(!this.chatBrowserDarkMode);
+          })
+
+          Column({ space: 2 }) {
+            Text('全部聊天')
+              .fontSize(22)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(this.chatBrowserPrimaryTextColor())
+              .width('100%')
+              .textAlign(TextAlign.Center)
+            Text(this.chatBrowserSubtitle())
+              .fontSize(12)
+              .fontColor(this.chatBrowserSecondaryTextColor())
+              .width('100%')
+              .textAlign(TextAlign.Center)
+          }
+          .layoutWeight(1)
+
+          Button() {
+            Image($r('app.media.ic_public_close'))
+              .width(20)
+              .height(20)
+              .fillColor(this.chatBrowserPrimaryTextColor())
+          }
+          .width(36)
+          .height(36)
+          .backgroundColor(this.chatBrowserChromeColor())
+          .onClick(() => {
+            this.closeChatBrowser();
+          })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: 16, right: 16, top: 14, bottom: 10 })
+        .backgroundColor(this.chatBrowserHeaderColor())
+
+        Column({ space: 12 }) {
+          Row({ space: 10 }) {
+            TextInput({ placeholder: '搜索角色、群组、聊天名或消息', text: this.chatBrowserQuery })
+              .height(44)
+              .layoutWeight(1)
+              .fontSize(14)
+              .placeholderColor(this.chatBrowserPlaceholderColor())
+              .fontColor(this.chatBrowserPrimaryTextColor())
+              .backgroundColor(this.chatBrowserInputColor())
+              .borderRadius(22)
+              .padding({ left: 16, right: 16 })
+              .onChange((value: string) => {
+                this.chatBrowserQuery = value;
+              })
+
+            Button({ stateEffect: true }) {
+              Stack() {
+                Image($r('app.media.ic_public_refresh'))
+                  .width(22)
+                  .height(22)
+                  .fillColor(this.chatBrowserPrimaryTextColor())
+              }
+              .width('100%')
+              .height('100%')
+            }
+            .width(44)
+            .height(44)
+            .padding(0)
+            .borderRadius(22)
+            .backgroundColor(Color.Transparent)
+            .opacity(this.chatBrowserRefreshing ? 0.5 : 1)
+            .enabled(!this.chatBrowserRefreshing)
+            .onClick(() => {
+              this.manualRefreshChatBrowserItems();
+            })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          if (this.chatBrowserMessage.length > 0) {
+            Text(this.chatBrowserMessage)
+              .fontSize(12)
+              .fontColor(this.chatBrowserWarningColor())
+              .width('100%')
+          }
+
+          if (this.chatBrowserRefreshing) {
+            Column({ space: 12 }) {
+              Progress({ value: 0, total: 100, type: ProgressType.Ring })
+                .width(72)
+                .height(72)
+                .color('rgba(0,85,255,1.00)')
+                .style({
+                  strokeWidth: 6,
+                  status: ProgressStatus.LOADING
+                })
+              Text('正在刷新聊天缓存...')
+                .fontSize(14)
+                .fontColor(this.chatBrowserSecondaryTextColor())
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
+            .alignItems(HorizontalAlign.Center)
+          } else if (this.filteredChatBrowserItems().length === 0) {
+            Column({ space: 8 }) {
+              Text('没有找到聊天')
+                .fontSize(16)
+                .fontColor(this.chatBrowserPrimaryTextColor())
+              Text('换个关键词试试，或先在 SillyTavern 中创建聊天。')
+                .fontSize(12)
+                .fontColor(this.chatBrowserSecondaryTextColor())
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .justifyContent(FlexAlign.Center)
+          } else {
+            List({ space: 8 }) {
+              ForEach(this.filteredChatBrowserItems(), (item: ChatBrowserItem) => {
+                ListItem() {
+                  this.chatBrowserRow(item)
+                }
+              }, (item: ChatBrowserItem) => item.id)
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .edgeEffect(EdgeEffect.Spring)
+          }
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .padding({ left: 16, right: 16, top: 12, bottom: 16 })
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(this.chatBrowserBackgroundColor())
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(this.chatBrowserBackgroundColor())
+  }
+
+  @Builder
+  private chatBrowserRow(item: ChatBrowserItem) {
+    Row({ space: 12 }) {
+      if (this.chatBrowserHasCover(item)) {
+        Image(this.chatBrowserCoverUrl(item))
+          .width(72)
+          .height(112)
+          .objectFit(ImageFit.Cover)
+          .backgroundColor(this.chatBrowserCoverBackgroundColor())
+          .borderRadius(7)
+      } else {
+        Text(this.chatBrowserBadgeText(item))
+          .fontSize(20)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+          .width(72)
+          .height(112)
+          .textAlign(TextAlign.Center)
+          .backgroundColor(item.openable ? this.chatBrowserBadgeColor() : this.chatBrowserDisabledBadgeColor())
+          .borderRadius(7)
+      }
+
+      Column({ space: 8 }) {
+        Column({ space: 2 }) {
+          Text(`${item.title} - ${item.chatName}`)
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.chatBrowserPrimaryTextColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(`${item.subtitle} · ${item.chatItems} 条 · ${item.fileSize} · ${this.formatChatBrowserTime(item)}`)
+            .fontSize(11)
+            .fontColor(this.chatBrowserSecondaryTextColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+
+        Text(item.preview)
+          .fontSize(12)
+          .fontColor(this.chatBrowserBodyTextColor())
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .width('100%')
+
+        Row({ space: 8 }) {
+          Button('打开')
+            .fontSize(13)
+            .height(32)
+            .fontColor(this.chatBrowserButtonTextColor())
+            .backgroundColor(this.chatBrowserOpenButtonColor())
+            .enabled(item.openable)
+            .opacity(item.openable ? 1 : 0.45)
+            .onClick(() => {
+              this.openChatBrowserItem(item);
+            })
+          Button('删除')
+            .fontSize(13)
+            .height(32)
+            .backgroundColor(this.chatBrowserDeleteButtonColor())
+            .fontColor(this.chatBrowserButtonTextColor())
+            .onClick(() => {
+              this.confirmDeleteChatBrowserItem(item);
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.End)
+      }
+      .layoutWeight(1)
+      .height(112)
+      .justifyContent(FlexAlign.SpaceBetween)
+    }
+    .width('100%')
+    .padding(12)
+    .backgroundColor(this.chatBrowserCardColor())
+    .borderRadius(8)
+    .border({ width: 1, color: this.chatBrowserBorderColor() })
   }
 
   private handleWebNavigation(request: WebResourceRequest): boolean {
@@ -155,8 +404,292 @@ struct Index {
   }
 
   onBackPress(): boolean {
+    if (this.chatBrowserOpen) {
+      this.closeChatBrowser();
+      return true;
+    }
     this.handleBackPress();
     return true;
+  }
+
+  private openChatBrowser(): void {
+    this.chatBrowserOpen = true;
+    this.chatBrowserQuery = '';
+    this.chatBrowserMessage = '';
+    this.refreshChatBrowserItems(false);
+  }
+
+  private closeChatBrowser(): void {
+    this.chatBrowserOpen = false;
+    this.chatBrowserMessage = '';
+  }
+
+  private setChatBrowserDarkMode(darkMode: boolean): void {
+    this.chatBrowserDarkMode = darkMode;
+    if (this.backendService !== null) {
+      this.backendService.getChatBrowser().setDarkMode(darkMode);
+    }
+  }
+
+  private refreshChatBrowserItems(forceRefresh: boolean = false): void {
+    if (this.backendService === null) {
+      this.chatBrowserItems = [];
+      this.chatBrowserMessage = '后端还没有准备好。';
+      return;
+    }
+    if (forceRefresh) {
+      this.chatBrowserRefreshing = true;
+      this.chatBrowserMessage = '正在刷新聊天缓存...';
+    }
+    try {
+      this.chatBrowserItems = forceRefresh
+        ? this.backendService.getChatBrowser().refreshCache()
+        : this.backendService.getChatBrowser().cachedList();
+      this.chatBrowserMessage = forceRefresh ? '聊天缓存已刷新。' : '';
+    } finally {
+      this.chatBrowserRefreshing = false;
+    }
+  }
+
+  private manualRefreshChatBrowserItems(): void {
+    if (this.backendService === null) {
+      this.chatBrowserItems = [];
+      this.chatBrowserMessage = '后端还没有准备好。';
+      return;
+    }
+    this.chatBrowserItems = [];
+    this.chatBrowserRefreshing = true;
+    this.chatBrowserMessage = '';
+    setTimeout(() => {
+      try {
+        this.chatBrowserItems = this.backendService?.getChatBrowser().refreshCache() ?? [];
+        this.chatBrowserMessage = '聊天缓存已刷新。';
+      } finally {
+        this.chatBrowserRefreshing = false;
+      }
+    }, 80);
+  }
+
+  private filteredChatBrowserItems(): ChatBrowserItem[] {
+    const query = this.chatBrowserQuery.trim().toLowerCase();
+    if (query.length === 0) {
+      return this.chatBrowserItems;
+    }
+    return this.chatBrowserItems.filter((item: ChatBrowserItem): boolean => {
+      const haystack = `${item.title} ${item.subtitle} ${item.chatName} ${item.preview} ${item.fileName}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }
+
+  private chatBrowserSubtitle(): string {
+    const filtered = this.filteredChatBrowserItems().length;
+    const total = this.chatBrowserItems.length;
+    if (filtered === total) {
+      return `${total} 个聊天`;
+    }
+    return `${filtered} / ${total} 个聊天`;
+  }
+
+  private chatBrowserHasCover(item: ChatBrowserItem): boolean {
+    return item.kind === 'character' && item.avatar.length > 0;
+  }
+
+  private chatBrowserCoverUrl(item: ChatBrowserItem): string {
+    return `http://127.0.0.1:8000/characters/${encodeURIComponent(item.avatar)}`;
+  }
+
+  private chatBrowserBadgeText(item: ChatBrowserItem): string {
+    if (item.kind === 'group' || item.kind === 'orphan_group') {
+      return '群';
+    }
+    if (item.kind === 'character' || item.kind === 'orphan_character') {
+      return '角';
+    }
+    return '文';
+  }
+
+  private chatBrowserBackgroundColor(): string {
+    return this.chatBrowserDarkMode ? '#2E2E2E' : '#FFFFFF';
+  }
+
+  private chatBrowserHeaderColor(): string {
+    return this.chatBrowserDarkMode ? '#383838' : '#F7F7F7';
+  }
+
+  private chatBrowserCardColor(): string {
+    return this.chatBrowserDarkMode ? '#3A3A3A' : '#F2F3F5';
+  }
+
+  private chatBrowserInputColor(): string {
+    return this.chatBrowserDarkMode ? '#464646' : '#F0F1F3';
+  }
+
+  private chatBrowserChromeColor(): string {
+    return this.chatBrowserDarkMode ? '#4A4A4A' : '#ECEEF2';
+  }
+
+  private chatBrowserBorderColor(): string {
+    return this.chatBrowserDarkMode ? '#545454' : '#E0E3E8';
+  }
+
+  private chatBrowserPrimaryTextColor(): string {
+    return this.chatBrowserDarkMode ? '#F4F4F4' : '#202124';
+  }
+
+  private chatBrowserSecondaryTextColor(): string {
+    return this.chatBrowserDarkMode ? '#C8C8C8' : '#5F6368';
+  }
+
+  private chatBrowserBodyTextColor(): string {
+    return this.chatBrowserDarkMode ? '#E0E0E0' : '#3C4043';
+  }
+
+  private chatBrowserPlaceholderColor(): string {
+    return this.chatBrowserDarkMode ? '#A8A8A8' : '#8A8F98';
+  }
+
+  private chatBrowserWarningColor(): string {
+    return this.chatBrowserDarkMode ? '#F2D675' : '#8A5E00';
+  }
+
+  private chatBrowserBadgeColor(): string {
+    return this.chatBrowserDarkMode ? '#5E7F5A' : '#6B8F67';
+  }
+
+  private chatBrowserDisabledBadgeColor(): string {
+    return this.chatBrowserDarkMode ? '#6A5C55' : '#9A8D86';
+  }
+
+  private chatBrowserCoverBackgroundColor(): string {
+    return this.chatBrowserDarkMode ? '#262626' : '#E4E7EB';
+  }
+
+  private chatBrowserOpenButtonColor(): string {
+    return this.chatBrowserDarkMode ? '#6F93B7' : '#CFE7FF';
+  }
+
+  private chatBrowserDeleteButtonColor(): string {
+    return this.chatBrowserDarkMode ? '#A76767' : '#FFD6D6';
+  }
+
+  private chatBrowserButtonTextColor(): string {
+    return this.chatBrowserDarkMode ? '#FFFFFF' : '#202124';
+  }
+
+  private formatChatBrowserTime(item: ChatBrowserItem): string {
+    const parsed = Date.parse(item.lastTimestamp);
+    if (!Number.isNaN(parsed)) {
+      return new Date(parsed).toLocaleString();
+    }
+    return new Date(Math.round(item.mtimeMs)).toLocaleString();
+  }
+
+  private openChatBrowserItem(item: ChatBrowserItem): void {
+    if (!item.openable) {
+      this.showToast('这个聊天没有关联角色或群组，无法直接打开。');
+      return;
+    }
+
+    const payload = JSON.stringify({
+      avatar: item.avatar,
+      group: item.group,
+      file: item.chatName,
+    });
+    this.closeChatBrowser();
+    this.controller.runJavaScript(`(async () => {
+      if (typeof window.__tavernNextOpenChat !== 'function') {
+        return 'missing';
+      }
+      return await window.__tavernNextOpenChat(${payload}) ? 'opened' : 'failed';
+    })();`).then((result: string) => {
+      const normalized = (result ?? '').replace(/"/g, '');
+      if (normalized === 'missing' || normalized === 'failed' || normalized === 'false') {
+        this.showToast('打开聊天失败。');
+      }
+    }).catch((_err: Error) => {
+      this.showToast('打开聊天失败。');
+    });
+  }
+
+  private confirmDeleteChatBrowserItem(item: ChatBrowserItem): void {
+    AlertDialog.show({
+      title: '删除聊天',
+      message: `确定删除 ${item.title} - ${item.chatName} 吗？这个操作无法撤销。`,
+      autoCancel: true,
+      primaryButton: {
+        value: '删除',
+        action: () => {
+          this.deleteChatBrowserItem(item);
+        }
+      },
+      secondaryButton: {
+        value: '取消',
+        action: () => {
+        }
+      }
+    });
+  }
+
+  private deleteChatBrowserItem(item: ChatBrowserItem): void {
+    if (item.openable) {
+      this.deleteOpenableChatBrowserItem(item);
+      return;
+    }
+
+    if (this.backendService === null) {
+      this.showToast('后端还没有准备好。');
+      return;
+    }
+    const deleted = this.backendService.getChatBrowser().deleteItem(item);
+    if (!deleted) {
+      this.showToast('删除失败，文件可能已经不存在。');
+      this.refreshChatBrowserItems(true);
+      return;
+    }
+    this.refreshChatBrowserItems(false);
+    this.showToast('聊天已删除。');
+    this.controller.runJavaScript(`(() => {
+      if (typeof window.__tavernNextRefreshWelcome === 'function') {
+        window.__tavernNextRefreshWelcome();
+        return 'refreshing';
+      }
+      return 'idle';
+    })();`).catch((_err: Error) => {
+    });
+  }
+
+  private deleteOpenableChatBrowserItem(item: ChatBrowserItem): void {
+    const payload = JSON.stringify({
+      avatar: item.avatar,
+      group: item.group,
+      file: item.chatName,
+    });
+    this.controller.runJavaScript(`(async () => {
+      if (typeof window.__tavernNextDeleteChat !== 'function') {
+        return 'missing';
+      }
+      return await window.__tavernNextDeleteChat(${payload}) ? 'deleted' : 'failed';
+    })();`).then((result: string) => {
+      const normalized = (result ?? '').replace(/"/g, '');
+      if (normalized !== 'deleted') {
+        this.showToast('删除失败。');
+        return;
+      }
+      this.refreshChatBrowserItems(true);
+      this.showToast('聊天已删除。');
+    }).catch((_err: Error) => {
+      this.showToast('删除失败。');
+    });
+  }
+
+  private showToast(message: string): void {
+    try {
+      this.getUIContext().getPromptAction().showToast({
+        message,
+        duration: 1800
+      });
+    } catch (_err) {
+    }
   }
 
   private handleBackPress(): void {

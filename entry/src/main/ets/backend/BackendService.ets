@@ -1,4 +1,5 @@
 import { common, Context } from '@kit.AbilityKit';
+import { ChatBrowserService } from './ChatBrowserService';
 import { DataDirectories } from './DataDirectories';
 import { CryptoUtils } from './CryptoUtils';
 import { DefaultContentSeeder } from './DefaultContentSeeder';
@@ -51,6 +52,7 @@ export class BackendService {
   private vectors: VectorService;
   private shareExports: ShareExportService;
   private shellTheme: ShellThemeService;
+  private chatBrowser: ChatBrowserService;
   private staticFiles: StaticFileServer;
   private lastMessage: string = 'Not started';
 
@@ -74,7 +76,8 @@ export class BackendService {
     this.modelProxy = new ModelProxyService(this.directories, this.secrets, this.llmBackgroundTasks);
     this.tokenizers = new TokenizerService();
     this.vectors = new VectorService(this.store, this.directories, this.secrets);
-    this.staticFiles = new StaticFileServer(context.resourceManager);
+    this.chatBrowser = new ChatBrowserService(this.store, this.directories);
+    this.staticFiles = new StaticFileServer(context.resourceManager, () => this.shellTheme.getBackgroundColor());
     this.server = new HttpServer('127.0.0.1', 8000);
     this.registerRoutes();
   }
@@ -84,6 +87,10 @@ export class BackendService {
       BackendService.instance = new BackendService(context);
     }
     return BackendService.instance;
+  }
+
+  getChatBrowser(): ChatBrowserService {
+    return this.chatBrowser;
   }
 
   async start(): Promise<BackendStatus> {
@@ -115,6 +122,11 @@ export class BackendService {
     this.server.route('GET', '/thumbnail', async (request) => await this.media.getDataFile(request));
     this.server.route('POST', '/api/ohos/shell-theme/background',
       async (request) => this.shellTheme.reportBackground(request));
+    this.server.route('POST', '/api/ohos/chats/browser/open', async () => this.chatBrowser.openBrowser());
+    this.server.route('POST', '/api/ohos/chats/browser/list', async (request) => this.chatBrowser.listResponse(request));
+    this.server.route('POST', '/api/ohos/chats/browser/refresh', async () => this.chatBrowser.refreshResponse());
+    this.server.route('POST', '/api/ohos/chats/browser/delete',
+      async (request) => this.chatBrowser.deleteResponse(request));
 
     this.server.route('POST', '/api/ping', async () => this.core.ping());
 
