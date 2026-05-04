@@ -66,19 +66,26 @@ export class ShellThemeService {
 
   reportBackground(request: HttpRequest): HttpResponse {
     const body = (request.body ?? {}) as JsonRecord;
-    const color = this.normalizeColor(this.asString(body['color']));
-    if (color === null) {
+    if (!this.updateBackgroundColor(this.asString(body['color']), true)) {
       const response: JsonRecord = {};
       response['ok'] = false;
       response['backgroundColor'] = this.backgroundColor;
       return HttpResponse.json(response, 400);
     }
 
-    this.setBackgroundColor(color, true);
     const response: JsonRecord = {};
     response['ok'] = true;
     response['backgroundColor'] = this.backgroundColor;
     return HttpResponse.json(response);
+  }
+
+  updateBackgroundColor(value: string, forceApply: boolean = false): boolean {
+    const color = this.normalizeColor(value);
+    if (color === null) {
+      return false;
+    }
+    this.setBackgroundColor(color, forceApply);
+    return true;
   }
 
   private setBackgroundColor(color: string, forceApply: boolean = false): void {
@@ -193,16 +200,7 @@ export class ShellThemeService {
       return null;
     }
 
-    if (alpha >= 1) {
-      return new RgbaColor(red, green, blue);
-    }
-
-    const base = this.hexToRgba(DEFAULT_BACKGROUND);
-    return new RgbaColor(
-      Math.round(red * alpha + base.red * (1 - alpha)),
-      Math.round(green * alpha + base.green * (1 - alpha)),
-      Math.round(blue * alpha + base.blue * (1 - alpha))
-    );
+    return new RgbaColor(red, green, blue);
   }
 
   private clampColor(value: number): number | null {

@@ -1151,6 +1151,27 @@ function applyThemeColor(type) {
     if (type === 'border') {
         document.documentElement.style.setProperty('--SmartThemeBorderColor', power_user.border_color);
     }
+    if (type === undefined || type === 'blurTint' || type === 'chatTint') {
+        syncTavernNextShellThemeColor();
+    }
+}
+
+function syncTavernNextShellThemeColor() {
+    const color = power_user?.blur_tint_color
+        || getComputedStyle(document.documentElement).getPropertyValue('--SmartThemeBlurTintColor').trim();
+    if (!color) {
+        return;
+    }
+
+    fetch('/api/ohos/shell-theme/background', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ color }),
+    }).catch(() => {});
+
+    if (typeof window.__tavernNextShellThemeProbeReport === 'function') {
+        setTimeout(window.__tavernNextShellThemeProbeReport, 0);
+    }
 }
 
 function applyCustomCSS() {
@@ -1447,6 +1468,7 @@ function applyTheme(name) {
     }
 
     console.log('theme applied: ' + name);
+    syncTavernNextShellThemeColor();
 }
 
 async function applyMovingUIPreset(name) {
@@ -1501,6 +1523,7 @@ export function applyPowerUserSettings() {
     switchTokenCount();
     switchMessageActions();
     switchSwipeNumAllMessages();
+    syncTavernNextShellThemeColor();
 }
 
 export function applyStylePins() {

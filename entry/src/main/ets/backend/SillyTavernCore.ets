@@ -16,6 +16,7 @@ import { PngCardStore } from './PngCardStore';
 import { ShareExportService } from './ShareExportService';
 
 type JsonValue = Object | string | number | boolean | null | JsonArray;
+type SettingsSavedListener = (settings: JsonRecord) => void;
 
 class HealthResponse {
   ok: boolean = true;
@@ -238,17 +239,19 @@ export class SillyTavernCore {
   private cardStore: PngCardStore;
   private shareExports: ShareExportService;
   private manager: resourceManager.ResourceManager | null;
+  private settingsSavedListener: SettingsSavedListener | null;
   private encoder: util.TextEncoder = new util.TextEncoder('utf-8');
   private decoder: util.TextDecoder = new util.TextDecoder('utf-8');
 
   constructor(store: FileStore, dirs: DataDirectories, shareExports: ShareExportService,
-    manager: resourceManager.ResourceManager | null = null) {
+    manager: resourceManager.ResourceManager | null = null, settingsSavedListener: SettingsSavedListener | null = null) {
     this.store = store;
     this.dirs = dirs;
     this.userDirs = dirs.defaultUser;
     this.cardStore = new PngCardStore(store);
     this.shareExports = shareExports;
     this.manager = manager;
+    this.settingsSavedListener = settingsSavedListener;
   }
 
   health(): HttpResponse {
@@ -370,6 +373,7 @@ export class SillyTavernCore {
       return HttpResponse.json(jsonMessage('body must be JSON'), 400);
     }
     this.store.writeJson(joinPath(this.userDirs.root, 'settings.json'), request.body);
+    this.notifySettingsSaved(request.body as JsonRecord);
     return HttpResponse.json(new ResultResponse('ok'));
   }
 
@@ -426,6 +430,7 @@ export class SillyTavernCore {
     if (!this.store.copyFile(snapshot, joinPath(this.userDirs.root, 'settings.json'))) {
       return HttpResponse.empty(500);
     }
+    this.notifySettingsSaved(this.store.readJsonRecord(joinPath(this.userDirs.root, 'settings.json')));
     return HttpResponse.empty(204);
   }
 
@@ -1398,6 +1403,13 @@ export class SillyTavernCore {
       return emptyJsonRecord();
     }
     return request.body as JsonRecord;
+  }
+
+  private notifySettingsSaved(settings: JsonRecord): void {
+    if (this.settingsSavedListener === null) {
+      return;
+    }
+    this.settingsSavedListener(settings);
   }
 
   private statsPath(): string {

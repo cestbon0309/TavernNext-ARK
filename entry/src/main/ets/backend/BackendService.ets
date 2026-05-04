@@ -6,7 +6,9 @@ import { DefaultContentSeeder } from './DefaultContentSeeder';
 import { ExtensionsService } from './ExtensionsService';
 import { FileStore } from './FileStore';
 import { GitService } from './GitService';
+import { JsonRecord } from './HttpTypes';
 import { HttpServer } from './HttpServer';
+import { asRecord, asString } from './JsonUtils';
 import { LlmBackgroundTaskService } from './LlmBackgroundTaskService';
 import { MediaService } from './MediaService';
 import { ModelProxyService } from './ModelProxyService';
@@ -63,13 +65,15 @@ export class BackendService {
     this.directories.initialize();
     new DefaultContentSeeder(this.store, this.directories, context.resourceManager).seedDefaultUser();
     this.directories.ensureDefaultUserFiles();
+    this.shellTheme = ShellThemeService.getInstance(context);
+    this.syncShellThemeFromCurrentSettings();
     this.shareExports = new ShareExportService(context as common.UIAbilityContext, this.store, this.directories.exportRoot);
-    this.core = new SillyTavernCore(this.store, this.directories, this.shareExports, context.resourceManager);
+    this.core = new SillyTavernCore(this.store, this.directories, this.shareExports, context.resourceManager,
+      (settings: JsonRecord) => this.syncShellThemeFromSettings(settings));
     this.media = new MediaService(this.store, this.directories, this.crypto);
     this.secrets = new SecretsService(this.store, this.directories.defaultUser, this.crypto);
     this.users = new UsersService(this.store, this.directories, this.crypto, this.shareExports,
       context as common.UIAbilityContext);
-    this.shellTheme = ShellThemeService.getInstance(context);
     this.git = new GitService(this.store, this.prepareGitCaBundle(context));
     this.extensions = new ExtensionsService(this.store, this.directories, context.resourceManager, this.git);
     this.llmBackgroundTasks = new LlmBackgroundTaskService(context as common.UIAbilityContext);
@@ -338,6 +342,19 @@ export class BackendService {
       return caBundlePath;
     } catch (_err) {
       return '';
+    }
+  }
+
+  private syncShellThemeFromCurrentSettings(): void {
+    const settings = this.store.readJsonRecord(joinPath(this.directories.defaultUser.root, 'settings.json'));
+    this.syncShellThemeFromSettings(settings);
+  }
+
+  private syncShellThemeFromSettings(settings: JsonRecord): void {
+    const powerUser = asRecord(settings['power_user']);
+    const color = asString(powerUser['blur_tint_color']) || asString(powerUser['chat_tint_color']);
+    if (color.length > 0) {
+      this.shellTheme.updateBackgroundColor(color);
     }
   }
 

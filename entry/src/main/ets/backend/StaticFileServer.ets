@@ -58,7 +58,7 @@ export class StaticFileServer {
       return html;
     }
 
-    const style = `<style id="tavernnext-early-theme">:root{--SmartThemeBlurTintColor:${color};--SmartThemeChatTintColor:${color}}body,#preloader{background-color:${color}}</style>`;
+    const style = `<style id="tavernnext-early-theme">:root{--SmartThemeBlurTintColor:${color};--SmartThemeChatTintColor:${color}}html,body,#preloader{background-color:var(--SmartThemeBlurTintColor)}</style>`;
     return `${html.slice(0, markerIndex)}${style}${html.slice(markerIndex)}`;
   }
 

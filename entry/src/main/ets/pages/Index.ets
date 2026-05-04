@@ -1020,6 +1020,18 @@ struct Index {
         clearTimeout(timer);
         timer = setTimeout(report, 80);
       };
+      const observeThemeControl = (selector) => {
+        const element = document.querySelector(selector);
+        if (!element) {
+          return;
+        }
+        element.addEventListener('change', schedule, true);
+        element.addEventListener('input', schedule, true);
+        new MutationObserver(schedule).observe(element, {
+          attributes: true,
+          attributeFilter: ['color', 'value', 'style', 'class']
+        });
+      };
 
       window.__tavernNextShellThemeProbeReport = report;
       window.__tavernNextExternalLinkBridgeInstall = () => {
@@ -1061,8 +1073,12 @@ struct Index {
           attributes: true,
           attributeFilter: ['style', 'class']
         });
+        observeThemeControl('#themes');
+        observeThemeControl('#blur-tint-color-picker');
+        observeThemeControl('#chat-tint-color-picker');
         window.addEventListener('load', schedule);
         window.addEventListener('resize', schedule);
+        window.addEventListener('pageshow', schedule);
         document.addEventListener('visibilitychange', schedule);
         setInterval(report, 2000);
       }
