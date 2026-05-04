@@ -6,6 +6,8 @@ import { ShellThemeService } from '../backend/ShellThemeService';
 
 const DEFAULT_SHELL_BACKGROUND = '#171717';
 const BACK_EXIT_INTERVAL_MS = 2000;
+const CHAT_BROWSER_DELETE_ANIMATION_MS = 220;
+const CHAT_BROWSER_ROW_HEIGHT = 136;
 
 @Entry
 @Component
@@ -22,6 +24,7 @@ struct Index {
   @State chatBrowserMessage: string = '';
   @State chatBrowserDarkMode: boolean = true;
   @State chatBrowserRefreshing: boolean = false;
+  @State chatBrowserDeletingIds: string[] = [];
   private controller: webview.WebviewController = new webview.WebviewController();
   private webRevealToken: number = 0;
   private lastBackPressTime: number = 0;
@@ -335,8 +338,8 @@ struct Index {
             .height(32)
             .fontColor(this.chatBrowserButtonTextColor())
             .backgroundColor(this.chatBrowserOpenButtonColor())
-            .enabled(item.openable)
-            .opacity(item.openable ? 1 : 0.45)
+            .enabled(item.openable && !this.isChatBrowserItemDeleting(item))
+            .opacity(item.openable && !this.isChatBrowserItemDeleting(item) ? 1 : 0.45)
             .onClick(() => {
               this.openChatBrowserItem(item);
             })
@@ -345,6 +348,8 @@ struct Index {
             .height(32)
             .backgroundColor(this.chatBrowserDeleteButtonColor())
             .fontColor(this.chatBrowserButtonTextColor())
+            .enabled(!this.isChatBrowserItemDeleting(item))
+            .opacity(this.isChatBrowserItemDeleting(item) ? 0.45 : 1)
             .onClick(() => {
               this.confirmDeleteChatBrowserItem(item);
             })
@@ -357,10 +362,15 @@ struct Index {
       .justifyContent(FlexAlign.SpaceBetween)
     }
     .width('100%')
-    .padding(12)
+    .height(this.isChatBrowserItemDeleting(item) ? 0 : CHAT_BROWSER_ROW_HEIGHT)
+    .padding(this.isChatBrowserItemDeleting(item) ? 0 : 12)
     .backgroundColor(this.chatBrowserCardColor())
     .borderRadius(8)
     .border({ width: 1, color: this.chatBrowserBorderColor() })
+    .opacity(this.isChatBrowserItemDeleting(item) ? 0 : 1)
+    .scale({ x: this.isChatBrowserItemDeleting(item) ? 0.96 : 1, y: this.isChatBrowserItemDeleting(item) ? 0.96 : 1 })
+    .clip(true)
+    .animation({ duration: CHAT_BROWSER_DELETE_ANIMATION_MS, curve: Curve.EaseInOut })
   }
 
   private handleWebNavigation(request: WebResourceRequest): boolean {
@@ -422,6 +432,7 @@ struct Index {
   private closeChatBrowser(): void {
     this.chatBrowserOpen = false;
     this.chatBrowserMessage = '';
+    this.chatBrowserDeletingIds = [];
   }
 
   private setChatBrowserDarkMode(darkMode: boolean): void {
@@ -446,6 +457,7 @@ struct Index {
         ? this.backendService.getChatBrowser().refreshCache()
         : this.backendService.getChatBrowser().cachedList();
       this.chatBrowserMessage = forceRefresh ? '聊天缓存已刷新。' : '';
+      this.chatBrowserDeletingIds = [];
     } finally {
       this.chatBrowserRefreshing = false;
     }
@@ -464,6 +476,7 @@ struct Index {
       try {
         this.chatBrowserItems = this.backendService?.getChatBrowser().refreshCache() ?? [];
         this.chatBrowserMessage = '聊天缓存已刷新。';
+        this.chatBrowserDeletingIds = [];
       } finally {
         this.chatBrowserRefreshing = false;
       }
@@ -496,6 +509,36 @@ struct Index {
 
   private chatBrowserCoverUrl(item: ChatBrowserItem): string {
     return `http://127.0.0.1:8000/characters/${encodeURIComponent(item.avatar)}`;
+  }
+
+  private isChatBrowserItemDeleting(item: ChatBrowserItem): boolean {
+    return this.chatBrowserDeletingIds.includes(item.id);
+  }
+
+  private beginChatBrowserDeleteAnimation(item: ChatBrowserItem): void {
+    if (this.isChatBrowserItemDeleting(item)) {
+      return;
+    }
+    this.chatBrowserDeletingIds = [...this.chatBrowserDeletingIds, item.id];
+  }
+
+  private finishChatBrowserDeleteAnimation(item: ChatBrowserItem): void {
+    if (this.backendService !== null) {
+      this.chatBrowserItems = this.backendService.getChatBrowser().removeCachedItem(item);
+    } else {
+      this.chatBrowserItems = this.chatBrowserItems.filter((candidate: ChatBrowserItem): boolean => {
+        return candidate.id !== item.id;
+      });
+    }
+    this.chatBrowserDeletingIds = this.chatBrowserDeletingIds.filter((id: string): boolean => id !== item.id);
+    this.chatBrowserMessage = '';
+  }
+
+  private animateChatBrowserItemRemoval(item: ChatBrowserItem): void {
+    this.beginChatBrowserDeleteAnimation(item);
+    setTimeout(() => {
+      this.finishChatBrowserDeleteAnimation(item);
+    }, CHAT_BROWSER_DELETE_ANIMATION_MS);
   }
 
   private chatBrowserBadgeText(item: ChatBrowserItem): string {
@@ -646,8 +689,7 @@ struct Index {
       this.refreshChatBrowserItems(true);
       return;
     }
-    this.chatBrowserItems = this.backendService.getChatBrowser().cachedList();
-    this.chatBrowserMessage = '';
+    this.animateChatBrowserItemRemoval(item);
     this.showToast('聊天已删除。');
     this.controller.runJavaScript(`(() => {
       if (typeof window.__tavernNextRefreshWelcome === 'function') {
@@ -676,14 +718,7 @@ struct Index {
         this.showToast('删除失败。');
         return;
       }
-      if (this.backendService !== null) {
-        this.chatBrowserItems = this.backendService.getChatBrowser().removeCachedItem(item);
-        this.chatBrowserMessage = '';
-      } else {
-        this.chatBrowserItems = this.chatBrowserItems.filter((candidate: ChatBrowserItem): boolean => {
-          return candidate.id !== item.id;
-        });
-      }
+      this.animateChatBrowserItemRemoval(item);
       this.showToast('聊天已删除。');
     }).catch((_err: Error) => {
       this.showToast('删除失败。');
