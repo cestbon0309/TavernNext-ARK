@@ -166,6 +166,24 @@ body {
     color-scheme: only light;
 }
 
+html.tavernnext-arkweb body,
+html.tavernnext-arkweb #chat,
+html.tavernnext-arkweb #send_form {
+    text-shadow: none;
+}
+
+html.tavernnext-arkweb #chat,
+html.tavernnext-arkweb #send_form {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+}
+
+html.tavernnext-arkweb #sheld,
+html.tavernnext-arkweb #chat,
+html.tavernnext-arkweb #send_form {
+    box-shadow: none;
+}
+
 ::-webkit-scrollbar {
     width: 0.7rem;
     scrollbar-gutter: stable;

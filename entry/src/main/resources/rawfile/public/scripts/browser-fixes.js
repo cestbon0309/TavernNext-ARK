@@ -71,13 +71,17 @@ function applyBrowserFixes() {
     }
 
     if (isMobile()) {
+        const isOhosWebView = document.documentElement.classList.contains('tavernnext-arkweb') ||
+            /OpenHarmony|ArkWeb/i.test(navigator.userAgent);
         const fixFunkyPositioning = () => {
             console.debug('[Mobile] Device viewport change detected.');
             document.documentElement.style.position = 'fixed';
             requestAnimationFrame(() => document.documentElement.style.position = '');
         };
-        window.addEventListener('resize', fixFunkyPositioning);
-        window.addEventListener('orientationchange', fixFunkyPositioning);
+        if (!isOhosWebView) {
+            window.addEventListener('resize', fixFunkyPositioning);
+            window.addEventListener('orientationchange', fixFunkyPositioning);
+        }
     }
 
     addSafariPatch();
