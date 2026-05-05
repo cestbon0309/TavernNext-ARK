@@ -7,6 +7,7 @@ import { ShellThemeService } from '../backend/ShellThemeService';
 const DEFAULT_SHELL_BACKGROUND = '#171717';
 const BACK_EXIT_INTERVAL_MS = 2000;
 const CHAT_BROWSER_DELETE_ANIMATION_MS = 220;
+const CHAT_BROWSER_THEME_ANIMATION_MS = 220;
 const CHAT_BROWSER_ROW_HEIGHT = 136;
 
 @Entry
@@ -184,6 +185,7 @@ struct Index {
         .alignItems(VerticalAlign.Center)
         .padding({ left: 16, right: 16, top: 14, bottom: 10 })
         .backgroundColor(this.chatBrowserHeaderColor())
+        .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
 
         Column({ space: 12 }) {
           Row({ space: 10 }) {
@@ -194,6 +196,7 @@ struct Index {
               .placeholderColor(this.chatBrowserPlaceholderColor())
               .fontColor(this.chatBrowserPrimaryTextColor())
               .backgroundColor(this.chatBrowserInputColor())
+              .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
               .borderRadius(22)
               .padding({ left: 16, right: 16 })
               .onChange((value: string) => {
@@ -281,10 +284,12 @@ struct Index {
       .width('100%')
       .height('100%')
       .backgroundColor(this.chatBrowserBackgroundColor())
+      .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
     }
     .width('100%')
     .height('100%')
     .backgroundColor(this.chatBrowserBackgroundColor())
+    .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
   }
 
   @Builder
