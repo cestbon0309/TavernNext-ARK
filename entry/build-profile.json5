@@ -36,6 +36,36 @@
       "name": "default"
     },
     {
+      "name": "arm64",
+      "config": {
+        "buildOption": {
+          "externalNativeOptions": {
+            "path": "./src/main/cpp/CMakeLists.txt",
+            "arguments": "",
+            "abiFilters": [
+              "arm64-v8a"
+            ],
+            "cppFlags": ""
+          }
+        }
+      }
+    },
+    {
+      "name": "x86_64",
+      "config": {
+        "buildOption": {
+          "externalNativeOptions": {
+            "path": "./src/main/cpp/CMakeLists.txt",
+            "arguments": "",
+            "abiFilters": [
+              "x86_64"
+            ],
+            "cppFlags": ""
+          }
+        }
+      }
+    },
+    {
       "name": "ohosTest",
     }
   ]
