@@ -4,6 +4,7 @@ import {
   asNumberValue,
   asRecordValue,
   asStringValue,
+  cloneJsonValue,
   currentUnixTimestamp,
   messageContentToText,
 } from '../JsonHelpers';
@@ -140,12 +141,56 @@ export function normalizeGeminiInteractionsResponse(raw: JsonRecord): JsonRecord
   if (Array.isArray(raw['choices'])) {
     return raw;
   }
-  const response = baseCompletion(asStringValue(raw['id']) || `chatcmpl-interactions-${currentUnixTimestamp()}`,
-    asStringValue(raw['model']));
+  const response = baseCompletion(asStringValue(raw['id']) || 'gemini-interactions-chat-completion',
+    asStringValue(raw['model']) || asStringValue(raw['modelVersion']));
   const message = emptyJsonRecord();
   message['role'] = 'assistant';
-  message['content'] = messageContentToText(raw['output'] ?? raw['content']);
-  setChoice(response, message, 'stop');
+  const outputs = asArrayValue(raw['outputs']);
+  const textParts: string[] = [];
+  const reasoningParts: string[] = [];
+  const toolCalls: JsonArray = [];
+  for (let index = 0; index < outputs.length; index += 1) {
+    const item = outputs[index];
+    if (item === null || Array.isArray(item) || typeof item !== 'object') {
+      continue;
+    }
+    const output = item as JsonRecord;
+    const type = asStringValue(output['type']);
+    if (type === 'text') {
+      const text = asStringValue(output['text']).trim();
+      if (text.length > 0) {
+        textParts.push(text);
+      }
+    } else if (type === 'thought') {
+      const summary = asStringValue(output['summary']).trim();
+      if (summary.length > 0) {
+        reasoningParts.push(summary);
+      }
+    } else if (type === 'function_call') {
+      const id = asStringValue(output['id']).trim() || `tool_call_${index}`;
+      const name = asStringValue(output['name']).trim() || 'tool';
+      toolCalls.push(openAiToolCall(id, name, output['arguments'], asStringValue(output['signature']).trim()));
+    }
+  }
+  message['content'] = outputs.length > 0 ? textParts.join('\n\n') : messageContentToText(raw['output'] ?? raw['content']);
+  if (reasoningParts.length > 0) {
+    message['reasoning_content'] = reasoningParts.join('\n\n');
+  }
+  if (toolCalls.length > 0) {
+    message['tool_calls'] = toolCalls;
+  }
+  if (outputs.length > 0) {
+    const native = emptyJsonRecord();
+    const wrapper = emptyJsonRecord();
+    wrapper['outputs'] = cloneJsonValue(outputs) as JsonArray;
+    native['gemini_interactions'] = wrapper;
+    message['native'] = native;
+  }
+  setChoice(response, message, toolCalls.length > 0 ? 'tool_calls' : 'stop');
+  const usage = thisGeminiInteractionsUsage(raw);
+  if (usage !== null) {
+    response['usage'] = usage;
+  }
   return response;
 }
 
@@ -211,7 +256,8 @@ function geminiFinishReason(value: string, hasToolCalls: boolean): string {
   }
 }
 
-function openAiToolCall(id: string, name: string, args: Object | string | number | boolean | null | JsonArray | undefined): JsonRecord {
+function openAiToolCall(id: string, name: string, args: Object | string | number | boolean | null | JsonArray | undefined,
+  signature: string = ''): JsonRecord {
   const fn = emptyJsonRecord();
   fn['name'] = name;
   fn['arguments'] = typeof args === 'string' ? args : JSON.stringify(args ?? {});
@@ -219,7 +265,25 @@ function openAiToolCall(id: string, name: string, args: Object | string | number
   call['id'] = id.length > 0 ? id : `call_${currentUnixTimestamp()}`;
   call['type'] = 'function';
   call['function'] = fn;
+  if (signature.length > 0) {
+    call['signature'] = signature;
+  }
   return call;
+}
+
+function thisGeminiInteractionsUsage(raw: JsonRecord): JsonRecord | null {
+  const usage = asRecordValue(raw['usage']);
+  if (Object.keys(usage).length === 0) {
+    return null;
+  }
+  const prompt = asNumberValue(usage['input_tokens'], asNumberValue(usage['prompt_tokens']));
+  const completion = asNumberValue(usage['output_tokens'], asNumberValue(usage['completion_tokens']));
+  const total = asNumberValue(usage['total_tokens'], asNumberValue(usage['totalTokens'], prompt + completion));
+  const mapped = emptyJsonRecord();
+  mapped['prompt_tokens'] = prompt;
+  mapped['completion_tokens'] = completion;
+  mapped['total_tokens'] = total;
+  return mapped;
 }
 
 function cohereContentText(value: Object | string | number | boolean | null | JsonArray | undefined): string {

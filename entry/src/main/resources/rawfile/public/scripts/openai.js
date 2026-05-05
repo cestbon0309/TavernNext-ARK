@@ -231,6 +231,13 @@ const openrouter_middleout_types = {
     OFF: 'off',
 };
 
+export const custom_api_formats = {
+    OPENAI_COMPAT: 'openai_compat',
+    OPENAI_RESPONSES: 'openai_responses',
+    CLAUDE_MESSAGES: 'claude_messages',
+    GEMINI_INTERACTIONS: 'gemini_interactions',
+};
+
 export const reasoning_effort_types = {
     auto: 'auto',
     low: 'low',
@@ -329,6 +336,7 @@ export const settingsToUpdate = {
     cometapi_model: ['#model_cometapi_select', 'cometapi_model', false, true],
     custom_model: ['#custom_model_id', 'custom_model', false, true],
     custom_url: ['#custom_api_url_text', 'custom_url', false, true],
+    custom_api_format: ['#custom_api_format', 'custom_api_format', false, true],
     custom_include_body: ['#custom_include_body', 'custom_include_body', false, true],
     custom_exclude_body: ['#custom_exclude_body', 'custom_exclude_body', false, true],
     custom_include_headers: ['#custom_include_headers', 'custom_include_headers', false, true],
@@ -445,6 +453,7 @@ const default_settings = {
     azure_openai_model: '',
     custom_model: '',
     custom_url: '',
+    custom_api_format: custom_api_formats.OPENAI_COMPAT,
     custom_include_body: '',
     custom_exclude_body: '',
     custom_include_headers: '',
@@ -545,7 +554,7 @@ function setOpenAIMessages(chat) {
     // clean openai msgs
     const messages = [];
     // Get current API and model for thought signature validation
-    const currentApi = oai_settings.chat_completion_source;
+    const currentApi = getEffectiveChatCompletionSource(oai_settings);
     const currentModel = getChatCompletionModel();
 
     for (let i = chat.length - 1; i >= 0; i--) {
@@ -1291,7 +1300,7 @@ async function populateChatCompletion(prompts, chatCompletion, { bias, quietProm
     if (type === 'continue' && oai_settings.continue_prefill && messages.length) {
         const chatMessage = messages.shift();
         const isAssistantRole = chatMessage.role === 'assistant';
-        const supportsAssistantPrefill = oai_settings.chat_completion_source === chat_completion_sources.CLAUDE;
+        const supportsAssistantPrefill = isClaudeLikeSource(oai_settings);
         const namesInCompletion = oai_settings.names_behavior === character_names_behavior.COMPLETION;
         const assistantPrefill = isAssistantRole && supportsAssistantPrefill ? substituteParams(oai_settings.assistant_prefill) : '';
         const messageContent = [assistantPrefill, chatMessage.content].filter(x => x).join('\n\n');
@@ -1731,6 +1740,54 @@ export function getChatCompletionModel(settings = null) {
             console.error(`Unknown chat completion source: ${source}`);
             return '';
     }
+}
+
+function getEffectiveChatCompletionSource(settings = null) {
+    settings = settings ?? oai_settings;
+    if (settings.chat_completion_source !== chat_completion_sources.CUSTOM) {
+        return settings.chat_completion_source;
+    }
+    switch (settings.custom_api_format) {
+        case custom_api_formats.CLAUDE_MESSAGES:
+            return chat_completion_sources.CLAUDE;
+        case custom_api_formats.GEMINI_INTERACTIONS:
+            return chat_completion_sources.MAKERSUITE;
+        default:
+            return chat_completion_sources.CUSTOM;
+    }
+}
+
+function getStreamingChatCompletionSource(settings = null) {
+    settings = settings ?? oai_settings;
+    if (settings.chat_completion_source !== chat_completion_sources.CUSTOM) {
+        return settings.chat_completion_source;
+    }
+    if (settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES) {
+        return chat_completion_sources.CLAUDE;
+    }
+    // Custom Gemini Interactions streams are normalized by the ArkTS backend into OpenAI chat chunks.
+    return chat_completion_sources.CUSTOM;
+}
+
+function isCustomApiFormat(settings, format) {
+    return settings.chat_completion_source === chat_completion_sources.CUSTOM && settings.custom_api_format === format;
+}
+
+function customApiFormatOrDefault(settings = null) {
+    settings = settings ?? oai_settings;
+    return Object.values(custom_api_formats).includes(settings.custom_api_format)
+        ? settings.custom_api_format
+        : custom_api_formats.OPENAI_COMPAT;
+}
+
+function isClaudeLikeSource(settings) {
+    return settings.chat_completion_source === chat_completion_sources.CLAUDE ||
+        isCustomApiFormat(settings, custom_api_formats.CLAUDE_MESSAGES);
+}
+
+function isGeminiLikeSource(settings) {
+    return [chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(settings.chat_completion_source) ||
+        isCustomApiFormat(settings, custom_api_formats.GEMINI_INTERACTIONS);
 }
 
 function getOpenRouterModelTemplate(option) {
@@ -2532,6 +2589,13 @@ export async function createGenerationParameters(settings, model, type, messages
         throw new Error('messages must be an array');
     }
     messages = messages.filter(msg => msg && typeof msg === 'object');
+    const customApiFormat = customApiFormatOrDefault(settings);
+    const isCustomClaude = isCustomApiFormat(settings, custom_api_formats.CLAUDE_MESSAGES);
+    const isCustomGemini = isCustomApiFormat(settings, custom_api_formats.GEMINI_INTERACTIONS);
+    const isCustomOpenAiCompat = isCustomApiFormat(settings, custom_api_formats.OPENAI_COMPAT);
+    const isNativeOrCustomOpenAiCompat = settings.chat_completion_source !== chat_completion_sources.CUSTOM || isCustomOpenAiCompat;
+    const isCustomOpenAiLike = settings.chat_completion_source !== chat_completion_sources.CUSTOM ||
+        [custom_api_formats.OPENAI_COMPAT, custom_api_formats.OPENAI_RESPONSES].includes(customApiFormat);
 
     // "OpenAI-like" sources
     const gptSources = [
@@ -2558,6 +2622,7 @@ export async function createGenerationParameters(settings, model, type, messages
         chat_completion_sources.MAKERSUITE,
         chat_completion_sources.CHUTES,
     ];
+    const canUseSeed = seedSupportedSources.includes(settings.chat_completion_source) && !isCustomClaude && !isCustomGemini;
 
     // Sources that support proxying
     const proxySupportedSources = [
@@ -2582,6 +2647,7 @@ export async function createGenerationParameters(settings, model, type, messages
         chat_completion_sources.AIMLAPI,
         chat_completion_sources.CHUTES,
     ];
+    const canUseLogprobs = logprobsSupportedSources.includes(settings.chat_completion_source) && isCustomOpenAiLike;
 
     // Sources that support logit bias
     const logitBiasSources = [
@@ -2592,6 +2658,7 @@ export async function createGenerationParameters(settings, model, type, messages
         chat_completion_sources.CHUTES,
         chat_completion_sources.CUSTOM,
     ];
+    const canUseLogitBias = logitBiasSources.includes(settings.chat_completion_source) && isNativeOrCustomOpenAiCompat;
 
     // Sources that support "n" parameter for multi-swipe
     const multiswipeSources = [
@@ -2602,16 +2669,17 @@ export async function createGenerationParameters(settings, model, type, messages
         chat_completion_sources.AIMLAPI,
         chat_completion_sources.MOONSHOT,
     ];
+    const canUseMultiSwipeSource = multiswipeSources.includes(settings.chat_completion_source) && isNativeOrCustomOpenAiCompat;
 
     const isO1 = gptSources.includes(settings.chat_completion_source) && ['o1-2024-12-17', 'o1'].includes(model);
     const stream = settings.stream_openai && type !== 'quiet' && !isO1;
 
     const noMultiSwipeTypes = ['quiet', 'impersonate', 'continue'];
-    const canMultiSwipe = settings.n > 1 && !noMultiSwipeTypes.includes(type) && multiswipeSources.includes(settings.chat_completion_source);
+    const canMultiSwipe = settings.n > 1 && !noMultiSwipeTypes.includes(type) && canUseMultiSwipeSource;
 
     let logit_bias = {};
     if (settings.bias_preset_selected
-        && logitBiasSources.includes(settings.chat_completion_source)
+        && canUseLogitBias
         && Array.isArray(settings.bias_presets[settings.bias_preset_selected])
         && settings.bias_presets[settings.bias_preset_selected].length) {
         logit_bias = biasCache || await calculateLogitBias();
@@ -2676,7 +2744,7 @@ export async function createGenerationParameters(settings, model, type, messages
 
     // Add logprobs request (max 5 per OpenAI docs)
     const useLogprobs = !!power_user.request_token_probabilities;
-    if (useLogprobs && logprobsSupportedSources.includes(settings.chat_completion_source)) {
+    if (useLogprobs && canUseLogprobs) {
         generate_data.logprobs = 5;
     }
 
@@ -2691,7 +2759,7 @@ export async function createGenerationParameters(settings, model, type, messages
         delete generate_data.logprobs;
     }
 
-    if (settings.chat_completion_source === chat_completion_sources.CLAUDE) {
+    if (isClaudeLikeSource(settings)) {
         generate_data.top_k = Number(settings.top_k_openai);
         generate_data.use_sysprompt = settings.use_sysprompt;
         generate_data.stop = getCustomStoppingStrings(); // Claude shouldn't have limits on stop strings.
@@ -2715,7 +2783,7 @@ export async function createGenerationParameters(settings, model, type, messages
         generate_data.middleout = settings.openrouter_middleout;
     }
 
-    if ([chat_completion_sources.MAKERSUITE, chat_completion_sources.VERTEXAI].includes(settings.chat_completion_source)) {
+    if (isGeminiLikeSource(settings)) {
         const stopStringsLimit = 5;
         generate_data.top_k = Number(settings.top_k_openai);
         generate_data.stop = getCustomStoppingStrings(stopStringsLimit).slice(0, stopStringsLimit).filter(x => x.length >= 1 && x.length <= 16);
@@ -2734,6 +2802,7 @@ export async function createGenerationParameters(settings, model, type, messages
 
     if (settings.chat_completion_source === chat_completion_sources.CUSTOM) {
         generate_data.custom_url = settings.custom_url;
+        generate_data.custom_api_format = customApiFormat;
         generate_data.custom_include_body = settings.custom_include_body;
         generate_data.custom_exclude_body = settings.custom_exclude_body;
         generate_data.custom_include_headers = settings.custom_include_headers;
@@ -2834,7 +2903,7 @@ export async function createGenerationParameters(settings, model, type, messages
         }
     }
 
-    if (seedSupportedSources.includes(settings.chat_completion_source) && settings.seed >= 0) {
+    if (canUseSeed && settings.seed >= 0) {
         generate_data.seed = settings.seed;
     }
 
@@ -2986,7 +3055,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
  * @returns {string} The reply extracted from the response data
  */
 export function getStreamingReply(data, state, { chatCompletionSource = null, overrideShowThoughts = null } = {}) {
-    const chat_completion_source = chatCompletionSource ?? oai_settings.chat_completion_source;
+    const chat_completion_source = chatCompletionSource ?? getStreamingChatCompletionSource(oai_settings);
     const show_thoughts = overrideShowThoughts ?? oai_settings.show_thoughts;
 
     if (chat_completion_source === chat_completion_sources.CLAUDE) {
@@ -3053,6 +3122,18 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, ov
         });
         return data.choices?.[0]?.delta?.content ?? data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? '';
     } else if ([chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.SILICONFLOW, chat_completion_sources.CHUTES].includes(chat_completion_source)) {
+        const nativeOutputs = data?.choices?.[0]?.delta?.native?.gemini_interactions?.outputs ??
+            data?.choices?.[0]?.message?.native?.gemini_interactions?.outputs;
+        if (Array.isArray(nativeOutputs)) {
+            nativeOutputs.forEach((output) => {
+                if (output?.type === 'thought' && output.signature) {
+                    state.signature = output.signature;
+                }
+                if (output?.type === 'function_call' && output.id && output.signature) {
+                    state.toolSignatures[output.id] = output.signature;
+                }
+            });
+        }
         if (show_thoughts) {
             state.reasoning +=
                 data.choices?.filter(x => x?.delta?.reasoning_content)?.[0]?.delta?.reasoning_content ??
@@ -4037,6 +4118,12 @@ export class ChatCompletion {
  * @param {ChatCompletionSettings} settings Settings to migrate
  */
 function migrateChatCompletionSettings(settings) {
+    if (settings.chat_completion_source === chat_completion_sources.CUSTOM &&
+        settings.custom_prompt_post_processing === custom_prompt_post_processing_types.CLAUDE &&
+        !settings.custom_api_format) {
+        settings.custom_api_format = custom_api_formats.CLAUDE_MESSAGES;
+    }
+
     const migrateMap = [
         { oldKey: 'names_in_completion', oldValue: true, newKey: 'names_behavior', newValue: character_names_behavior.COMPLETION },
         { oldKey: 'chat_completion_source', oldValue: 'palm', newKey: 'chat_completion_source', newValue: chat_completion_sources.MAKERSUITE },
@@ -4259,6 +4346,7 @@ async function getStatusOpen() {
     if (oai_settings.chat_completion_source === chat_completion_sources.CUSTOM) {
         $('.model_custom_select').empty();
         data.custom_url = oai_settings.custom_url;
+        data.custom_api_format = customApiFormatOrDefault(oai_settings);
         data.custom_include_headers = oai_settings.custom_include_headers;
     }
 
@@ -5483,10 +5571,20 @@ async function onModelChange() {
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.CUSTOM) {
-        $('#openai_max_context').attr('max', unlocked_max);
+        if (isCustomApiFormat(oai_settings, custom_api_formats.GEMINI_INTERACTIONS)) {
+            $('#openai_max_context').attr('max', oai_settings.max_context_unlocked ? unlocked_max : max_1mil);
+            oai_settings.temp_openai = Math.min(oai_max_temp, oai_settings.temp_openai);
+        } else if (isCustomApiFormat(oai_settings, custom_api_formats.CLAUDE_MESSAGES)) {
+            $('#openai_max_context').attr('max', oai_settings.max_context_unlocked ? unlocked_max : max_200k);
+            oai_settings.temp_openai = Math.min(claude_max_temp, oai_settings.temp_openai);
+        } else {
+            $('#openai_max_context').attr('max', unlocked_max);
+            oai_settings.temp_openai = Math.min(oai_max_temp, oai_settings.temp_openai);
+        }
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
         $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
-        $('#temp_openai').attr('max', oai_max_temp).val(oai_settings.temp_openai).trigger('input');
+        $('#temp_openai').attr('max', isCustomApiFormat(oai_settings, custom_api_formats.CLAUDE_MESSAGES) ? claude_max_temp : oai_max_temp)
+            .val(oai_settings.temp_openai).trigger('input');
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.CHUTES) {
@@ -6008,6 +6106,11 @@ export function isVideoInliningSupported() {
     ];
 
     switch (oai_settings.chat_completion_source) {
+        case chat_completion_sources.CUSTOM:
+            if (isCustomApiFormat(oai_settings, custom_api_formats.GEMINI_INTERACTIONS)) {
+                return videoSupportedModels.some(model => oai_settings.custom_model.includes(model));
+            }
+            return false;
         case chat_completion_sources.MAKERSUITE:
             return videoSupportedModels.some(model => oai_settings.google_model.includes(model));
         case chat_completion_sources.VERTEXAI:
@@ -6050,14 +6153,17 @@ export function isAudioInliningSupported() {
     switch (oai_settings.chat_completion_source) {
         case chat_completion_sources.OPENAI:
             return audioSupportedModels.some(model => oai_settings.openai_model.includes(model));
+        case chat_completion_sources.CUSTOM:
+            if (isCustomApiFormat(oai_settings, custom_api_formats.GEMINI_INTERACTIONS)) {
+                return audioSupportedModels.some(model => oai_settings.custom_model.includes(model));
+            }
+            return true;
         case chat_completion_sources.MAKERSUITE:
             return audioSupportedModels.some(model => oai_settings.google_model.includes(model));
         case chat_completion_sources.VERTEXAI:
             return audioSupportedModels.some(model => oai_settings.vertexai_model.includes(model));
         case chat_completion_sources.OPENROUTER:
             return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.openrouter_model)?.architecture?.input_modalities?.includes('audio'));
-        case chat_completion_sources.CUSTOM:
-            return true;
         default:
             return false;
     }
@@ -6097,7 +6203,7 @@ function getEffectiveToolReasoningMode(settings = oai_settings) {
  */
 export function isReasoningSignatureSupported(settings = oai_settings) {
     // If it's Vertex AI or Makersuite, that's OK - convertGooglePrompt() will handle it later
-    const isGoogle = [chat_completion_sources.VERTEXAI, chat_completion_sources.MAKERSUITE].includes(settings.chat_completion_source);
+    const isGoogle = isGeminiLikeSource(settings);
     // Need a more crunchy check for OpenRouter: look for Gemini models
     const isOpenRouterGemini = settings.chat_completion_source === chat_completion_sources.OPENROUTER && /google\/gemini/i.test(settings.openrouter_model);
     return isGoogle || isOpenRouterGemini;
@@ -6715,6 +6821,13 @@ export function initOpenAI() {
 
     $('#custom_api_url_text').on('input', function () {
         oai_settings.custom_url = String($(this).val());
+        saveSettingsDebounced();
+    });
+
+    $('#custom_api_format').on('change', function () {
+        oai_settings.custom_api_format = String($(this).val());
+        $('#model_custom_select').trigger('change');
+        updateFeatureSupportFlags();
         saveSettingsDebounced();
     });
 

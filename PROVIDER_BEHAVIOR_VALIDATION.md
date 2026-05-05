@@ -76,10 +76,35 @@
 期望：
 
 - ArkTS builder 输出 endpoint `/interactions`。
+- base URL 未包含 `/v1` 或 `/v1beta` 时，repository 自动拼成 `/v1beta/interactions`；流式请求追加 `alt=sse`。
+- 如果用户没有在 custom headers 里显式设置 `Authorization`，repository 同时发送 `x-goog-api-key` 并追加 `key=<apiKey>` 查询参数。
 - 文本增量进入 `choices[0].delta.content`。
 - reasoning/thought 增量进入 `choices[0].delta.reasoning_content`。
 - function call 增量进入 OpenAI-style `tool_calls`。
+- 完成事件会把 `native.gemini_interactions.outputs` 透传给前端，用于保存 Gemini thought/tool signature。
 - 完成事件输出 `[DONE]`。
+
+## 3.1 Custom API Format Frontend Selection
+
+用途：确认前端不再把 Custom source 固定为 OpenAI-compatible，而是按用户选择的格式下发请求。
+
+手工验证：
+
+- 在 API Connections 中选择 `Chat Completion`。
+- `Chat Completion Source` 选择 `Custom API`。
+- `Custom API Format` 依次选择：
+  - `OpenAI-compatible Chat Completions`
+  - `OpenAI Responses`
+  - `Claude Messages`
+  - `Gemini Interactions`
+
+期望：
+
+- status 请求 body 包含 `custom_api_format`。
+- generate 请求 body 包含同一个 `custom_api_format`。
+- `Claude Messages` 使用 Claude tokenizer、assistant prefill、Claude stop strings，并禁用 OpenAI-only 的 seed/logprobs/logit_bias/multi-swipe。
+- `Gemini Interactions` 使用 Gemini/Gemma tokenizer、Gemini stop 限制、多模态能力与 reasoning signature 身份，并禁用 OpenAI-only 的 seed/logprobs/logit_bias/multi-swipe。
+- `OpenAI-compatible` 保持原有 `/chat/completions` 行为；`OpenAI Responses` 走 `/responses` 并由后端转换 SSE/非流式响应。
 
 ## 4. Claude Prompt Cache
 

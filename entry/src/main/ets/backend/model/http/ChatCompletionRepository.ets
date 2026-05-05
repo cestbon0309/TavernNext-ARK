@@ -46,7 +46,7 @@ export class ChatCompletionRepository {
   async generate(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string,
     payload: JsonRecord): Promise<HttpResponse> {
     const logContext = this.logger?.begin(source, config, endpointPath, payload, false) ?? null;
-    const url = this.urlForGenerate(source, config, endpointPath);
+    const url = this.urlForGenerate(source, config, endpointPath, false);
     const headers = this.headers(source, config, endpointPath, 'application/json');
     let result: RemoteHttpResult;
     try {
@@ -98,7 +98,7 @@ export class ChatCompletionRepository {
     const logContext = this.logger?.begin(source, config, endpointPath, payload, true) ?? null;
     const streamLog = logContext === null ? null : this.logger?.createStreamSink(logContext);
     const loggingSend = streamLog === null || streamLog === undefined ? send : streamLog.wrapSend(send);
-    const url = this.urlForGenerate(source, config, endpointPath);
+    const url = this.urlForGenerate(source, config, endpointPath, true);
     const headers = this.headers(source, config, endpointPath, 'text/event-stream');
     try {
       if (endpointPath === '/responses') {
@@ -198,7 +198,18 @@ export class ChatCompletionRepository {
     return HttpResponse.json(response);
   }
 
-  private urlForGenerate(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string): string {
+  private urlForGenerate(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string,
+    stream: boolean = false): string {
+    if (endpointPath === '/interactions') {
+      let url = this.geminiInteractionsUrl(config.baseUrl, endpointPath);
+      if (stream) {
+        url = this.withQueryParam(url, 'alt', 'sse');
+      }
+      if (config.authorizationHeader.length === 0 && config.apiKey.length > 0) {
+        url = this.withQueryParam(url, 'key', config.apiKey);
+      }
+      return url;
+    }
     const url = this.http.joinUrl(config.baseUrl, endpointPath);
     if (source === 'makersuite' || source === 'vertexai') {
       return this.withApiKey(url, config);
@@ -222,7 +233,7 @@ export class ChatCompletionRepository {
       if (config.apiKey.length > 0) {
         headers['x-api-key'] = config.apiKey;
       }
-    } else if (source === 'makersuite') {
+    } else if (source === 'makersuite' || endpointPath === '/interactions') {
       if (config.apiKey.length > 0) {
         headers['x-goog-api-key'] = config.apiKey;
       }
@@ -248,8 +259,21 @@ export class ChatCompletionRepository {
     if (config.authorizationHeader.length > 0 || config.apiKey.length === 0) {
       return url;
     }
-    return url.includes('?') ? `${url}&key=${encodeURIComponent(config.apiKey)}` :
-      `${url}?key=${encodeURIComponent(config.apiKey)}`;
+    return this.withQueryParam(url, 'key', config.apiKey);
+  }
+
+  private withQueryParam(url: string, key: string, value: string): string {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+  }
+
+  private geminiInteractionsUrl(baseUrl: string, endpointPath: string): string {
+    const trimmed = baseUrl.trim().replace(/\/+$/, '');
+    const suffix = endpointPath.trim().replace(/^\/+/, '');
+    if (trimmed.endsWith('/v1') || trimmed.endsWith('/v1beta')) {
+      return `${trimmed}/${suffix}`;
+    }
+    return `${trimmed}/v1beta/${suffix}`;
   }
 
   private errorTrue(): JsonRecord {

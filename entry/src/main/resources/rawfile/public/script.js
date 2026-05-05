@@ -6940,6 +6940,14 @@ function saveImageToMessage(img, mes) {
 export function getGeneratingApi() {
     switch (main_api) {
         case 'openai':
+            if (oai_settings.chat_completion_source === chat_completion_sources.CUSTOM) {
+                switch (oai_settings.custom_api_format) {
+                    case 'claude_messages':
+                        return chat_completion_sources.CLAUDE;
+                    case 'gemini_interactions':
+                        return chat_completion_sources.MAKERSUITE;
+                }
+            }
             return oai_settings.chat_completion_source || 'openai';
         case 'textgenerationwebui':
             return textgen_settings.type === textgen_types.OOBA ? 'textgenerationwebui' : textgen_settings.type;

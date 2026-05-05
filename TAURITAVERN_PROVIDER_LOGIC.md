@@ -1067,7 +1067,7 @@ entry/src/main/ets/backend/model/
 - Gemini/MakerSuite：已做 messages 到 `contents/systemInstruction/generationConfig/tools` 的转换，支持 data URL 图片/视频/音频、function declarations、function call/result、custom Google tools、web search、json_schema response mime/schema、thinkingBudget/thinkingLevel、image generation response modalities/imageConfig；非流式响应归一化。
 - Vertex AI：复用 Gemini payload，URL 改为 Vertex publisher model endpoint；支持 express API key 与 full service account OAuth；status 目前按 TauriTavern 思路 bypass。
 - Cohere：已做 `/chat` payload 转换，含 messages、sampling 参数、stop、tools、json_schema；status models 和非流式响应归一化。
-- Custom formats：`openai_compat`、`openai_responses`、`claude_messages`、`gemini_interactions` 都有 builder 分发。
+- Custom formats：`openai_compat`、`openai_responses`、`claude_messages`、`gemini_interactions` 都有 builder 分发；前端自定义 API 下拉框已暴露这些格式，status/generate 会携带 `custom_api_format`，不再把自定义接口限定为 OpenAI-compatible。
 
 当前仍不完整或需要下一轮精修的点：
 
@@ -1076,7 +1076,7 @@ entry/src/main/ets/backend/model/
 - LLM API logging 已补 ArkTS 文件日志：每次 generate 会写入 `index/meta/request/response`，保存 raw JSON 或 raw SSE，并生成 request/response readable 预览；新增 `/api/dev/llm-api-logs`、`/preview`、`/raw`、`/settings`、`/keep`、`/stream-enabled`、`/stream`。默认 keep=5，可配置到 100；`/stream` 使用 HTTP SSE 推送 `llm-api-log` 事件，rawfile 前端的扩展抽屉已加入 `LLM API Logs` 面板。和 TauriTavern 相比，OHOS 走 HTTP SSE 而不是 Tauri event bus，连接清理依赖心跳/发送失败。
 - Claude 已补常用 model contract，但仍需要用真实新旧 Claude 模型做 sampling/thinking/assistant prefill 的边界回归。
 - Gemini/Vertex 已补常用多模态、function output、Gemini 2.5/3 thinking 映射；仍需要用真实 Gemini/Vertex 端点做全路径回归。
-- OpenAI Responses 和 Gemini Interactions 的非流式已做基础归一化，流式已转换成 OpenAI chat completion chunk；还需要更多真实 provider 回归样例。
+- OpenAI Responses 和 Gemini Interactions 的非流式已做归一化，流式已转换成 OpenAI chat completion chunk；Gemini Interactions 已补 system instruction、tools/function result、JSON schema、多模态 URL/data URL、native outputs 和 reasoning/tool signature 透传。还需要更多真实 provider 回归样例。
 - Custom YAML/JSON override 解析已增强：JSON 优先，YAML 支持常用顶层/嵌套 map、list、inline map/list、引号、布尔/null/数字和行内注释，可覆盖 include/exclude body/header 的常见形状；仍不是完整 `serde_yaml` 等价实现，复杂 anchors、merge keys、多行 block scalar 暂不支持。
 - Vertex AI full service account OAuth 已实现 JWT/OAuth access token 流程；需要在真机/模拟器上用真实 service account 验证 CryptoFramework 的 RSA 算法名兼容性。
 
@@ -1117,3 +1117,4 @@ entry/src/main/ets/backend/model/
 - 2026-05-03：新增 `LlmApiLogger.ets` 并接入 `ChatCompletionRepository`。非流式请求记录原始上游 JSON、归一化 readable response 和错误信息；流式请求记录原始 SSE，普通 OpenAI-compatible 透传保持不变，Responses/Interactions 记录上游 raw SSE，同时从转换后的 OpenAI chunk 提取 readable 文本。日志写入 `data/_cache/llm-api-logs/`，默认保留最近 5 条，并通过 `/api/dev/llm-api-logs`、`/api/dev/llm-api-logs/preview?id=<id>`、`/api/dev/llm-api-logs/raw?id=<id>` 查看。随后补齐 `/settings`、`/keep`、`/stream-enabled`、`/stream`，支持可配置 keep、HTTP SSE 实时事件订阅，以及 rawfile 前端扩展抽屉里的 `LLM API Logs` 面板。HAP 构建通过。限制：OHOS 这里不是 Tauri event bus，而是 HTTP SSE；订阅清理依赖心跳/发送失败。
 - 2026-05-03：`CustomParameters.ets` 从简单 `key: value` parser 升级为常用 YAML/JSON override parser：支持嵌套 map、list、inline map/list、quoted string、bool/null/number、注释 stripping 和 exclude key list；继续保持 JSON 优先。HAP 构建通过。限制：不实现完整 YAML anchors、merge keys、多行 block scalar。
 - 2026-05-03：`VectorService.ets` 对齐原版 SillyTavern embedding provider 形状：insert 改为 10 条一批生成 embedding；OpenAI-compatible/Mistral/TogetherAI/OpenRouter/ElectronHub/NanoGPT/SiliconFlow/Chutes 使用批量 `/embeddings`；Cohere 改为 v2 `/embed` + `texts/embedding_types/input_type/truncate`；Ollama 改为 `/api/embed`；Extras 使用 `{ text }`；NomicAI、MakerSuite/Google、Vertex AI 增加基础 embedding 请求与响应解析；llamacpp/vllm 去掉重复 `/v1` 后拼 `/v1/embeddings`。失败或未配置仍回退本地 hash vector。HAP 构建通过。限制：本地索引仍是 JSON + cosine scan，不是 `vectra.LocalIndex` 性能等价实现；Vertex embedding 只覆盖 express API key 基础路径，未复用 full service account OAuth。
+- 2026-05-05：补齐自定义聊天补全 API 格式选择。前端 `Custom API` 现在可选 `OpenAI-compatible Chat Completions`、`OpenAI Responses`、`Claude Messages`、`Gemini Interactions`，连接状态和生成请求都会传 `custom_api_format`。Custom Claude 会启用 Claude-like prefill/top_k/stop/tokenizer/reasoning 身份，Custom Gemini 会启用 Gemini-like stop/top_k/多模态/reasoning signature 身份；OpenAI-only 的 seed/logprobs/logit_bias/multi-swipe 不再误传给 Custom Claude/Gemini。后端 Gemini Interactions builder 从 text-only 扩展到 system/tools/function result/JSON schema/media/native outputs，并在 HTTP 层处理 `/v1beta/interactions?alt=sse&key=...` 与 `x-goog-api-key`。HAP 构建待本轮验证。

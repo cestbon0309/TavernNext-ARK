@@ -2898,7 +2898,7 @@
                         <select id="chat_completion_source">
                             <optgroup>
                                 <option value="openai">OpenAI</option>
-                                <option value="custom" data-i18n="Custom (OpenAI-compatible)">Custom (OpenAI-compatible)</option>
+                                <option value="custom" data-i18n="Custom API">Custom API</option>
                             </optgroup>
                             <optgroup>
                                 <option value="ai21">AI21</option>
@@ -3808,10 +3808,19 @@
                             <div class="flex-container">
                                 <input id="custom_api_url_text" class="text_pole wide100p" value="" autocomplete="off" data-i18n="[placeholder]Example: http://localhost:1234/v1" placeholder="Example: http://localhost:1234/v1">
                             </div>
+                            <h4 data-i18n="Custom API Format">Custom API Format</h4>
+                            <div class="flex-container">
+                                <select id="custom_api_format" class="text_pole wide100p">
+                                    <option value="openai_compat" data-i18n="OpenAI-compatible Chat Completions">OpenAI-compatible Chat Completions</option>
+                                    <option value="openai_responses" data-i18n="OpenAI Responses">OpenAI Responses</option>
+                                    <option value="claude_messages" data-i18n="Claude Messages">Claude Messages</option>
+                                    <option value="gemini_interactions" data-i18n="Gemini Interactions">Gemini Interactions</option>
+                                </select>
+                            </div>
                             <div>
                                 <small>
                                     <span data-i18n="Doesn't work? Try adding">Doesn't work? Try adding</span> <code>/v1</code> <span data-i18n="at the end!">at the end!</span>
-                                    <b data-i18n="completions note prefix"></b><code>/chat/completions</code> <b data-i18n="suffix will be added automatically.">suffix will be added automatically.</b>
+                                    <b data-i18n="Custom API format path note">The selected API format controls the final path:</b> <code>/chat/completions</code>, <code>/responses</code>, <code>/messages</code>, or <code>/interactions</code>.
                                 </small>
                             </div>
                             <h4>

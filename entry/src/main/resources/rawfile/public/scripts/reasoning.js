@@ -5,7 +5,7 @@ import { chat, closeMessageEditor, event_types, eventSource, main_api, messageFo
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { getCurrentLocale, t, translate } from './i18n.js';
 import { macros, MacroCategory } from './macros/macro-system.js';
-import { chat_completion_sources, getChatCompletionModel, oai_settings } from './openai.js';
+import { chat_completion_sources, custom_api_formats, getChatCompletionModel, oai_settings } from './openai.js';
 import { Popup } from './popup.js';
 import { performFuzzySearch, power_user } from './power-user.js';
 import { getPresetManager } from './preset-manager.js';
@@ -165,7 +165,9 @@ export function extractReasoningSignatureFromData(data, {
     }
 
     const source = chatCompletionSource ?? oai_settings.chat_completion_source;
-    const isGemini = source === chat_completion_sources.MAKERSUITE || source === chat_completion_sources.VERTEXAI;
+    const isCustomGemini = source === chat_completion_sources.CUSTOM &&
+        oai_settings.custom_api_format === custom_api_formats.GEMINI_INTERACTIONS;
+    const isGemini = source === chat_completion_sources.MAKERSUITE || source === chat_completion_sources.VERTEXAI || isCustomGemini;
     const isOpenRouter = source === chat_completion_sources.OPENROUTER;
 
     if (!isGemini && !isOpenRouter) {
@@ -183,11 +185,20 @@ export function extractReasoningSignatureFromData(data, {
 
     // Direct Gemini format: Extract from responseContent.parts if available (only text parts)
     if (isGemini && Array.isArray(data?.responseContent?.parts)) {
-        data.responseContent.parts.forEach((part) => {
+        for (const part of data.responseContent.parts) {
             if (part.thoughtSignature && typeof part.text === 'string') {
                 return part.thoughtSignature;
             }
-        });
+        }
+    }
+
+    const nativeOutputs = data?.choices?.[0]?.message?.native?.gemini_interactions?.outputs;
+    if (isCustomGemini && Array.isArray(nativeOutputs)) {
+        for (const output of nativeOutputs) {
+            if (output?.type === 'thought' && output.signature) {
+                return output.signature;
+            }
+        }
     }
 
     return null;

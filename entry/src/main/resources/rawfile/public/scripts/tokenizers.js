@@ -1,7 +1,7 @@
 import { localforage } from '../lib.js';
 import { characters, event_types, eventSource, main_api, nai_settings, online_status, this_chid } from '../script.js';
 import { power_user, registerDebugFunction } from './power-user.js';
-import { chat_completion_sources, model_list, oai_settings } from './openai.js';
+import { chat_completion_sources, custom_api_formats, model_list, oai_settings } from './openai.js';
 import { groups, selected_group } from './group-chats.js';
 import { getStringHash } from './utils.js';
 import { kai_flags, kai_settings } from './kai-settings.js';
@@ -725,6 +725,12 @@ export function getTokenizerModel() {
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.CUSTOM) {
+        if (oai_settings.custom_api_format === custom_api_formats.CLAUDE_MESSAGES) {
+            return claudeTokenizer;
+        }
+        if (oai_settings.custom_api_format === custom_api_formats.GEMINI_INTERACTIONS) {
+            return gemmaTokenizer;
+        }
         return oai_settings.custom_model;
     }
 
