@@ -166,74 +166,8 @@ body {
     color-scheme: only light;
 }
 
-html.tavernnext-arkweb body,
-html.tavernnext-arkweb #chat,
-html.tavernnext-arkweb #send_form {
-    text-shadow: none;
-}
-
-html.tavernnext-arkweb #chat,
-html.tavernnext-arkweb #send_form {
-    -webkit-backdrop-filter: none;
-    backdrop-filter: none;
-}
-
-html.tavernnext-arkweb #sheld,
-html.tavernnext-arkweb #chat,
-html.tavernnext-arkweb #send_form {
-    box-shadow: none;
-}
-
-::-webkit-scrollbar {
-    width: 0.7rem;
-    scrollbar-gutter: stable;
-}
-
-::-webkit-scrollbar-track {
-    cursor: default;
-}
-
-::-webkit-scrollbar-track:hover {
-    /* Adaptive, but won't contrast with neutral-gray. */
-    background-color: rgba(126, 126, 126, 0.2);
-}
-
-::-webkit-scrollbar-thumb {
-    cursor: grab;
-}
-
-::-webkit-scrollbar-thumb:active {
-    cursor: grabbing;
-}
-
 .scrollY {
     overflow-y: auto !important;
-}
-
-::-webkit-scrollbar-thumb:vertical {
-    background-color: var(--grey7070a);
-    box-shadow: inset 0 0 0 1px var(--black50a);
-    border-radius: 10px;
-    background-clip: content-box;
-    border: 2px solid transparent;
-    min-height: 40px;
-}
-
-body.movingUI ::-webkit-scrollbar-thumb:vertical {
-    border-top: 20px solid transparent;
-}
-
-::-webkit-scrollbar-thumb:horizontal {
-    background-color: var(--grey7070a);
-    box-shadow: inset 0 0 0 1px var(--black50a);
-    border-radius: 10px;
-    background-clip: content-box;
-    border: 2px solid transparent;
-    min-width: 40px;
-}
-
-::-webkit-scrollbar-corner {
-    background-color: transparent;
 }
 
 table.responsiveTable {
