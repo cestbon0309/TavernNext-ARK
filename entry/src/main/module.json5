@@ -27,7 +27,7 @@
         "description": "$string:EntryAbility_desc",
         "icon": "$media:icon1024",
         "label": "$string:EntryAbility_label",
-        "startWindowIcon": "$media:icon1024",
+        "startWindowIcon": "$media:startIcon",
         "startWindowBackground": "$color:start_window_background",
         "backgroundModes": [
           "dataTransfer"
