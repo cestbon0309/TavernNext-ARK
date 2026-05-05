@@ -264,6 +264,8 @@ export class BackendService {
     this.server.route('POST', '/api/image-metadata/cleanup', async () => this.media.imageMetadataCleanup());
     this.server.route('POST', '/api/quick-reply/save', async (request) => this.core.saveQuickReply(request));
     this.server.route('POST', '/api/quick-reply/delete', async (request) => this.core.deleteQuickReply(request));
+    this.server.route('POST', '/api/quick-replies/save', async (request) => this.core.saveQuickReply(request));
+    this.server.route('POST', '/api/quick-replies/delete', async (request) => this.core.deleteQuickReply(request));
     this.server.route('POST', '/savequickreply', async (request) => this.core.saveQuickReply(request));
     this.server.route('POST', '/deletequickreply', async (request) => this.core.deleteQuickReply(request));
 
