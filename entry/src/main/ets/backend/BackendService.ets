@@ -191,6 +191,7 @@ export class BackendService {
     this.server.route('POST', '/api/worldinfo/get', async (request) => this.core.getWorld(request));
     this.server.route('POST', '/api/worldinfo/edit', async (request) => this.core.editWorld(request));
     this.server.route('POST', '/api/worldinfo/import', async (request) => this.core.importWorld(request));
+    this.server.route('POST', '/api/worldinfo/export', async (request) => await this.core.exportWorld(request));
     this.server.route('POST', '/api/worldinfo/delete', async (request) => this.core.deleteWorld(request));
     this.server.route('POST', '/importworldinfo', async (request) => this.core.importWorld(request));
 

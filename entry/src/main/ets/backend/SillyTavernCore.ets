@@ -1259,6 +1259,25 @@ export class SillyTavernCore {
     return HttpResponse.json(response);
   }
 
+  async exportWorld(request: HttpRequest): Promise<HttpResponse> {
+    const body = this.bodyAsRecord(request);
+    const name = sanitizeFileName(this.asString(body['name']));
+    const data = body['data'];
+    if (name.length === 0 || name === 'unnamed' || data === null || typeof data !== 'object' || Array.isArray(data)) {
+      return HttpResponse.json(jsonMessage('bad_request', 'World file must have a name and data object'), 400);
+    }
+    const dataRecord = data as JsonRecord;
+    if (dataRecord['entries'] === undefined) {
+      return HttpResponse.json(jsonMessage('invalid_world_info', 'Is not a valid world info file'), 400);
+    }
+
+    const fileName = sanitizeFileName(ensureJsonExtension(name));
+    const bytes = this.encoder.encodeInto(JSON.stringify(data, null, 4));
+    const exported = this.shareExports.writeExportFile('worlds', fileName, bytes,
+      ShareExportService.contentTypeForExtension('.json'), ShareExportService.utdForExtension('.json'));
+    return this.shareExports.shareHttpResponse(exported, fileName);
+  }
+
   deleteWorld(request: HttpRequest): HttpResponse {
     const name = sanitizeFileName(this.asString(this.bodyAsRecord(request)['name']));
     if (name.length === 0) {
