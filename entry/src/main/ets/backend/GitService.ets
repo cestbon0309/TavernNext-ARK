@@ -14,6 +14,7 @@ import { joinPath, sanitizeFileName } from './PathUtils';
 export class NativeGitOptions {
   branch?: string;
   depth?: number;
+  timeoutMs?: number;
   unshallow?: boolean;
   allowInsecureCertificate?: boolean;
   caBundlePath?: string;
@@ -22,6 +23,7 @@ export class NativeGitOptions {
 export interface GitCloneOptions {
   branch?: string;
   depth?: number;
+  timeoutMs?: number;
 }
 
 export interface GitUpdateResult {
@@ -48,6 +50,7 @@ export interface GitBranchInfo {
 }
 
 export class GitService {
+  private static readonly rehydrateTimeoutMs: number = 30000;
   private store: FileStore;
   private caBundlePath: string;
   private queue: Promise<void> = Promise.resolve();
@@ -81,6 +84,9 @@ export class GitService {
   async clone(url: string, targetPath: string, options: GitCloneOptions = {}): Promise<string> {
     const nativeOptions = this.nativeOptions();
     nativeOptions.depth = options.depth === undefined ? 1 : options.depth;
+    if (options.timeoutMs !== undefined && options.timeoutMs > 0) {
+      nativeOptions.timeoutMs = options.timeoutMs;
+    }
     if (options.branch !== undefined && options.branch.trim().length > 0) {
       nativeOptions.branch = options.branch.trim();
     }
@@ -89,7 +95,9 @@ export class GitService {
 
   async rehydrate(url: string, repoPath: string, reference: string, commit: string): Promise<GitVersionResult> {
     return await this.runExclusive(async (): Promise<GitVersionResult> => {
-      const result: Object = await nativeRehydrate(url, repoPath, reference, commit, this.nativeOptions());
+      const nativeOptions = this.nativeOptions();
+      nativeOptions.timeoutMs = GitService.rehydrateTimeoutMs;
+      const result: Object = await nativeRehydrate(url, repoPath, reference, commit, nativeOptions);
       return this.normalizeVersionResult(result);
     });
   }

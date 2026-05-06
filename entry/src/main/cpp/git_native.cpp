@@ -51,6 +51,7 @@ struct GitTask {
     std::string commit;
     std::string caBundlePath;
     int depth { 0 };
+    int timeoutMs { 0 };
     bool unshallow { false };
     bool allowInsecureCertificate { false };
     bool ok { false };
@@ -99,6 +100,14 @@ void ApplyCommonFetchOptions(git_fetch_options &fetchOpts, const GitTask &task)
         fetchOpts.depth = task.depth;
     }
     fetchOpts.prune = GIT_FETCH_PRUNE;
+}
+
+void ApplyNetworkTimeout(const GitTask &task)
+{
+    const int timeout = task.timeoutMs > 0 ? task.timeoutMs : 0;
+    CheckGit(git_libgit2_opts(GIT_OPT_SET_SERVER_CONNECT_TIMEOUT, timeout),
+        "Unable to set Git connect timeout");
+    CheckGit(git_libgit2_opts(GIT_OPT_SET_SERVER_TIMEOUT, timeout), "Unable to set Git server timeout");
 }
 
 void ApplyCertLocation(const GitTask &task)
@@ -514,6 +523,7 @@ void SetHeadAndIndexToCommit(git_repository *repo, const GitTask &task)
 void ExecuteClone(GitTask &task)
 {
     EnsureGitInitialized();
+    ApplyNetworkTimeout(task);
     ApplyCertLocation(task);
 
     git_clone_options cloneOpts = GIT_CLONE_OPTIONS_INIT;
@@ -535,6 +545,7 @@ void ExecuteClone(GitTask &task)
 void ExecuteRehydrate(GitTask &task)
 {
     EnsureGitInitialized();
+    ApplyNetworkTimeout(task);
     ApplyCertLocation(task);
 
     if (task.url.empty()) {
@@ -566,6 +577,7 @@ void ExecuteRehydrate(GitTask &task)
 void ExecuteUpdate(GitTask &task)
 {
     EnsureGitInitialized();
+    ApplyNetworkTimeout(task);
     ApplyCertLocation(task);
 
     git_repository *repo = nullptr;
@@ -598,6 +610,7 @@ void ExecuteUpdate(GitTask &task)
 void ExecuteVersion(GitTask &task)
 {
     EnsureGitInitialized();
+    ApplyNetworkTimeout(task);
     ApplyCertLocation(task);
 
     git_repository *repo = nullptr;
@@ -642,6 +655,7 @@ GitBranchInfo BuildBranchInfo(git_repository *repo, git_reference *ref, git_bran
 void ExecuteBranches(GitTask &task)
 {
     EnsureGitInitialized();
+    ApplyNetworkTimeout(task);
     ApplyCertLocation(task);
 
     git_repository *repo = nullptr;
@@ -935,6 +949,7 @@ void ReadOptions(napi_env env, napi_value value, GitTask &task)
     GetStringProperty(env, value, "branch", task.branch);
     GetStringProperty(env, value, "caBundlePath", task.caBundlePath);
     GetIntProperty(env, value, "depth", task.depth);
+    GetIntProperty(env, value, "timeoutMs", task.timeoutMs);
     GetBoolProperty(env, value, "unshallow", task.unshallow);
     GetBoolProperty(env, value, "allowInsecureCertificate", task.allowInsecureCertificate);
 }
