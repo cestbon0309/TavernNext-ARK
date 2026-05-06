@@ -313,6 +313,8 @@ export class BackendService {
     this.server.route('POST', '/api/extensions/move', async (request) => this.extensions.move(request));
     this.server.route('POST', '/api/extensions/version', async (request) => this.extensions.version(request));
     this.server.route('POST', '/api/extensions/delete', async (request) => this.extensions.delete(request));
+    this.server.route('POST', '/api/extensions/repair-git',
+      async () => await this.users.repairExtensionGitRepositories());
 
     this.registerTokenizerRoutes();
     this.registerModelProxyRoutes();

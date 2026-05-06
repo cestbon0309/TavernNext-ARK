@@ -3,7 +3,7 @@ import { DOMPurify, Popper } from '../lib.js';
 import { eventSource, event_types, saveSettings, saveSettingsDebounced, getRequestHeaders, animation_duration, CLIENT_VERSION } from '../script.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { renderTemplate, renderTemplateAsync } from './templates.js';
-import { delay, equalsIgnoreCaseAndAccents, isSubsetOf, sanitizeSelector, setValueByPath, versionCompare } from './utils.js';
+import { delay, equalsIgnoreCaseAndAccents, escapeHtml, isSubsetOf, sanitizeSelector, setValueByPath, versionCompare } from './utils.js';
 import { getContext } from './st-context.js';
 import { isAdmin } from './user.js';
 import { addLocaleData, getCurrentLocale, t } from './i18n.js';
@@ -1937,6 +1937,94 @@ async function importDataArchive() {
     }
 }
 
+function gitRepairEntryName(entry) {
+    if (typeof entry === 'string') {
+        return entry;
+    }
+    if (entry && typeof entry === 'object') {
+        const scope = typeof entry.scope === 'string' && entry.scope.length > 0 ? `${entry.scope}: ` : '';
+        return `${scope}${entry.name || ''}`;
+    }
+    return '';
+}
+
+function gitRepairResultHtml(data) {
+    const succeeded = Array.isArray(data.succeeded) ? data.succeeded : [];
+    const failedDetails = Array.isArray(data.failedDetails) ? data.failedDetails : [];
+    const checked = Number(data.checked ?? 0);
+    const total = Number(data.total ?? checked);
+    const rehydrated = Number(data.rehydrated ?? succeeded.length);
+    const skipped = Number(data.skipped ?? 0);
+    const failed = Number(data.failed ?? failedDetails.length);
+    const sections = [
+        `<p>检查完成：共 ${total} 个记录，已检查 ${checked} 个，成功重建 ${rehydrated} 个，跳过 ${skipped} 个，失败 ${failed} 个。</p>`,
+    ];
+
+    if (succeeded.length > 0) {
+        sections.push(`<h4>重建成功</h4><ul>${succeeded.map(entry => `<li>${escapeHtml(gitRepairEntryName(entry))}</li>`).join('')}</ul>`);
+    }
+
+    if (failedDetails.length > 0) {
+        sections.push(`<h4>重建失败</h4><ul>${failedDetails.map(entry => {
+            const name = escapeHtml(gitRepairEntryName(entry));
+            const reason = escapeHtml(entry?.reason || 'Unknown error');
+            return `<li><strong>${name}</strong><br><small>${reason}</small></li>`;
+        }).join('')}</ul>`);
+    }
+
+    if (succeeded.length === 0 && failedDetails.length === 0) {
+        sections.push('<p>没有发现需要重建 .git 目录的插件仓库。</p>');
+    }
+
+    return `<h3>插件 Git 信息重建结果</h3>${sections.join('')}`;
+}
+
+async function repairExtensionGitRepositories() {
+    const confirmation = await callGenericPopup(
+        '<h3>重建插件 Git 信息？</h3><p>将检查导入数据中的 <code>_tauritavern/extension-sources/{local|global}</code>，为缺少 <code>.git</code> 目录的插件尝试重建仓库信息。插件文件本身不会被修改。</p>',
+        POPUP_TYPE.CONFIRM,
+        '',
+        { okButton: '开始重建', cancelButton: '取消', wide: false, large: false },
+    );
+
+    if (confirmation !== POPUP_RESULT.AFFIRMATIVE) {
+        return;
+    }
+
+    try {
+        toastr.info('正在检查插件 Git 信息...');
+        const response = await fetch('/api/extensions/repair-git', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({}),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            toastr.error(data.error || data.message || '插件 Git 信息重建失败');
+            return;
+        }
+
+        const rehydrated = Number(data.rehydrated ?? 0);
+        const failed = Number(data.failed ?? 0);
+        if (failed > 0) {
+            toastr.warning(`插件 Git 信息检查完成，${rehydrated} 个成功，${failed} 个失败`);
+        } else if (rehydrated > 0) {
+            toastr.success(`插件 Git 信息重建完成，${rehydrated} 个成功`);
+        } else {
+            toastr.info('没有发现需要重建 .git 目录的插件仓库');
+        }
+        await callGenericPopup(gitRepairResultHtml(data), POPUP_TYPE.TEXT, '', {
+            okButton: '关闭',
+            wide: true,
+            large: false,
+            allowVerticalScrolling: true,
+        });
+    } catch (error) {
+        console.error('Failed to repair extension Git repositories', error);
+        toastr.error('插件 Git 信息重建失败');
+    }
+}
+
 export async function initExtensions() {
     await addExtensionsButtonAndMenu();
     $('#extensionsMenuButton').css('display', 'flex');
@@ -1960,5 +2048,6 @@ export async function initExtensions() {
     $('#third_party_extension_button').on('click', () => openThirdPartyExtensionMenu());
     $('#data_export_button').on('click', exportDataArchive);
     $('#data_restore_button').on('click', () => importDataArchive());
+    $('#extension_git_repair_button').on('click', repairExtensionGitRepositories);
     initOhosLlmApiLogs();
 }

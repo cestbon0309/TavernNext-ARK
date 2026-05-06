@@ -38,6 +38,13 @@ class RestorePaths {
   }
 }
 
+class ExtensionGitRepairCandidate {
+  scope: string = '';
+  name: string = '';
+  path: string = '';
+  metadataPath: string = '';
+}
+
 type DataRestoreMode = 'incremental' | 'clean';
 
 export class UsersService {
@@ -335,6 +342,19 @@ export class UsersService {
     return await this.restorePreparedZip(paths, mode);
   }
 
+  async repairExtensionGitRepositories(): Promise<HttpResponse> {
+    this.restoreProgress.begin('正在检查插件 Git 信息...');
+    await this.allowRestoreProgressFrame();
+    try {
+      const result = await this.rehydrateImportedExtensionRepositories();
+      this.restoreProgress.finish('插件 Git 信息检查完成', this.gitRepairFailures(result));
+      return HttpResponse.json(result);
+    } catch (err) {
+      this.restoreProgress.finish('插件 Git 信息检查失败');
+      return HttpResponse.json(this.error(this.errorMessage(err)), 500);
+    }
+  }
+
   private async restorePreparedZip(paths: RestorePaths, mode: DataRestoreMode): Promise<HttpResponse> {
     const restoreRoot = paths.restoreRoot;
     const unpackRoot = paths.unpackRoot;
@@ -626,65 +646,97 @@ export class UsersService {
     result['skipped'] = 0;
     result['failed'] = 0;
     result['failedExtensions'] = [];
+    result['succeeded'] = [];
+    result['failedDetails'] = [];
 
     const sourceRoot = joinPath(this.dirs.dataRoot, '_tauritavern', 'extension-sources');
-    if (!this.store.exists(sourceRoot)) {
-      return result;
-    }
-
-    const localEntries = this.extensionMetadataEntries(joinPath(sourceRoot, 'local'));
-    const globalEntries = this.extensionMetadataEntries(joinPath(sourceRoot, 'global'));
-    const total = localEntries.length + globalEntries.length;
+    const localCandidates = this.extensionGitRepairCandidates('local', this.localExtensionRoots(),
+      this.extensionMetadataMap(joinPath(sourceRoot, 'local')));
+    const globalCandidates = this.extensionGitRepairCandidates('global', this.globalExtensionRoots(),
+      this.extensionMetadataMap(joinPath(sourceRoot, 'global')));
+    const total = localCandidates.length + globalCandidates.length;
     result['total'] = total;
 
-    await this.rehydrateExtensionScope('local', localEntries, this.localExtensionRoots(), result, total);
-    await this.rehydrateExtensionScope('global', globalEntries, this.globalExtensionRoots(), result, total);
+    await this.rehydrateExtensionScope(localCandidates, result, total);
+    await this.rehydrateExtensionScope(globalCandidates, result, total);
     return result;
   }
 
-  private async rehydrateExtensionScope(scope: string, metadataEntries: FileEntry[], extensionRoots: string[],
-    result: JsonRecord, total: number): Promise<void> {
-    for (const entry of metadataEntries) {
+  private async rehydrateExtensionScope(candidates: ExtensionGitRepairCandidate[], result: JsonRecord,
+    total: number): Promise<void> {
+    for (const candidate of candidates) {
       result['checked'] = Number(result['checked'] ?? 0) + 1;
-      const extensionName = sanitizeFileName(withoutExtension(entry.name));
+      const extensionName = candidate.name;
       this.restoreProgress.update('正在检查插件 Git 信息...', this.extensionGitRepairDetail(extensionName, result, total));
-      const extensionPath = this.findExtensionPath(extensionName, extensionRoots);
-      if (extensionPath.length === 0 || this.store.exists(joinPath(extensionPath, '.git'))) {
-        result['skipped'] = Number(result['skipped'] ?? 0) + 1;
+      if (candidate.metadataPath.length === 0) {
+        result['failed'] = Number(result['failed'] ?? 0) + 1;
+        this.addGitRepairFailure(result, candidate.scope, extensionName,
+          `未找到 _tauritavern/extension-sources/${candidate.scope}/${extensionName}.json 中的来源记录`);
         continue;
       }
 
-      const metadata = this.store.readJsonRecord(entry.path);
+      const metadata = this.store.readJsonRecord(candidate.metadataPath);
       const remoteUrl = this.extensionRemoteUrl(metadata);
       const reference = this.asString(metadata['reference']);
       const installedCommit = this.asString(metadata['installed_commit']);
-      if (remoteUrl.length === 0 || !this.isFullCommit(installedCommit)) {
-        result['skipped'] = Number(result['skipped'] ?? 0) + 1;
+      if (remoteUrl.length === 0) {
+        result['failed'] = Number(result['failed'] ?? 0) + 1;
+        this.addGitRepairFailure(result, candidate.scope, extensionName, '缺少原始仓库地址');
+        this.appendExtensionGitRepairFailure(candidate.scope, extensionName, 'Missing remote URL');
+        continue;
+      }
+      if (!this.isFullCommit(installedCommit)) {
+        result['failed'] = Number(result['failed'] ?? 0) + 1;
+        this.addGitRepairFailure(result, candidate.scope, extensionName, '缺少可用于定位版本的 commit id');
+        this.appendExtensionGitRepairFailure(candidate.scope, extensionName, 'Missing installed commit');
         continue;
       }
 
       try {
         this.restoreProgress.update('正在重建插件 Git 信息...', this.extensionGitRepairDetail(extensionName, result, total));
-        await this.git.rehydrate(remoteUrl, extensionPath, reference, installedCommit);
+        await this.git.rehydrate(remoteUrl, candidate.path, reference, installedCommit);
         result['rehydrated'] = Number(result['rehydrated'] ?? 0) + 1;
+        this.addGitRepairSuccess(result, candidate.scope, extensionName);
       } catch (err) {
-        this.store.deleteDirectory(joinPath(extensionPath, '.git'));
+        this.store.deleteDirectory(joinPath(candidate.path, '.git'));
         result['failed'] = Number(result['failed'] ?? 0) + 1;
-        this.addGitRepairFailure(result, extensionName);
-        this.appendExtensionGitRepairFailure(scope, extensionName, this.errorMessage(err));
+        const message = this.errorMessage(err);
+        this.addGitRepairFailure(result, candidate.scope, extensionName, message);
+        this.appendExtensionGitRepairFailure(candidate.scope, extensionName, message);
       }
     }
   }
 
-  private addGitRepairFailure(result: JsonRecord, extensionName: string): void {
+  private addGitRepairSuccess(result: JsonRecord, scope: string, extensionName: string): void {
+    const successes = result['succeeded'];
+    const row = emptyJsonRecord();
+    row['scope'] = scope;
+    row['name'] = extensionName;
+    if (!Array.isArray(successes)) {
+      result['succeeded'] = [row];
+      return;
+    }
+    successes.push(row);
+  }
+
+  private addGitRepairFailure(result: JsonRecord, scope: string, extensionName: string, message: string = ''): void {
     const failures = result['failedExtensions'];
     if (!Array.isArray(failures)) {
       result['failedExtensions'] = [extensionName];
-      return;
-    }
-    if (!failures.includes(extensionName)) {
+    } else if (!failures.includes(extensionName)) {
       failures.push(extensionName);
     }
+
+    const details = result['failedDetails'];
+    const row = emptyJsonRecord();
+    row['scope'] = scope;
+    row['name'] = extensionName;
+    row['reason'] = message.length > 0 ? message : 'Unknown error';
+    if (!Array.isArray(details)) {
+      result['failedDetails'] = [row];
+      return;
+    }
+    details.push(row);
   }
 
   private gitRepairFailures(result: JsonRecord): string[] {
@@ -701,6 +753,39 @@ export class UsersService {
     return this.store.list(metadataRoot).filter((entry: FileEntry): boolean => {
       return entry.isFile && entry.name.toLowerCase().endsWith('.json');
     });
+  }
+
+  private extensionMetadataMap(metadataRoot: string): Map<string, string> {
+    const metadata = new Map<string, string>();
+    for (const entry of this.extensionMetadataEntries(metadataRoot)) {
+      metadata.set(sanitizeFileName(withoutExtension(entry.name)), entry.path);
+    }
+    return metadata;
+  }
+
+  private extensionGitRepairCandidates(scope: string, roots: string[], metadata: Map<string, string>):
+    ExtensionGitRepairCandidate[] {
+    const candidates: ExtensionGitRepairCandidate[] = [];
+    const seenPaths = new Set<string>();
+    for (const root of roots) {
+      for (const entry of this.store.list(root)) {
+        if (!entry.isDirectory || seenPaths.has(entry.path)) {
+          continue;
+        }
+        seenPaths.add(entry.path);
+        if (!this.store.exists(joinPath(entry.path, 'manifest.json')) || this.store.exists(joinPath(entry.path, '.git'))) {
+          continue;
+        }
+        const name = sanitizeFileName(entry.name);
+        const candidate = new ExtensionGitRepairCandidate();
+        candidate.scope = scope;
+        candidate.name = name;
+        candidate.path = entry.path;
+        candidate.metadataPath = metadata.get(name) ?? '';
+        candidates.push(candidate);
+      }
+    }
+    return candidates;
   }
 
   private extensionGitRepairDetail(extensionName: string, result: JsonRecord, total: number): string {

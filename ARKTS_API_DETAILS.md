@@ -2401,6 +2401,7 @@ GET /scripts/extensions/third-party/<extension>/<file>
 - `POST /api/extensions/switch`：支持切换本地分支；传入 `origin/<branch>` 时，如果本地分支不存在，会从远程分支创建同名本地分支后 checkout。
 - `POST /api/extensions/move`：在 `default-user/extensions` 和 `<filesDir>/extensions/global` 之间移动目录。
 - `POST /api/extensions/delete`：删除本地或全局扩展目录。
+- `POST /api/extensions/repair-git`：手动扫描本地/全局插件目录中缺少 `.git` 且存在 `manifest.json` 的第三方插件，按 scope 到 `data/_tauritavern/extension-sources/{local|global}` 查找来源记录，用记录里的 remote URL、reference 和 installed commit 重建 `.git`。返回 `succeeded[]` 与 `failedDetails[]`，失败会包含原因，例如缺少来源记录、缺少 remote URL、缺少 commit id 或 native Git 重建错误。前端插件页的 `重建插件 Git 信息` 按钮会调用该接口并弹窗展示结果。
 
 TLS 处理：
 
@@ -2918,6 +2919,7 @@ avatar
 - `POST /api/extensions/move`
 - `POST /api/extensions/switch`，切换本地分支或从 `origin/<branch>` 创建本地分支
 - `POST /api/extensions/branches`，列出本地和远程分支
+- `POST /api/extensions/repair-git`，从 TauriTavern 来源记录手动重建导入插件缺失的 `.git`
 - 扫描 rawfile 系统扩展、`default-user/extensions`、`<filesDir>/extensions/global`
 - 提供 `/scripts/extensions/third-party/*` 的本地/全局/rawfile fallback 静态资源
 
