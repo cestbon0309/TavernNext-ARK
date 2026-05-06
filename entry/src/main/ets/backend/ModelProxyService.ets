@@ -133,7 +133,7 @@ export class ModelProxyService {
   async hordeStatus(): Promise<HttpResponse> {
     try {
       const result = await this.http.getText('https://aihorde.net/api/v2/status/heartbeat', {
-        'Client-Agent': 'TavernNext-OHOS:1.0.1:github.com/SillyTavern/SillyTavern',
+        'Client-Agent': 'TavernNext-OHOS:1.2.0:github.com/SillyTavern/SillyTavern',
       }, 15000);
       const response = new HordeStatusResponse();
       response.ok = result.statusCode >= 200 && result.statusCode < 300;
@@ -326,7 +326,7 @@ export class ModelProxyService {
     return {
       'Content-Type': 'application/json',
       'apikey': this.secret('api_key_horde') || '0000000000',
-      'Client-Agent': 'TavernNext-OHOS:1.0.1:github.com/SillyTavern/SillyTavern',
+      'Client-Agent': 'TavernNext-OHOS:1.2.0:github.com/SillyTavern/SillyTavern',
     };
   }
 
