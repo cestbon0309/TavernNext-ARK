@@ -350,9 +350,9 @@ export class UsersService {
         return HttpResponse.json(this.error('The zip archive does not look like a TavernNext data backup'), 400);
       }
 
-      this.restoreProgress.update('正在覆盖 data 目录...');
+      this.restoreProgress.update('正在合并 data 目录...');
       await this.allowRestoreProgressFrame();
-      if (!this.replaceDataDirectory(candidate, previousDataRoot)) {
+      if (!this.mergeDataDirectory(candidate, previousDataRoot)) {
         this.store.deleteDirectory(restoreRoot);
         this.restoreProgress.finish('导入失败');
         return HttpResponse.json(this.error('Failed to restore data directory'), 500);
@@ -361,6 +361,8 @@ export class UsersService {
       this.restoreProgress.update('正在初始化数据目录...');
       await this.allowRestoreProgressFrame();
       this.dirs.initialize();
+      this.dirs.ensureDefaultUserFiles();
+      this.ensureDefaultUser();
       this.restoreProgress.update('正在检查插件 Git 信息...');
       const gitRepair = await this.rehydrateImportedExtensionRepositories();
       this.restoreProgress.update('正在清理临时文件...');
@@ -859,6 +861,8 @@ export class UsersService {
 
   private isDataDirectory(path: string): boolean {
     return this.store.exists(joinPath(path, 'default-user')) ||
+      this.store.exists(joinPath(path, '_tauritavern')) ||
+      this.store.exists(joinPath(path, 'extensions', 'third-party')) ||
       this.store.exists(joinPath(path, '_storage')) ||
       this.store.exists(joinPath(path, 'cookie-secret.txt'));
   }
@@ -884,17 +888,13 @@ export class UsersService {
     return normalizedRoot;
   }
 
-  private replaceDataDirectory(source: string, previousDataRoot: string): boolean {
+  private mergeDataDirectory(source: string, previousDataRoot: string): boolean {
     const hadDataRoot = this.store.exists(this.dirs.dataRoot);
-    if (hadDataRoot && !this.store.moveDirectory(this.dirs.dataRoot, previousDataRoot)) {
+    if (hadDataRoot && !this.store.copyDirectory(this.dirs.dataRoot, previousDataRoot)) {
       return false;
     }
 
-    if (this.store.exists(this.dirs.dataRoot)) {
-      this.store.deleteDirectory(this.dirs.dataRoot);
-    }
-
-    if (this.store.copyDirectory(source, this.dirs.dataRoot)) {
+    if (this.copyDirectoryOverlay(source, this.dirs.dataRoot)) {
       return true;
     }
 
@@ -903,6 +903,36 @@ export class UsersService {
       this.store.moveDirectory(previousDataRoot, this.dirs.dataRoot);
     }
     return false;
+  }
+
+  private copyDirectoryOverlay(source: string, target: string): boolean {
+    const sourceEntry = this.store.stat(source);
+    if (sourceEntry === null) {
+      return false;
+    }
+
+    const targetEntry = this.store.stat(target);
+    if (sourceEntry.isDirectory) {
+      if (targetEntry !== null && targetEntry.isFile) {
+        this.store.deleteFile(target);
+      }
+      this.store.ensureDir(target);
+      for (const entry of this.store.list(source)) {
+        if (!this.copyDirectoryOverlay(entry.path, joinPath(target, entry.name))) {
+          return false;
+        }
+      }
+      return true;
+    }
+
+    if (sourceEntry.isFile) {
+      if (targetEntry !== null && targetEntry.isDirectory) {
+        this.store.deleteDirectory(target);
+      }
+      return this.store.copyFile(source, target);
+    }
+
+    return true;
   }
 
   private bodyAsRecord(request: HttpRequest): JsonRecord {

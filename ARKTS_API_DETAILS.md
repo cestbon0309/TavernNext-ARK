@@ -2266,7 +2266,7 @@ avatar:<handle>
 
 ### 12.16 `POST /api/users/restore-data`
 
-用途：从 zip 恢复整个 SillyTavern `data/` 目录。
+用途：从 zip 导入 SillyTavern / TauriTavern `data/` 内容。
 
 请求为 `multipart/form-data`，文件字段优先读取：
 
@@ -2289,9 +2289,11 @@ file
   - 解压后包含一层 `data/` 目录。
   - 解压后直接是某个用户根目录，例如包含 `settings.json`、`characters/`、`chats/`、`extensions/`、`User Avatars/` 等；此时会被归一化为 `data/default-user/`。
 - 只有检测到 data 根目录或用户根目录特征时，才认为是可恢复的 TavernNext/SillyTavern 备份。
-- 替换前先把当前 `<context.filesDir>/data` 移到 `<context.filesDir>/_restore/previous-data-<timestamp>`。
-- 新 data 复制失败时会删除残缺 data 并尝试把旧 data 移回原位置。
-- 恢复成功后调用 `DataDirectories.initialize()` 补齐基础目录和基础文件，然后清理本次临时目录与旧数据临时备份。
+- 合并前先把当前 `<context.filesDir>/data` 复制到 `<context.filesDir>/_restore/previous-data-<timestamp>` 作为回滚备份。
+- 当前导入策略对齐 TauriTavern 的 overlay 思路：把识别出的 data/user-root 内容覆盖合并到现有 `<context.filesDir>/data`；同路径文件覆盖，同路径目录递归合并，zip 中不存在的文件不会被删除。
+- 合并失败时会删除残缺 data 并尝试把旧 data 移回原位置。
+- 恢复成功后调用 `DataDirectories.initialize()` 和 `ensureDefaultUserFiles()` 补齐基础目录、`settings.json`、`image-metadata.json`、`secrets.json`、`stats.json`、`content.log`、`cookie-secret.txt`，并重建默认用户记录，然后清理本次临时目录与旧数据临时备份。
+- 这个差异是为了兼容 TauriTavern 导出的不完整 data archive：TauriTavern 本身是 overlay 导入，缺少某些配置文件时会保留已有配置；TavernNext 早期整目录替换会把这些兜底文件删除，可能导致导入完成后前端或后端服务读取缺失文件时闪退。
 
 成功响应：
 
@@ -2326,7 +2328,7 @@ file
 - ArkTS 后端使用 `@kit.CoreFileKit` 的 `picker.DocumentViewPicker` 唤起系统文件选择器。
 - 只允许选择一个 `.zip` 文件。
 - 使用 `fileIo` 分块复制所选文件到 `<context.filesDir>/_restore/restore-<timestamp>/upload.zip`。
-- 后续解压、识别、归一化、覆盖、回滚逻辑与 `POST /api/users/restore-data` 共用。
+- 后续解压、识别、归一化、overlay 合并和回滚逻辑与 `POST /api/users/restore-data` 共用。
 - 用户取消选择时返回 `{ "ok": false, "cancelled": true }`。
 
 已验证的非破坏性错误路径：
@@ -2901,7 +2903,7 @@ avatar
 - `POST /api/users/change-name`
 - `POST /api/users/change-password`
 - `POST /api/users/backup`，使用 Harmony `zlib.compressFile` 压缩 `<filesDir>/data`，再通过 ShareKit 分享
-- `POST /api/users/restore-data`，使用 Harmony `zlib.decompressFile` 解压 zip，确认是 data 备份后覆盖 `<filesDir>/data`
+- `POST /api/users/restore-data`，使用 Harmony `zlib.decompressFile` 解压 zip，确认是 data/user-root 备份后 overlay 合并到 `<filesDir>/data`
 - `POST /api/users/reset-settings`
 - `POST /api/users/reset-step1`
 - `POST /api/users/reset-step2`
@@ -3056,7 +3058,7 @@ avatar
 - `POST /api/stats/update`
 - `POST /api/stats/recreate`
 - `POST /api/users/backup`：压缩整个 `<filesDir>/data` 并通过 ShareKit 导出。
-- `POST /api/users/restore-data`：上传 zip，解压到私有临时目录，校验 data 结构后覆盖 `<filesDir>/data`。
+- `POST /api/users/restore-data`：上传 zip，解压到私有临时目录，校验 data 结构后 overlay 合并到 `<filesDir>/data`。
 - 扩展抽屉新增 `数据导出/恢复` 折叠栏，提供 data 导出和 data zip 导入恢复入口。
 - `POST /api/content/importURL` / `POST /api/content/importUUID`：支持 Chub/CharacterHub 角色和 lorebook、Pygmalion、JanitorAI、AICC、Risu、Perchance `.gz` 和内置白名单通用 URL；同时兼容旧文档写法 `/api/content-manager/importURL` / `importUUID`。
 - `POST /api/backups/chat/get`
