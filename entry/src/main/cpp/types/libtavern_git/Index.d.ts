@@ -36,8 +36,9 @@ export interface GitBranchInfo {
 
 export declare function getNativeVersion(): string;
 export declare function clone(url: string, targetPath: string, options?: GitCloneOptions): Promise<string>;
+export declare function rehydrate(url: string, repoPath: string, reference: string, commit: string,
+  options?: GitFetchOptions): Promise<GitVersionResult>;
 export declare function update(repoPath: string, options?: GitFetchOptions): Promise<GitUpdateResult>;
 export declare function version(repoPath: string, options?: GitFetchOptions): Promise<GitVersionResult>;
 export declare function branches(repoPath: string, options?: GitFetchOptions): Promise<GitBranchInfo[]>;
 export declare function switchBranch(repoPath: string, branch: string): Promise<void>;
-

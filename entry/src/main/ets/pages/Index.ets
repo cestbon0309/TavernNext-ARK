@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { webview } from '@kit.ArkWeb';
 import { BackendService, BackendStatus } from '../backend/BackendService';
 import { ChatBrowserItem } from '../backend/ChatBrowserService';
+import { DataRestoreProgressService, DataRestoreProgressState } from '../backend/DataRestoreProgressService';
 import { ShellThemeService } from '../backend/ShellThemeService';
 
 const DEFAULT_SHELL_BACKGROUND = '#171717';
@@ -26,6 +27,11 @@ struct Index {
   @State chatBrowserDarkMode: boolean = true;
   @State chatBrowserRefreshing: boolean = false;
   @State chatBrowserDeletingIds: string[] = [];
+  @State restoreProgressActive: boolean = false;
+  @State restoreProgressTitle: string = '';
+  @State restoreProgressMessage: string = '';
+  @State restoreProgressDetail: string = '';
+  private lastRestoreGitRepairFailureKey: string = '';
   private controller: webview.WebviewController = new webview.WebviewController();
   private webRevealToken: number = 0;
   private lastBackPressTime: number = 0;
@@ -46,6 +52,9 @@ struct Index {
     service.getChatBrowser().subscribeOpen(() => {
       this.openChatBrowser();
     });
+    DataRestoreProgressService.getInstance().subscribe((state: DataRestoreProgressState) => {
+      this.applyRestoreProgress(state);
+    });
     service.start().then((status: BackendStatus) => {
       this.applyStatus(status);
     });
@@ -62,6 +71,40 @@ struct Index {
 
   private applyShellBackground(color: string): void {
     this.shellBackground = color;
+  }
+
+  private applyRestoreProgress(state: DataRestoreProgressState): void {
+    this.restoreProgressActive = state.active;
+    this.restoreProgressTitle = state.title;
+    this.restoreProgressMessage = state.message;
+    this.restoreProgressDetail = state.detail;
+    if (!state.active && state.failedExtensionGitRepairs.length > 0) {
+      this.showExtensionGitRepairFailureDialog(state.failedExtensionGitRepairs);
+    }
+  }
+
+  private showExtensionGitRepairFailureDialog(failedExtensions: string[]): void {
+    const unique = failedExtensions.filter((name: string, index: number, names: string[]): boolean => {
+      return name.length > 0 && names.indexOf(name) === index;
+    });
+    if (unique.length === 0) {
+      return;
+    }
+    const key = unique.join('\n');
+    if (key === this.lastRestoreGitRepairFailureKey) {
+      return;
+    }
+    this.lastRestoreGitRepairFailureKey = key;
+    AlertDialog.show({
+      title: '插件 Git 信息重建失败',
+      message: `以下插件的 .git 目录重建失败了：\n\n${unique.map((name: string): string => `- ${name}`).join('\n')}\n\n这应该不会影响你正常使用该插件，但你在更新该插件时，需要卸载再安装最新版。`,
+      autoCancel: true,
+      primaryButton: {
+        value: '知道了',
+        action: () => {
+        }
+      }
+    });
   }
 
   build() {
@@ -129,10 +172,63 @@ struct Index {
       if (this.chatBrowserOpen) {
         this.chatBrowserView()
       }
+
+      if (this.restoreProgressActive) {
+        this.restoreProgressOverlay()
+      }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(this.shellBackground)
+  }
+
+  @Builder
+  private restoreProgressOverlay() {
+    Stack({ alignContent: Alignment.Center }) {
+      Column({ space: 14 }) {
+        Progress({ value: 0, total: 100, type: ProgressType.Ring })
+          .width(72)
+          .height(72)
+          .color('rgba(0,85,255,1.00)')
+          .style({
+            strokeWidth: 6,
+            status: ProgressStatus.LOADING
+          })
+
+        Text(this.restoreProgressTitle.length > 0 ? this.restoreProgressTitle : '正在导入数据')
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#F6F7F9')
+          .textAlign(TextAlign.Center)
+          .width('100%')
+
+        Text(this.restoreProgressMessage.length > 0 ? this.restoreProgressMessage : '请稍候...')
+          .fontSize(14)
+          .fontColor('#D9DEE7')
+          .textAlign(TextAlign.Center)
+          .width('100%')
+
+        if (this.restoreProgressDetail.length > 0) {
+          Text(this.restoreProgressDetail)
+            .fontSize(12)
+            .fontColor('#AEB7C6')
+            .textAlign(TextAlign.Center)
+            .maxLines(2)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+        }
+      }
+      .width('78%')
+      .constraintSize({ maxWidth: 420 })
+      .padding({ left: 22, right: 22, top: 28, bottom: 28 })
+      .backgroundColor('rgba(26,28,32,0.94)')
+      .borderRadius(10)
+      .border({ width: 1, color: 'rgba(255,255,255,0.10)' })
+      .alignItems(HorizontalAlign.Center)
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('rgba(0,0,0,0.48)')
   }
 
   @Builder

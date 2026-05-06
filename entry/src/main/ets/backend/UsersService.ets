@@ -2,10 +2,12 @@ import { common } from '@kit.AbilityKit';
 import { zlib } from '@kit.BasicServicesKit';
 import { fileIo, picker } from '@kit.CoreFileKit';
 import { CryptoUtils } from './CryptoUtils';
+import { DataRestoreProgressService } from './DataRestoreProgressService';
 import { DataDirectories, UserDirectories } from './DataDirectories';
-import { FileStore } from './FileStore';
+import { FileEntry, FileStore } from './FileStore';
+import { GitService } from './GitService';
 import { emptyJsonRecord, HttpRequest, HttpResponse, JsonArray, JsonRecord } from './HttpTypes';
-import { joinPath, sanitizeFileName } from './PathUtils';
+import { joinPath, sanitizeFileName, withoutExtension } from './PathUtils';
 import { ShareExportService } from './ShareExportService';
 
 type JsonValue = Object | string | number | boolean | null | JsonArray;
@@ -43,16 +45,19 @@ export class UsersService {
   private crypto: CryptoUtils;
   private shareExports: ShareExportService;
   private context: common.UIAbilityContext;
+  private git: GitService;
+  private restoreProgress: DataRestoreProgressService = DataRestoreProgressService.getInstance();
   private resetCodes: Map<string, string> = new Map<string, string>();
   private recoverCodes: Map<string, string> = new Map<string, string>();
 
   constructor(store: FileStore, dirs: DataDirectories, crypto: CryptoUtils, shareExports: ShareExportService,
-    context: common.UIAbilityContext) {
+    context: common.UIAbilityContext, git: GitService) {
     this.store = store;
     this.dirs = dirs;
     this.crypto = crypto;
     this.shareExports = shareExports;
     this.context = context;
+    this.git = git;
     this.ensureDefaultUser();
   }
 
@@ -267,17 +272,22 @@ export class UsersService {
   }
 
   async restoreData(request: HttpRequest): Promise<HttpResponse> {
+    this.restoreProgress.begin('正在接收备份文件...');
     const file = request.file('archive') ?? request.file('file') ?? (request.files.length > 0 ? request.files[0] : null);
     if (file === null) {
+      this.restoreProgress.finish('导入已取消');
       return HttpResponse.json(this.error('Missing backup file'), 400);
     }
     if (!file.fileName.toLowerCase().endsWith('.zip')) {
+      this.restoreProgress.finish('导入失败');
       return HttpResponse.json(this.error('Backup file must be a zip archive'), 400);
     }
 
     const paths = this.createRestorePaths();
     this.store.ensureDir(paths.restoreRoot);
     this.store.ensureDir(paths.unpackRoot);
+    this.restoreProgress.update('正在保存备份文件...');
+    await this.allowRestoreProgressFrame();
     this.store.writeBytes(paths.uploadPath, file.bytes);
     return await this.restorePreparedZip(paths);
   }
@@ -306,8 +316,11 @@ export class UsersService {
     const paths = this.createRestorePaths();
     this.store.ensureDir(paths.restoreRoot);
     this.store.ensureDir(paths.unpackRoot);
+    this.restoreProgress.begin('正在读取所选备份文件...');
+    await this.allowRestoreProgressFrame();
     if (!this.copySelectedFile(selectedFiles[0], paths.uploadPath)) {
       this.store.deleteDirectory(paths.restoreRoot);
+      this.restoreProgress.finish('导入失败');
       return HttpResponse.json(this.error('Failed to read selected backup file'), 400);
     }
 
@@ -320,32 +333,53 @@ export class UsersService {
     const previousDataRoot = paths.previousDataRoot;
 
     try {
+      this.restoreProgress.update('正在解压备份压缩包...');
       await zlib.decompressFile(paths.uploadPath, unpackRoot);
     } catch (_err) {
       this.store.deleteDirectory(restoreRoot);
+      this.restoreProgress.finish('导入失败');
       return HttpResponse.json(this.error('Failed to decompress backup zip'), 400);
     }
 
-    const candidate = this.restoreCandidatePath(unpackRoot, restoreRoot);
-    if (candidate.length === 0) {
+    try {
+      this.restoreProgress.update('正在检查备份内容...');
+      const candidate = this.restoreCandidatePath(unpackRoot, restoreRoot);
+      if (candidate.length === 0) {
+        this.store.deleteDirectory(restoreRoot);
+        this.restoreProgress.finish('导入失败');
+        return HttpResponse.json(this.error('The zip archive does not look like a TavernNext data backup'), 400);
+      }
+
+      this.restoreProgress.update('正在覆盖 data 目录...');
+      await this.allowRestoreProgressFrame();
+      if (!this.replaceDataDirectory(candidate, previousDataRoot)) {
+        this.store.deleteDirectory(restoreRoot);
+        this.restoreProgress.finish('导入失败');
+        return HttpResponse.json(this.error('Failed to restore data directory'), 500);
+      }
+
+      this.restoreProgress.update('正在初始化数据目录...');
+      await this.allowRestoreProgressFrame();
+      this.dirs.initialize();
+      this.restoreProgress.update('正在检查插件 Git 信息...');
+      const gitRepair = await this.rehydrateImportedExtensionRepositories();
+      this.restoreProgress.update('正在清理临时文件...');
+      await this.allowRestoreProgressFrame();
+      this.store.deleteDirectory(previousDataRoot);
       this.store.deleteDirectory(restoreRoot);
-      return HttpResponse.json(this.error('The zip archive does not look like a TavernNext data backup'), 400);
-    }
 
-    if (!this.replaceDataDirectory(candidate, previousDataRoot)) {
+      const response = emptyJsonRecord();
+      response['ok'] = true;
+      response['restored'] = true;
+      response['message'] = 'Data directory restored.';
+      response['extensionGitRepair'] = gitRepair;
+      this.restoreProgress.finish('导入完成', this.gitRepairFailures(gitRepair));
+      return HttpResponse.json(response);
+    } catch (err) {
       this.store.deleteDirectory(restoreRoot);
-      return HttpResponse.json(this.error('Failed to restore data directory'), 500);
+      this.restoreProgress.finish('导入失败');
+      return HttpResponse.json(this.error(this.errorMessage(err)), 500);
     }
-
-    this.dirs.initialize();
-    this.store.deleteDirectory(previousDataRoot);
-    this.store.deleteDirectory(restoreRoot);
-
-    const response = emptyJsonRecord();
-    response['ok'] = true;
-    response['restored'] = true;
-    response['message'] = 'Data directory restored.';
-    return HttpResponse.json(response);
   }
 
   resetSettings(request: HttpRequest): HttpResponse {
@@ -574,6 +608,162 @@ export class UsersService {
     }
   }
 
+  private async rehydrateImportedExtensionRepositories(): Promise<JsonRecord> {
+    const result = emptyJsonRecord();
+    result['checked'] = 0;
+    result['rehydrated'] = 0;
+    result['skipped'] = 0;
+    result['failed'] = 0;
+    result['failedExtensions'] = [];
+
+    const sourceRoot = joinPath(this.dirs.dataRoot, '_tauritavern', 'extension-sources');
+    if (!this.store.exists(sourceRoot)) {
+      return result;
+    }
+
+    const localEntries = this.extensionMetadataEntries(joinPath(sourceRoot, 'local'));
+    const globalEntries = this.extensionMetadataEntries(joinPath(sourceRoot, 'global'));
+    const total = localEntries.length + globalEntries.length;
+    result['total'] = total;
+
+    await this.rehydrateExtensionScope('local', localEntries, this.localExtensionRoots(), result, total);
+    await this.rehydrateExtensionScope('global', globalEntries, this.globalExtensionRoots(), result, total);
+    return result;
+  }
+
+  private async rehydrateExtensionScope(scope: string, metadataEntries: FileEntry[], extensionRoots: string[],
+    result: JsonRecord, total: number): Promise<void> {
+    for (const entry of metadataEntries) {
+      result['checked'] = Number(result['checked'] ?? 0) + 1;
+      const extensionName = sanitizeFileName(withoutExtension(entry.name));
+      this.restoreProgress.update('正在检查插件 Git 信息...', this.extensionGitRepairDetail(extensionName, result, total));
+      const extensionPath = this.findExtensionPath(extensionName, extensionRoots);
+      if (extensionPath.length === 0 || this.store.exists(joinPath(extensionPath, '.git'))) {
+        result['skipped'] = Number(result['skipped'] ?? 0) + 1;
+        continue;
+      }
+
+      const metadata = this.store.readJsonRecord(entry.path);
+      const remoteUrl = this.extensionRemoteUrl(metadata);
+      const reference = this.asString(metadata['reference']);
+      const installedCommit = this.asString(metadata['installed_commit']);
+      if (remoteUrl.length === 0 || !this.isFullCommit(installedCommit)) {
+        result['skipped'] = Number(result['skipped'] ?? 0) + 1;
+        continue;
+      }
+
+      try {
+        this.restoreProgress.update('正在重建插件 Git 信息...', this.extensionGitRepairDetail(extensionName, result, total));
+        await this.git.rehydrate(remoteUrl, extensionPath, reference, installedCommit);
+        result['rehydrated'] = Number(result['rehydrated'] ?? 0) + 1;
+      } catch (err) {
+        this.store.deleteDirectory(joinPath(extensionPath, '.git'));
+        result['failed'] = Number(result['failed'] ?? 0) + 1;
+        this.addGitRepairFailure(result, extensionName);
+        this.appendExtensionGitRepairFailure(scope, extensionName, this.errorMessage(err));
+      }
+    }
+  }
+
+  private addGitRepairFailure(result: JsonRecord, extensionName: string): void {
+    const failures = result['failedExtensions'];
+    if (!Array.isArray(failures)) {
+      result['failedExtensions'] = [extensionName];
+      return;
+    }
+    if (!failures.includes(extensionName)) {
+      failures.push(extensionName);
+    }
+  }
+
+  private gitRepairFailures(result: JsonRecord): string[] {
+    const failures = result['failedExtensions'];
+    if (!Array.isArray(failures)) {
+      return [];
+    }
+    return failures
+      .filter((value: Object | string | number | boolean | null): boolean => typeof value === 'string' && value.length > 0)
+      .map((value: Object | string | number | boolean | null): string => `${value}`);
+  }
+
+  private extensionMetadataEntries(metadataRoot: string): FileEntry[] {
+    return this.store.list(metadataRoot).filter((entry: FileEntry): boolean => {
+      return entry.isFile && entry.name.toLowerCase().endsWith('.json');
+    });
+  }
+
+  private extensionGitRepairDetail(extensionName: string, result: JsonRecord, total: number): string {
+    const checked = Number(result['checked'] ?? 0);
+    if (total <= 0) {
+      return extensionName;
+    }
+    return `${extensionName} (${checked}/${total})`;
+  }
+
+  private appendExtensionGitRepairFailure(scope: string, extensionName: string, message: string): void {
+    const logPath = joinPath(this.dirs.cacheRoot, 'extension-git-repair.log');
+    const line = `${new Date().toISOString()} [${scope}] ${extensionName}: ${message}\n`;
+    this.store.writeText(logPath, this.store.readText(logPath, '') + line);
+  }
+
+  private localExtensionRoots(): string[] {
+    return [
+      this.dirs.defaultUser.extensions,
+      joinPath(this.dirs.defaultUser.extensions, 'third-party'),
+      joinPath(this.dirs.defaultUser.root, 'public', 'scripts', 'extensions', 'third-party'),
+      joinPath(this.dirs.defaultUser.root, 'scripts', 'extensions', 'third-party'),
+      joinPath(this.dirs.dataRoot, 'extensions'),
+      joinPath(this.dirs.dataRoot, 'extensions', 'third-party'),
+      joinPath(this.dirs.dataRoot, 'public', 'scripts', 'extensions', 'third-party'),
+      joinPath(this.dirs.dataRoot, 'scripts', 'extensions', 'third-party'),
+    ].filter((path: string, index: number, paths: string[]): boolean => paths.indexOf(path) === index);
+  }
+
+  private globalExtensionRoots(): string[] {
+    return [
+      this.dirs.globalExtensionsRoot,
+      joinPath(this.dirs.dataRoot, 'globalExtensions'),
+      joinPath(this.dirs.dataRoot, 'extensions', 'third-party'),
+      joinPath(this.dirs.dataRoot, 'public', 'scripts', 'extensions', 'third-party'),
+    ].filter((path: string, index: number, paths: string[]): boolean => paths.indexOf(path) === index);
+  }
+
+  private findExtensionPath(extensionName: string, roots: string[]): string {
+    for (const root of roots) {
+      const candidate = joinPath(root, extensionName);
+      if (this.store.exists(joinPath(candidate, 'manifest.json'))) {
+        return candidate;
+      }
+    }
+    return '';
+  }
+
+  private extensionRemoteUrl(metadata: JsonRecord): string {
+    const remoteUrl = this.asString(metadata['remote_url']).trim();
+    if (remoteUrl.length > 0) {
+      return this.ensureGitRemoteSuffix(remoteUrl);
+    }
+
+    const host = this.asString(metadata['host']).trim();
+    const repoPath = this.asString(metadata['repo_path']).trim().replace(/^\/+|\/+$/g, '');
+    if (host.length === 0 || repoPath.length === 0) {
+      return '';
+    }
+    return this.ensureGitRemoteSuffix(`https://${host}/${repoPath}`);
+  }
+
+  private ensureGitRemoteSuffix(url: string): string {
+    const clean = url.trim();
+    if (clean.length === 0 || clean.toLowerCase().endsWith('.git')) {
+      return clean;
+    }
+    return `${clean}.git`;
+  }
+
+  private isFullCommit(value: string): boolean {
+    return /^[0-9a-fA-F]{40}$/.test(value);
+  }
+
   private slugifyText(text: string): string {
     return text.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   }
@@ -740,6 +930,22 @@ export class UsersService {
     const response = emptyJsonRecord();
     response['error'] = message;
     return response;
+  }
+
+  private errorMessage(err: Object | string | null | undefined): string {
+    if (err === undefined || err === null) {
+      return 'Unknown error';
+    }
+    if (typeof err === 'string') {
+      return err;
+    }
+    return JSON.stringify(err);
+  }
+
+  private async allowRestoreProgressFrame(): Promise<void> {
+    await new Promise<void>((resolve: () => void) => {
+      setTimeout(resolve, 24);
+    });
   }
 
   private base64(bytes: Uint8Array): string {

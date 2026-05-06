@@ -2,6 +2,7 @@ import {
   branches as nativeBranches,
   clone as nativeClone,
   getNativeVersion,
+  rehydrate as nativeRehydrate,
   switchBranch as nativeSwitchBranch,
   update as nativeUpdate,
   version as nativeVersion,
@@ -84,6 +85,13 @@ export class GitService {
       nativeOptions.branch = options.branch.trim();
     }
     return await this.runExclusive(async (): Promise<string> => await nativeClone(url, targetPath, nativeOptions));
+  }
+
+  async rehydrate(url: string, repoPath: string, reference: string, commit: string): Promise<GitVersionResult> {
+    return await this.runExclusive(async (): Promise<GitVersionResult> => {
+      const result: Object = await nativeRehydrate(url, repoPath, reference, commit, this.nativeOptions());
+      return this.normalizeVersionResult(result);
+    });
   }
 
   async update(repoPath: string): Promise<GitUpdateResult> {

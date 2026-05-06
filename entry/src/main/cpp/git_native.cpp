@@ -3,6 +3,7 @@
 #include <git2.h>
 
 #include <atomic>
+#include <cctype>
 #include <cstring>
 #include <memory>
 #include <sstream>
@@ -32,6 +33,7 @@ struct GitUpdateLikeResult {
 
 enum class GitTaskKind {
     Clone,
+    Rehydrate,
     Update,
     Version,
     Branches,
@@ -46,6 +48,7 @@ struct GitTask {
     std::string url;
     std::string path;
     std::string branch;
+    std::string commit;
     std::string caBundlePath;
     int depth { 0 };
     bool unshallow { false };
@@ -118,6 +121,61 @@ std::string ShortOid(const std::string &oid)
     return oid.size() > 7 ? oid.substr(0, 7) : oid;
 }
 
+std::string Trim(const std::string &value)
+{
+    size_t start = 0;
+    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start])) != 0) {
+        ++start;
+    }
+
+    size_t end = value.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1])) != 0) {
+        --end;
+    }
+
+    return value.substr(start, end - start);
+}
+
+bool IsFullOid(const std::string &value)
+{
+    if (value.size() != GIT_OID_HEXSZ) {
+        return false;
+    }
+
+    for (char ch : value) {
+        if (std::isxdigit(static_cast<unsigned char>(ch)) == 0) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+std::string NormalizeBranchReference(const std::string &reference)
+{
+    std::string branch = Trim(reference);
+    if (branch.empty() || IsFullOid(branch)) {
+        return "";
+    }
+
+    const std::string refsHeads = "refs/heads/";
+    const std::string originPrefix = "origin/";
+    if (branch.rfind(refsHeads, 0) == 0) {
+        branch = branch.substr(refsHeads.size());
+    } else if (branch.rfind(originPrefix, 0) == 0) {
+        branch = branch.substr(originPrefix.size());
+    } else if (branch.rfind("refs/tags/", 0) == 0 || branch.rfind("refs/", 0) == 0) {
+        return "";
+    }
+
+    std::string refName = "refs/heads/" + branch;
+    if (git_reference_is_valid_name(refName.c_str()) == 0) {
+        return "";
+    }
+
+    return branch;
+}
+
 std::string CurrentCommit(git_repository *repo)
 {
     git_oid oid;
@@ -159,6 +217,26 @@ bool HasRemote(git_repository *repo)
         git_remote_free(remote);
     }
     return rc == 0;
+}
+
+void EnsureOriginRemote(git_repository *repo, const std::string &url)
+{
+    git_remote *remote = nullptr;
+    int rc = git_remote_lookup(&remote, repo, "origin");
+    if (rc == GIT_ENOTFOUND) {
+        rc = git_remote_create(&remote, repo, "origin", url.c_str());
+        if (remote != nullptr) {
+            git_remote_free(remote);
+        }
+        CheckGit(rc, "Unable to create origin remote");
+        return;
+    }
+
+    if (remote != nullptr) {
+        git_remote_free(remote);
+    }
+    CheckGit(rc, "Unable to inspect origin remote");
+    CheckGit(git_remote_set_url(repo, "origin", url.c_str()), "Unable to update origin remote URL");
 }
 
 void FetchOrigin(git_repository *repo, const GitTask &task, bool unshallow)
@@ -223,8 +301,75 @@ bool IsHeadUpToDateWithUpstream(git_repository *repo, const std::string &branch)
     return git_oid_equal(&localOid, &upstreamOid) != 0;
 }
 
+struct RepositoryStatus {
+    bool indexDirty { false };
+    bool workdirDirty { false };
+    bool conflicted { false };
+};
+
+int AccumulateStatus(const char *, unsigned int statusFlags, void *payload)
+{
+    auto *summary = static_cast<RepositoryStatus *>(payload);
+    const unsigned int indexFlags = GIT_STATUS_INDEX_NEW | GIT_STATUS_INDEX_MODIFIED | GIT_STATUS_INDEX_DELETED |
+        GIT_STATUS_INDEX_RENAMED | GIT_STATUS_INDEX_TYPECHANGE;
+    const unsigned int workdirFlags = GIT_STATUS_WT_NEW | GIT_STATUS_WT_MODIFIED | GIT_STATUS_WT_DELETED |
+        GIT_STATUS_WT_RENAMED | GIT_STATUS_WT_TYPECHANGE;
+
+    summary->indexDirty = summary->indexDirty || ((statusFlags & indexFlags) != 0);
+    summary->workdirDirty = summary->workdirDirty || ((statusFlags & workdirFlags) != 0);
+    summary->conflicted = summary->conflicted || ((statusFlags & GIT_STATUS_CONFLICTED) != 0);
+    return 0;
+}
+
+RepositoryStatus GetRepositoryStatus(git_repository *repo)
+{
+    RepositoryStatus summary;
+    git_status_options options = GIT_STATUS_OPTIONS_INIT;
+    options.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
+    options.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED | GIT_STATUS_OPT_RENAMES_HEAD_TO_INDEX |
+        GIT_STATUS_OPT_RENAMES_INDEX_TO_WORKDIR;
+    CheckGit(git_status_foreach_ext(repo, &options, AccumulateStatus, &summary), "Unable to inspect repository status");
+    return summary;
+}
+
+bool HasRepositoryChanges(git_repository *repo)
+{
+    RepositoryStatus status = GetRepositoryStatus(repo);
+    return status.indexDirty || status.workdirDirty || status.conflicted;
+}
+
+bool HasRepairableIndexOnlyChanges(git_repository *repo)
+{
+    RepositoryStatus status = GetRepositoryStatus(repo);
+    return status.indexDirty && !status.workdirDirty && !status.conflicted;
+}
+
+void ResetWorktreeTo(git_repository *repo, git_object *target, const std::string &message)
+{
+    git_checkout_options checkoutOpts = GIT_CHECKOUT_OPTIONS_INIT;
+    checkoutOpts.checkout_strategy = GIT_CHECKOUT_FORCE | GIT_CHECKOUT_RECREATE_MISSING;
+    CheckGit(git_reset(repo, target, GIT_RESET_HARD, &checkoutOpts), message);
+}
+
+void ResetWorktreeToHead(git_repository *repo)
+{
+    git_object *head = nullptr;
+    CheckGit(git_revparse_single(&head, repo, "HEAD"), "Unable to resolve HEAD for worktree repair");
+    try {
+        ResetWorktreeTo(repo, head, "Unable to repair extension worktree");
+    } catch (...) {
+        git_object_free(head);
+        throw;
+    }
+    git_object_free(head);
+}
+
 void FastForwardTo(git_repository *repo, const std::string &branch)
 {
+    if (HasRepositoryChanges(repo)) {
+        throw std::runtime_error("Repository has local changes; update is refused to avoid overwriting files.");
+    }
+
     std::string upstreamName = "refs/remotes/origin/" + branch;
     git_reference *upstreamRef = nullptr;
     CheckGit(git_reference_lookup(&upstreamRef, repo, upstreamName.c_str()), "Unable to resolve upstream branch");
@@ -285,13 +430,16 @@ void FastForwardTo(git_repository *repo, const std::string &branch)
     }
 
     CheckGit(git_repository_set_head(repo, headRefName.c_str()), "Unable to set HEAD to updated branch");
-    git_checkout_options checkoutOpts = GIT_CHECKOUT_OPTIONS_INIT;
-    checkoutOpts.checkout_strategy = GIT_CHECKOUT_SAFE;
-    rc = git_checkout_head(repo, &checkoutOpts);
+    try {
+        ResetWorktreeTo(repo, target, "Unable to reset worktree to updated branch");
+    } catch (...) {
+        git_object_free(target);
+        git_annotated_commit_free(theirHead);
+        throw;
+    }
 
     git_object_free(target);
     git_annotated_commit_free(theirHead);
-    CheckGit(rc, "Unable to checkout updated branch");
 }
 
 GitUpdateLikeResult BuildVersionResult(git_repository *repo, const std::string &path)
@@ -304,6 +452,63 @@ GitUpdateLikeResult BuildVersionResult(git_repository *repo, const std::string &
     result.shortCommitHash = ShortOid(result.currentCommitHash);
     result.isUpToDate = IsHeadUpToDateWithUpstream(repo, result.currentBranchName);
     return result;
+}
+
+void ReadCommitTreeIntoIndex(git_repository *repo, git_commit *commit)
+{
+    git_tree *tree = nullptr;
+    CheckGit(git_commit_tree(&tree, commit), "Unable to read installed commit tree");
+
+    git_index *index = nullptr;
+    int rc = git_repository_index(&index, repo);
+    if (rc < 0) {
+        git_tree_free(tree);
+        CheckGit(rc, "Unable to open repository index");
+    }
+
+    rc = git_index_read_tree(index, tree);
+    if (rc == 0) {
+        rc = git_index_write(index);
+    }
+
+    git_index_free(index);
+    git_tree_free(tree);
+    CheckGit(rc, "Unable to rebuild repository index");
+}
+
+void SetHeadAndIndexToCommit(git_repository *repo, const GitTask &task)
+{
+    git_oid oid;
+    CheckGit(git_oid_fromstr(&oid, task.commit.c_str()), "Invalid installed commit");
+
+    git_commit *commit = nullptr;
+    CheckGit(git_commit_lookup(&commit, repo, &oid), "Unable to resolve installed commit");
+
+    const std::string branch = NormalizeBranchReference(task.branch);
+    int rc = 0;
+    if (!branch.empty()) {
+        const std::string headRefName = "refs/heads/" + branch;
+        git_reference *branchRef = nullptr;
+        rc = git_reference_create(&branchRef, repo, headRefName.c_str(), &oid, 1,
+            "Rebuild extension Git metadata");
+        if (branchRef != nullptr) {
+            const std::string upstream = "origin/" + branch;
+            git_branch_set_upstream(branchRef, upstream.c_str());
+            git_reference_free(branchRef);
+        }
+        if (rc == 0) {
+            rc = git_repository_set_head(repo, headRefName.c_str());
+        }
+    } else {
+        rc = git_repository_set_head_detached(repo, &oid);
+    }
+
+    if (rc == 0) {
+        ReadCommitTreeIntoIndex(repo, commit);
+    }
+
+    git_commit_free(commit);
+    CheckGit(rc, "Unable to set HEAD to installed commit");
 }
 
 void ExecuteClone(GitTask &task)
@@ -327,6 +532,37 @@ void ExecuteClone(GitTask &task)
     task.stringResult = task.path;
 }
 
+void ExecuteRehydrate(GitTask &task)
+{
+    EnsureGitInitialized();
+    ApplyCertLocation(task);
+
+    if (task.url.empty()) {
+        throw std::runtime_error("Repository URL is required");
+    }
+    if (task.path.empty()) {
+        throw std::runtime_error("Repository path is required");
+    }
+    if (task.commit.empty()) {
+        throw std::runtime_error("Installed commit is required");
+    }
+
+    git_repository *repo = nullptr;
+    CheckGit(git_repository_init(&repo, task.path.c_str(), 0), "Unable to initialize repository metadata");
+    try {
+        EnsureOriginRemote(repo, task.url);
+        EnsureAllOriginBranchesRefspec(repo);
+        FetchOrigin(repo, task, false);
+        SetHeadAndIndexToCommit(repo, task);
+        task.updateResult = BuildVersionResult(repo, task.path);
+    } catch (...) {
+        git_repository_free(repo);
+        throw;
+    }
+
+    git_repository_free(repo);
+}
+
 void ExecuteUpdate(GitTask &task)
 {
     EnsureGitInitialized();
@@ -348,6 +584,9 @@ void ExecuteUpdate(GitTask &task)
         wasUpToDate = IsHeadUpToDateWithUpstream(repo, branch);
         if (!wasUpToDate) {
             FastForwardTo(repo, branch);
+        } else if (HasRepairableIndexOnlyChanges(repo)) {
+            ResetWorktreeToHead(repo);
+            wasUpToDate = false;
         }
     }
 
@@ -616,6 +855,9 @@ void ExecuteGitTask(napi_env, void *data)
             case GitTaskKind::Clone:
                 ExecuteClone(*task);
                 break;
+            case GitTaskKind::Rehydrate:
+                ExecuteRehydrate(*task);
+                break;
             case GitTaskKind::Update:
                 ExecuteUpdate(*task);
                 break;
@@ -651,6 +893,7 @@ void CompleteGitTask(napi_env env, napi_status, void *data)
         case GitTaskKind::Clone:
             result = CreateString(env, task->stringResult);
             break;
+        case GitTaskKind::Rehydrate:
         case GitTaskKind::Update:
         case GitTaskKind::Version:
             result = CreateUpdateObject(env, task->updateResult);
@@ -714,6 +957,25 @@ napi_value Clone(napi_env env, napi_callback_info info)
         task->depth = 1;
     }
     return QueueGitTask(env, std::move(task), "tavernGitClone");
+}
+
+napi_value Rehydrate(napi_env env, napi_callback_info info)
+{
+    size_t argc = 5;
+    napi_value args[5] = { nullptr };
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+
+    auto task = std::make_unique<GitTask>();
+    task->env = env;
+    task->kind = GitTaskKind::Rehydrate;
+    task->url = argc > 0 ? GetStringArg(env, args[0]) : "";
+    task->path = argc > 1 ? GetStringArg(env, args[1]) : "";
+    task->branch = argc > 2 ? GetStringArg(env, args[2]) : "";
+    task->commit = argc > 3 ? GetStringArg(env, args[3]) : "";
+    if (argc > 4) {
+        ReadOptions(env, args[4], *task);
+    }
+    return QueueGitTask(env, std::move(task), "tavernGitRehydrate");
 }
 
 napi_value Update(napi_env env, napi_callback_info info)
@@ -796,6 +1058,7 @@ static napi_value Init(napi_env env, napi_value exports)
     napi_property_descriptor desc[] = {
         { "getNativeVersion", nullptr, GetNativeVersion, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "clone", nullptr, Clone, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "rehydrate", nullptr, Rehydrate, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "update", nullptr, Update, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "version", nullptr, Version, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "branches", nullptr, Branches, nullptr, nullptr, nullptr, napi_default, nullptr },

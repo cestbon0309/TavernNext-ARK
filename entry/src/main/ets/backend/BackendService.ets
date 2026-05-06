@@ -72,9 +72,9 @@ export class BackendService {
       (settings: JsonRecord) => this.syncShellThemeFromSettings(settings));
     this.media = new MediaService(this.store, this.directories, this.crypto);
     this.secrets = new SecretsService(this.store, this.directories.defaultUser, this.crypto);
-    this.users = new UsersService(this.store, this.directories, this.crypto, this.shareExports,
-      context as common.UIAbilityContext);
     this.git = new GitService(this.store, this.prepareGitCaBundle(context));
+    this.users = new UsersService(this.store, this.directories, this.crypto, this.shareExports,
+      context as common.UIAbilityContext, this.git);
     this.extensions = new ExtensionsService(this.store, this.directories, context.resourceManager, this.git);
     this.llmBackgroundTasks = new LlmBackgroundTaskService(context as common.UIAbilityContext);
     this.modelProxy = new ModelProxyService(this.directories, this.secrets, this.llmBackgroundTasks);
