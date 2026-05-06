@@ -1,9 +1,11 @@
 import { common } from '@kit.AbilityKit';
 import { zlib } from '@kit.BasicServicesKit';
 import { fileIo, picker } from '@kit.CoreFileKit';
+import { resourceManager } from '@kit.LocalizationKit';
 import { CryptoUtils } from './CryptoUtils';
 import { DataRestoreProgressService } from './DataRestoreProgressService';
 import { DataDirectories, UserDirectories } from './DataDirectories';
+import { DefaultContentSeeder } from './DefaultContentSeeder';
 import { FileEntry, FileStore } from './FileStore';
 import { GitService } from './GitService';
 import { emptyJsonRecord, HttpRequest, HttpResponse, JsonArray, JsonRecord } from './HttpTypes';
@@ -36,6 +38,8 @@ class RestorePaths {
   }
 }
 
+type DataRestoreMode = 'incremental' | 'clean';
+
 export class UsersService {
   private static readonly keyPrefix: string = 'user:';
   private static readonly avatarPrefix: string = 'avatar:';
@@ -46,18 +50,20 @@ export class UsersService {
   private shareExports: ShareExportService;
   private context: common.UIAbilityContext;
   private git: GitService;
+  private manager: resourceManager.ResourceManager;
   private restoreProgress: DataRestoreProgressService = DataRestoreProgressService.getInstance();
   private resetCodes: Map<string, string> = new Map<string, string>();
   private recoverCodes: Map<string, string> = new Map<string, string>();
 
   constructor(store: FileStore, dirs: DataDirectories, crypto: CryptoUtils, shareExports: ShareExportService,
-    context: common.UIAbilityContext, git: GitService) {
+    context: common.UIAbilityContext, git: GitService, manager: resourceManager.ResourceManager) {
     this.store = store;
     this.dirs = dirs;
     this.crypto = crypto;
     this.shareExports = shareExports;
     this.context = context;
     this.git = git;
+    this.manager = manager;
     this.ensureDefaultUser();
   }
 
@@ -289,10 +295,12 @@ export class UsersService {
     this.restoreProgress.update('正在保存备份文件...');
     await this.allowRestoreProgressFrame();
     this.store.writeBytes(paths.uploadPath, file.bytes);
-    return await this.restorePreparedZip(paths);
+    const mode = this.restoreMode(request);
+    return await this.restorePreparedZip(paths, mode);
   }
 
-  async restoreDataWithPicker(): Promise<HttpResponse> {
+  async restoreDataWithPicker(request: HttpRequest): Promise<HttpResponse> {
+    const mode = this.restoreMode(request);
     let selectedFiles: string[] = [];
     try {
       const documentPicker = new picker.DocumentViewPicker(this.context);
@@ -324,10 +332,10 @@ export class UsersService {
       return HttpResponse.json(this.error('Failed to read selected backup file'), 400);
     }
 
-    return await this.restorePreparedZip(paths);
+    return await this.restorePreparedZip(paths, mode);
   }
 
-  private async restorePreparedZip(paths: RestorePaths): Promise<HttpResponse> {
+  private async restorePreparedZip(paths: RestorePaths, mode: DataRestoreMode): Promise<HttpResponse> {
     const restoreRoot = paths.restoreRoot;
     const unpackRoot = paths.unpackRoot;
     const previousDataRoot = paths.previousDataRoot;
@@ -350,9 +358,9 @@ export class UsersService {
         return HttpResponse.json(this.error('The zip archive does not look like a TavernNext data backup'), 400);
       }
 
-      this.restoreProgress.update('正在合并 data 目录...');
+      this.restoreProgress.update(mode === 'clean' ? '正在重置 data 目录...' : '正在合并 data 目录...');
       await this.allowRestoreProgressFrame();
-      if (!this.mergeDataDirectory(candidate, previousDataRoot)) {
+      if (!this.mergeDataDirectory(candidate, previousDataRoot, mode)) {
         this.store.deleteDirectory(restoreRoot);
         this.restoreProgress.finish('导入失败');
         return HttpResponse.json(this.error('Failed to restore data directory'), 500);
@@ -373,6 +381,7 @@ export class UsersService {
       const response = emptyJsonRecord();
       response['ok'] = true;
       response['restored'] = true;
+      response['mode'] = mode;
       response['message'] = 'Data directory restored.';
       response['extensionGitRepair'] = gitRepair;
       this.restoreProgress.finish('导入完成', this.gitRepairFailures(gitRepair));
@@ -777,6 +786,15 @@ export class UsersService {
       joinPath(this.dirs.restoreRoot, `previous-data-${restoreId}`));
   }
 
+  private restoreMode(request: HttpRequest): DataRestoreMode {
+    const body = this.bodyAsRecord(request);
+    const mode = this.asString(body['mode']) || this.asString(body['restoreMode']);
+    if (mode === 'clean') {
+      return 'clean';
+    }
+    return 'incremental';
+  }
+
   private copySelectedFile(sourceUri: string, targetPath: string): boolean {
     this.store.ensureParentDir(targetPath);
     let source: fileIo.File | null = null;
@@ -888,10 +906,15 @@ export class UsersService {
     return normalizedRoot;
   }
 
-  private mergeDataDirectory(source: string, previousDataRoot: string): boolean {
+  private mergeDataDirectory(source: string, previousDataRoot: string, mode: DataRestoreMode): boolean {
     const hadDataRoot = this.store.exists(this.dirs.dataRoot);
     if (hadDataRoot && !this.store.copyDirectory(this.dirs.dataRoot, previousDataRoot)) {
       return false;
+    }
+
+    if (mode === 'clean') {
+      this.store.deleteDirectory(this.dirs.dataRoot);
+      this.initializeCleanDataDirectory();
     }
 
     if (this.copyDirectoryOverlay(source, this.dirs.dataRoot)) {
@@ -903,6 +926,13 @@ export class UsersService {
       this.store.moveDirectory(previousDataRoot, this.dirs.dataRoot);
     }
     return false;
+  }
+
+  private initializeCleanDataDirectory(): void {
+    this.dirs.initialize();
+    new DefaultContentSeeder(this.store, this.dirs, this.manager).seedDefaultUser();
+    this.dirs.ensureDefaultUserFiles();
+    this.ensureDefaultUser();
   }
 
   private copyDirectoryOverlay(source: string, target: string): boolean {

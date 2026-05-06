@@ -74,7 +74,7 @@ export class BackendService {
     this.secrets = new SecretsService(this.store, this.directories.defaultUser, this.crypto);
     this.git = new GitService(this.store, this.prepareGitCaBundle(context));
     this.users = new UsersService(this.store, this.directories, this.crypto, this.shareExports,
-      context as common.UIAbilityContext, this.git);
+      context as common.UIAbilityContext, this.git, context.resourceManager);
     this.extensions = new ExtensionsService(this.store, this.directories, context.resourceManager, this.git);
     this.llmBackgroundTasks = new LlmBackgroundTaskService(context as common.UIAbilityContext);
     this.modelProxy = new ModelProxyService(this.directories, this.secrets, this.llmBackgroundTasks);
@@ -297,7 +297,8 @@ export class BackendService {
     this.server.route('POST', '/api/users/change-password', async (request) => this.users.changePassword(request));
     this.server.route('POST', '/api/users/backup', async (request) => await this.users.backup(request));
     this.server.route('POST', '/api/users/restore-data', async (request) => await this.users.restoreData(request));
-    this.server.route('POST', '/api/users/restore-data-picker', async () => await this.users.restoreDataWithPicker());
+    this.server.route('POST', '/api/users/restore-data-picker',
+      async (request) => await this.users.restoreDataWithPicker(request));
     this.server.route('POST', '/api/users/reset-settings', async (request) => this.users.resetSettings(request));
     this.server.route('POST', '/api/users/change-name', async (request) => this.users.changeName(request));
     this.server.route('POST', '/api/users/reset-step1', async () => this.users.resetStep1());

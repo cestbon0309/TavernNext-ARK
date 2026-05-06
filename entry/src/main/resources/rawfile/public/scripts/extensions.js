@@ -1876,8 +1876,34 @@ async function exportDataArchive() {
 }
 
 async function importDataArchive() {
+    const modePopup = new Popup(
+        '<h3>导入 data 压缩包</h3><p>请选择导入方式。增量导入会保留压缩包中不存在的现有数据；干净导入会先把 data 目录重置成新安装状态，再导入压缩包内容。</p>',
+        POPUP_TYPE.CONFIRM,
+        '',
+        {
+            okButton: '增量导入',
+            cancelButton: '取消',
+            wide: false,
+            large: false,
+            customButtons: [{
+                text: '干净导入',
+                tooltip: '先重置 data 目录，再导入压缩包内容',
+                result: POPUP_RESULT.CUSTOM1,
+                appendAtEnd: false,
+            }],
+        },
+    );
+    const importModeResult = await modePopup.show();
+
+    if (importModeResult !== POPUP_RESULT.AFFIRMATIVE && importModeResult !== POPUP_RESULT.CUSTOM1) {
+        return;
+    }
+    const mode = importModeResult === POPUP_RESULT.CUSTOM1 ? 'clean' : 'incremental';
+    const warning = mode === 'clean'
+        ? '<h3>确认干净导入？</h3><p>干净导入会先重置当前 data 目录，现有角色、聊天、设置、密钥、插件和缓存都可能被删除或被压缩包内容替换。是否继续？</p>'
+        : '<h3>确认增量导入？</h3><p>增量导入会把压缩包内容合并到当前 data 目录，同路径文件会被覆盖，压缩包中不存在的现有数据会保留。是否继续？</p>';
     const confirmation = await callGenericPopup(
-        '<h3>恢复 data 目录？</h3><p>导入压缩包会解压并覆盖当前 data 目录，现有角色、聊天、设置和密钥都可能被替换。是否继续？</p>',
+        warning,
         POPUP_TYPE.CONFIRM,
         '',
         { okButton: '继续导入', cancelButton: '取消', wide: false, large: false },
@@ -1891,7 +1917,7 @@ async function importDataArchive() {
         const response = await fetch('/api/users/restore-data-picker', {
             method: 'POST',
             headers: getRequestHeaders(),
-            body: JSON.stringify({ handle: 'default-user' }),
+            body: JSON.stringify({ handle: 'default-user', mode }),
         });
 
         const data = await response.json();

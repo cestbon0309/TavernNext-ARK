@@ -2290,7 +2290,7 @@ file
   - 解压后直接是某个用户根目录，例如包含 `settings.json`、`characters/`、`chats/`、`extensions/`、`User Avatars/` 等；此时会被归一化为 `data/default-user/`。
 - 只有检测到 data 根目录或用户根目录特征时，才认为是可恢复的 TavernNext/SillyTavern 备份。
 - 合并前先把当前 `<context.filesDir>/data` 复制到 `<context.filesDir>/_restore/previous-data-<timestamp>` 作为回滚备份。
-- 当前导入策略对齐 TauriTavern 的 overlay 思路：把识别出的 data/user-root 内容覆盖合并到现有 `<context.filesDir>/data`；同路径文件覆盖，同路径目录递归合并，zip 中不存在的文件不会被删除。
+- 当前导入支持两种模式：`incremental` 增量导入对齐 TauriTavern 的 overlay 思路，把识别出的 data/user-root 内容覆盖合并到现有 `<context.filesDir>/data`；同路径文件覆盖，同路径目录递归合并，zip 中不存在的文件不会被删除。`clean` 干净导入会先把当前 data 目录重置为刚安装后的默认状态，再执行相同的 overlay 合并。
 - 合并失败时会删除残缺 data 并尝试把旧 data 移回原位置。
 - 恢复成功后调用 `DataDirectories.initialize()` 和 `ensureDefaultUserFiles()` 补齐基础目录、`settings.json`、`image-metadata.json`、`secrets.json`、`stats.json`、`content.log`、`cookie-secret.txt`，并重建默认用户记录，然后清理本次临时目录与旧数据临时备份。
 - 这个差异是为了兼容 TauriTavern 导出的不完整 data archive：TauriTavern 本身是 overlay 导入，缺少某些配置文件时会保留已有配置；TavernNext 早期整目录替换会把这些兜底文件删除，可能导致导入完成后前端或后端服务读取缺失文件时闪退。
@@ -2301,6 +2301,7 @@ file
 {
   "ok": true,
   "restored": true,
+  "mode": "incremental",
   "message": "Data directory restored."
 }
 ```
@@ -2308,7 +2309,7 @@ file
 当前前端入口：扩展抽屉内新增 `数据导出/恢复` 折叠栏，包含：
 
 - `导出 data 压缩包`：调用 `POST /api/users/backup`。
-- `导入 data 压缩包`：先弹窗提醒“会覆盖当前 data 目录”，用户确认后调用 `POST /api/users/restore-data-picker`，由 ArkTS 后端唤起 Harmony 文件选择器选择 zip。
+- `导入 data 压缩包`：先让用户选择“增量导入”或“干净导入”，再按对应风险弹窗确认；确认后调用 `POST /api/users/restore-data-picker`，由 ArkTS 后端唤起 Harmony 文件选择器选择 zip。
 
 ### 12.16.1 `POST /api/users/restore-data-picker`
 
@@ -2318,17 +2319,18 @@ file
 
 ```json
 {
-  "handle": "default-user"
+  "handle": "default-user",
+  "mode": "incremental"
 }
 ```
 
-当前实现不依赖请求体中的 handle，只恢复当前默认 `data/`。
+当前实现不依赖请求体中的 handle，只恢复当前默认 `data/`。`mode` 支持 `incremental` 和 `clean`，缺省为 `incremental`。
 
 行为：
 - ArkTS 后端使用 `@kit.CoreFileKit` 的 `picker.DocumentViewPicker` 唤起系统文件选择器。
 - 只允许选择一个 `.zip` 文件。
 - 使用 `fileIo` 分块复制所选文件到 `<context.filesDir>/_restore/restore-<timestamp>/upload.zip`。
-- 后续解压、识别、归一化、overlay 合并和回滚逻辑与 `POST /api/users/restore-data` 共用。
+- 后续解压、识别、归一化、按模式合并和回滚逻辑与 `POST /api/users/restore-data` 共用。
 - 用户取消选择时返回 `{ "ok": false, "cancelled": true }`。
 
 已验证的非破坏性错误路径：

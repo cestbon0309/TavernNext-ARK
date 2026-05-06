@@ -255,7 +255,7 @@ SillyTavern/dist/_webpack/d2f8920b496f6d16/output/lib.js
 
 页面入口 `entry/src/main/ets/pages/Index.ets` 使用 `Web` 组件加载 `http://127.0.0.1:8000`，并开启 JavaScript、DOM storage、database、图片加载、mixed mode 和 online cache。错误浮层只在主框架加载失败时显示，避免子资源 404 误报为整页失败。
 
-扩展抽屉中新增了 `数据导出/恢复` 折叠栏：导出会调用 `POST /api/users/backup`，使用 Harmony `zlib.compressFile` 压缩 `<context.filesDir>/data` 并唤起 ShareKit；导入不再由前端读取 zip 后上传，而是弹窗确认覆盖后调用 `POST /api/users/restore-data-picker`，由 ArkTS 后端唤起 Harmony `DocumentViewPicker` 选择 zip，再使用 `zlib.decompressFile` 解压。当前导入行为已改为更接近 TauriTavern 的 overlay 合并：识别到 data 根或 user-root 备份后，同路径文件覆盖，zip 中不存在的运行时兜底文件不会被删除；合并后会重新补齐 `settings.json`、`image-metadata.json`、`secrets.json`、`stats.json`、`content.log`、`cookie-secret.txt` 和默认用户记录。保留 `POST /api/users/restore-data` 作为 HTTP multipart 调试兼容入口。
+扩展抽屉中新增了 `数据导出/恢复` 折叠栏：导出会调用 `POST /api/users/backup`，使用 Harmony `zlib.compressFile` 压缩 `<context.filesDir>/data` 并唤起 ShareKit；导入不再由前端读取 zip 后上传，而是先让用户选择“增量导入”或“干净导入”，再调用 `POST /api/users/restore-data-picker`，由 ArkTS 后端唤起 Harmony `DocumentViewPicker` 选择 zip，并使用 `zlib.decompressFile` 解压。增量导入是当前默认安全路径：识别到 data 根或 user-root 备份后，同路径文件覆盖，zip 中不存在的运行时兜底文件不会被删除；干净导入会先把当前 data 目录重置为刚安装后的默认状态，再执行同样的 overlay 合并。两种模式成功后都会重新补齐 `settings.json`、`image-metadata.json`、`secrets.json`、`stats.json`、`content.log`、`cookie-secret.txt` 和默认用户记录。保留 `POST /api/users/restore-data` 作为 HTTP multipart 调试兼容入口。
 
 ## 已验证
 
@@ -276,7 +276,7 @@ SillyTavern/dist/_webpack/d2f8920b496f6d16/output/lib.js
 - `POST /api/secrets/write`、`POST /api/secrets/read`、`POST /api/secrets/delete` 已通过 HTTP API 验证。
 - `POST /api/users/backup` 已通过 HTTP API 验证，能够生成 data zip 并通过 ShareKit 返回分享结果。
 - `POST /api/users/restore-data` 已通过非破坏性 HTTP API 验证，坏 zip 和非 data zip 都会返回 `400`，不会覆盖当前 `data/`。
-- `POST /api/users/restore-data-picker` 已在虚拟机中验证可由后端唤起文件选择器，并可恢复导入的 SillyTavern data/user-root 备份；导入后的 `extensions/third-party` 插件能被发现和加载。导入策略已从整目录替换改为 overlay 合并，避免 TauriTavern 导出的 zip 缺少部分配置文件时把 TavernNext 的兜底配置一并删除。
+- `POST /api/users/restore-data-picker` 已在虚拟机中验证可由后端唤起文件选择器，并可恢复导入的 SillyTavern data/user-root 备份；导入后的 `extensions/third-party` 插件能被发现和加载。导入策略已从整目录替换改为可选模式：增量导入 overlay 合并，避免 TauriTavern 导出的 zip 缺少部分配置文件时把 TavernNext 的兜底配置一并删除；干净导入则先重建默认 data，再 overlay 导入，用于用户明确想清空现有数据的场景。
 - 扩展抽屉的 `数据导出/恢复` 折叠栏已能在 rawfile HTML 中加载。
 - `GET /api/extensions/discover` 已验证能发现导入备份中的 `third-party/JS-Slash-Runner` 和 `third-party/ST-Prompt-Template`；`/scripts/extensions/third-party/.../manifest.json`、`dist/index.js`、`dist/index.css` 静态资源可正常返回；`JS-Slash-Runner` 的 `minimum_client_version=1.12.13` 可通过当前 `/version` 响应启用。扩展 `version/update/branches/switch/delete/move` 现在以发现/静态加载的 active 目录为准；如果 active local 是备份导入的非 Git 旧目录，而隐藏的 global 同名目录是可更新 Git clone，则更新时会迁移 Git clone 到 active local 并清理重复目录，后续只保留一份会被加载和更新的插件。
 - 第三方扩展 Git 已在 x86_64 模拟器通过 native `libgit2` 验证：`POST /api/extensions/version` 可读取 `Extension-Blip` 的 `main`、GitHub remote 和真实 commit；`branches` 返回本地与 `origin/main`；`update` 返回 up-to-date；`switch origin/main` 返回 `204`。

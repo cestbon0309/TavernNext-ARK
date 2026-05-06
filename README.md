@@ -238,9 +238,9 @@ curl.exe -N http://127.0.0.1:8000/api/dev/llm-api-logs/stream
 在应用内进入拓展页面，打开 `数据导出/恢复` 区域。
 
 - 导出：压缩 `<app filesDir>/data`，生成 zip 后调用系统分享。
-- 恢复：弹窗确认覆盖后，由 ArkTS 后端唤起 HarmonyOS 文件选择器选择 zip，解压、校验 data 结构，然后覆盖当前 `<app filesDir>/data`。
+- 恢复：先选择“增量导入”或“干净导入”，确认后由 ArkTS 后端唤起 HarmonyOS 文件选择器选择 zip，解压、校验 data 结构，然后恢复到当前 `<app filesDir>/data`。
 
-恢复 data zip 会覆盖当前应用数据，请先确认备份来源可信。
+增量导入会保留压缩包中不存在的现有数据；干净导入会先把 data 目录重置到新安装状态，再导入压缩包内容。恢复 data zip 会覆盖同路径数据，请先确认备份来源可信。
 
 ## 开发注意事项
 
@@ -265,4 +265,3 @@ git diff --cached
 [SillyTavern](https://github.com/SillyTavern/SillyTavern)
 
 [MikTik](https://github.com/Darkatse/MikTik)
-
