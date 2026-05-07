@@ -161,6 +161,11 @@ class RecentChatResponse {
   match: boolean = true;
 }
 
+class ChatFileStats {
+  count: number = 0;
+  last: JsonRecord | null = null;
+}
+
 class ChatSearchResponse {
   file_name: string = '';
   file_size: string = '';
@@ -916,11 +921,12 @@ export class SillyTavernCore {
 
     const rows: ChatSummaryResponse[] = [];
     for (const file of files) {
+      const stats = this.readChatFileStats(file.path);
       const row = new ChatSummaryResponse();
       row.file_name = file.name;
       row.file_id = withoutExtension(file.name);
-      row.chat_items = this.readChatFile(file.path).length;
-      row.mes = this.getLastChatMessage(file.path);
+      row.chat_items = stats.count;
+      row.mes = this.asString(stats.last?.['mes']);
       row.last_mes = row.mes;
       row.file_size = file.size;
       row.date_last_chat = file.mtimeMs;
@@ -942,7 +948,7 @@ export class SillyTavernCore {
     if (fileName.length === 0) {
       return HttpResponse.json(emptyJsonRecord());
     }
-    return HttpResponse.json(this.readChatFile(joinPath(dir, sanitizeFileName(ensureJsonlExtension(fileName)))));
+    return HttpResponse.json(this.readChatFile(joinPath(dir, sanitizeFileName(ensureJsonlExtension(fileName))), true));
   }
 
   saveChat(request: HttpRequest): HttpResponse {
@@ -955,8 +961,10 @@ export class SillyTavernCore {
     }
     const dir = joinPath(this.userDirs.chats, withoutExtension(sanitizeFileName(avatarUrl)));
     this.store.ensureDir(dir);
-    const jsonl = chat.map((item: Object | string | number | boolean | null) => JSON.stringify(item)).join('\n');
-    this.store.writeText(joinPath(dir, sanitizeFileName(ensureJsonlExtension(fileName))), jsonl);
+    const path = joinPath(dir, sanitizeFileName(ensureJsonlExtension(fileName)));
+    const rows = this.mergePreservedChatFields(path, chat as JsonArray);
+    const jsonl = rows.map((item: Object | string | number | boolean | null) => JSON.stringify(item)).join('\n');
+    this.store.writeText(path, jsonl);
     this.backupChat(withoutExtension(sanitizeFileName(avatarUrl)), jsonl);
     return HttpResponse.json(new OkResponse());
   }
@@ -1122,7 +1130,7 @@ export class SillyTavernCore {
     if (id.length === 0) {
       return HttpResponse.empty(400);
     }
-    return HttpResponse.json(this.readChatFile(joinPath(this.userDirs.groupChats, ensureJsonlExtension(id))));
+    return HttpResponse.json(this.readChatFile(joinPath(this.userDirs.groupChats, ensureJsonlExtension(id)), true));
   }
 
   saveGroupChat(request: HttpRequest): HttpResponse {
@@ -1132,8 +1140,10 @@ export class SillyTavernCore {
     if (id.length === 0 || !Array.isArray(chat)) {
       return HttpResponse.json(jsonMessage('id and chat[] are required'), 400);
     }
-    const jsonl = chat.map((item: Object | string | number | boolean | null) => JSON.stringify(item)).join('\n');
-    this.store.writeText(joinPath(this.userDirs.groupChats, ensureJsonlExtension(id)), jsonl);
+    const path = joinPath(this.userDirs.groupChats, ensureJsonlExtension(id));
+    const rows = this.mergePreservedChatFields(path, chat as JsonArray);
+    const jsonl = rows.map((item: Object | string | number | boolean | null) => JSON.stringify(item)).join('\n');
+    this.store.writeText(path, jsonl);
     this.backupChat(id, jsonl);
     return HttpResponse.json(new OkResponse());
   }
@@ -1160,7 +1170,7 @@ export class SillyTavernCore {
     if (entry === null || !entry.isFile) {
       return HttpResponse.json(emptyJsonRecord());
     }
-    return HttpResponse.json(this.chatInfo(entry, this.readChatFile(path)));
+    return HttpResponse.json(this.chatInfo(entry, this.readChatFileStats(path)));
   }
 
   recentChats(request: HttpRequest): HttpResponse {
@@ -1381,7 +1391,7 @@ export class SillyTavernCore {
       if (!file.isFile || extensionOf(file.name) !== '.jsonl' || !file.name.startsWith('chat_')) {
         continue;
       }
-      const info = this.chatInfo(file, this.readChatFile(file.path));
+      const info = this.chatInfo(file, this.readChatFileStats(file.path));
       if (this.asString(info['file_name']).length > 0) {
         backups.push(info);
       }
@@ -2230,7 +2240,7 @@ export class SillyTavernCore {
     return length;
   }
 
-  private readChatFile(path: string): Object[] {
+  private readChatFile(path: string, compactForClient: boolean = false): Object[] {
     const text = this.store.readText(path, '');
     if (text.length === 0) {
       return [];
@@ -2242,11 +2252,150 @@ export class SillyTavernCore {
         continue;
       }
       try {
-        rows.push(JSON.parse(trimmed) as Object);
+        const parsed = JSON.parse(trimmed) as Object;
+        rows.push(compactForClient ? this.compactChatRowForClient(parsed) : parsed);
       } catch (_err) {
       }
     }
     return rows;
+  }
+
+  private readChatFileStats(path: string): ChatFileStats {
+    const stats = new ChatFileStats();
+    const text = this.store.readText(path, '');
+    if (text.length === 0) {
+      return stats;
+    }
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) {
+        continue;
+      }
+      stats.count += 1;
+      try {
+        const parsed = JSON.parse(trimmed) as Object;
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          stats.last = parsed as JsonRecord;
+        }
+      } catch (_err) {
+      }
+    }
+    return stats;
+  }
+
+  private compactChatRowForClient(row: Object): Object {
+    if (row === null || Array.isArray(row) || typeof row !== 'object') {
+      return row;
+    }
+    const record = row as JsonRecord;
+    if (record['chat_metadata'] !== undefined) {
+      return row;
+    }
+    const output: JsonRecord = {};
+    for (const key of Object.keys(record)) {
+      if (this.shouldPreserveChatFieldOnDisk(key)) {
+        continue;
+      }
+      output[key] = record[key];
+    }
+    return output;
+  }
+
+  private mergePreservedChatFields(path: string, rows: JsonArray): JsonArray {
+    const originalRows = this.readChatFile(path, false);
+    if (originalRows.length === 0) {
+      return rows;
+    }
+    const output: JsonArray = [];
+    const usedOriginalRows: boolean[] = [];
+    for (let index = 0; index < rows.length; index++) {
+      const row = rows[index];
+      let original: Object | null = null;
+      if (index < originalRows.length && this.canMergePreservedChatRows(originalRows[index], row)) {
+        original = originalRows[index];
+        usedOriginalRows[index] = true;
+      } else {
+        const originalIndex = this.findMatchingOriginalChatRow(row, originalRows, usedOriginalRows);
+        if (originalIndex >= 0) {
+          original = originalRows[originalIndex];
+          usedOriginalRows[originalIndex] = true;
+        }
+      }
+      output.push(this.mergePreservedChatRowFields(original, row));
+    }
+    return output;
+  }
+
+  private findMatchingOriginalChatRow(row: Object | string | number | boolean | null, originalRows: Object[],
+    usedOriginalRows: boolean[]): number {
+    for (let index = 0; index < originalRows.length; index++) {
+      if (usedOriginalRows[index]) {
+        continue;
+      }
+      if (this.canMergePreservedChatRows(originalRows[index], row)) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private canMergePreservedChatRows(original: Object | null, row: Object | string | number | boolean | null): boolean {
+    if (row === null || Array.isArray(row) || typeof row !== 'object' || original === null || Array.isArray(original) ||
+      typeof original !== 'object') {
+      return false;
+    }
+    const originalRecord = original as JsonRecord;
+    const rowRecord = row as JsonRecord;
+    if (rowRecord['chat_metadata'] !== undefined || originalRecord['chat_metadata'] !== undefined) {
+      return false;
+    }
+    const rowSendDate = this.asString(rowRecord['send_date']);
+    const originalSendDate = this.asString(originalRecord['send_date']);
+    if (rowSendDate.length > 0 || originalSendDate.length > 0) {
+      return rowSendDate.length > 0 && rowSendDate === originalSendDate &&
+        this.asString(rowRecord['name']) === this.asString(originalRecord['name']) &&
+        this.asString(rowRecord['is_user']) === this.asString(originalRecord['is_user']);
+    }
+    return this.asString(rowRecord['mes']) === this.asString(originalRecord['mes']) &&
+      this.asString(rowRecord['name']) === this.asString(originalRecord['name']) &&
+      this.asString(rowRecord['is_user']) === this.asString(originalRecord['is_user']);
+  }
+
+  private mergePreservedChatRowFields(original: Object | null, row: Object | string | number | boolean | null):
+    Object | string | number | boolean | null {
+    if (row === null || Array.isArray(row) || typeof row !== 'object' || original === null || Array.isArray(original) ||
+      typeof original !== 'object') {
+      return row;
+    }
+    const originalRecord = original as JsonRecord;
+    const rowRecord = row as JsonRecord;
+    if (rowRecord['chat_metadata'] !== undefined) {
+      return row;
+    }
+    for (const key of Object.keys(originalRecord)) {
+      if (this.shouldPreserveChatFieldOnDisk(key) && rowRecord[key] === undefined) {
+        rowRecord[key] = originalRecord[key];
+      }
+    }
+    return rowRecord;
+  }
+
+  private shouldPreserveChatFieldOnDisk(key: string): boolean {
+    switch (key) {
+      case 'TavernDB_ACU_IsolatedData':
+      case 'TavernDB_ACU_IndependentData':
+      case 'TavernDB_ACU_SummaryData':
+      case 'TavernDB_ACU_Data':
+      case '__bl_original_mes':
+      case '__bl_diff_source_signature':
+      case '__bl_diff_last_cleaned_mes':
+      case 'qrf_plot':
+      case 'qrf_plot_preset':
+      case 'qrf_plot_tasks':
+        return true;
+      default:
+        return false;
+    }
   }
 
   private importChatTexts(bytes: Uint8Array, fileType: string, userName: string, characterName: string): string[] {
@@ -2414,18 +2563,18 @@ export class SillyTavernCore {
     }
   }
 
-  private chatInfo(file: FileEntry, rows: Object[]): JsonRecord {
+  private chatInfo(file: FileEntry, stats: ChatFileStats): JsonRecord {
     const result = emptyJsonRecord();
     result['match'] = true;
     result['file_id'] = withoutExtension(file.name);
     result['file_name'] = file.name;
     result['file_size'] = this.formatBytes(file.size);
-    result['chat_items'] = Math.max(0, rows.length - 1);
+    result['chat_items'] = Math.max(0, stats.count - 1);
     result['mes'] = '[The chat is empty]';
     result['last_mes'] = new Date(Math.round(file.mtimeMs)).toISOString();
 
-    if (rows.length > 0) {
-      const last = rows[rows.length - 1] as JsonRecord;
+    if (stats.last !== null) {
+      const last = stats.last;
       result['mes'] = this.asString(last['mes']) || '[The message is empty]';
       result['last_mes'] = this.asString(last['send_date']) || result['last_mes'];
     }
@@ -2433,7 +2582,7 @@ export class SillyTavernCore {
   }
 
   private chatSearchInfo(file: FileEntry, rows: Object[]): ChatSearchResponse {
-    const info = this.chatInfo(file, rows);
+    const info = this.chatInfoFromRows(file, rows);
     const row = new ChatSearchResponse();
     row.file_name = withoutExtension(file.name);
     row.file_size = this.asString(info['file_size']);
@@ -2441,6 +2590,18 @@ export class SillyTavernCore {
     row.last_mes = this.asString(info['last_mes']);
     row.preview_message = this.previewMessage(this.asString(info['mes']));
     return row;
+  }
+
+  private chatInfoFromRows(file: FileEntry, rows: Object[]): JsonRecord {
+    const stats = new ChatFileStats();
+    stats.count = rows.length;
+    if (rows.length > 0) {
+      const last = rows[rows.length - 1];
+      if (last !== null && typeof last === 'object' && !Array.isArray(last)) {
+        stats.last = last as JsonRecord;
+      }
+    }
+    return this.chatInfo(file, stats);
   }
 
   private previewMessage(message: string): string {
@@ -2505,15 +2666,6 @@ export class SillyTavernCore {
       }
     }
     return emptyJsonRecord();
-  }
-
-  private getLastChatMessage(path: string): string {
-    const rows = this.readChatFile(path);
-    if (rows.length === 0) {
-      return '';
-    }
-    const last = rows[rows.length - 1] as JsonRecord;
-    return this.asString(last['mes']);
   }
 
   private collectCharacterRecentChats(files: RecentChatFile[]): void {
@@ -2594,18 +2746,18 @@ export class SillyTavernCore {
       return row;
     }
 
-    const rows = this.readChatFile(file.filePath);
-    if (rows.length === 0) {
+    const stats = this.readChatFileStats(file.filePath);
+    if (stats.count === 0 || stats.last === null) {
       return new RecentChatResponse();
     }
 
-    const last = rows[rows.length - 1] as JsonRecord;
+    const last = stats.last;
     if (this.asString(last['name']).length === 0 && this.asString(last['character_name']).length === 0 &&
       last['chat_metadata'] === undefined) {
       return new RecentChatResponse();
     }
 
-    row.chat_items = Math.max(0, rows.length - 1);
+    row.chat_items = Math.max(0, stats.count - 1);
     row.mes = this.asString(last['mes']) || '[The message is empty]';
     row.last_mes = this.asString(last['send_date']) || row.last_mes;
     return row;

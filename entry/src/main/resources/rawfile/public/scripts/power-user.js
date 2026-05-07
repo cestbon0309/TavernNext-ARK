@@ -139,7 +139,7 @@ export const power_user = {
         target_length: 400,
     },
     markdown_escape_strings: '',
-    chat_truncation: 100,
+    chat_truncation: 30,
     streaming_fps: 30,
     smooth_streaming: false,
     smooth_streaming_no_think: false,
@@ -1594,6 +1594,9 @@ export async function loadPowerUserSettings(settings, data) {
         if (Object.hasOwn(settings.power_user, 'auto_sort_tags') && !Object.hasOwn(settings.power_user, 'tag_sort_mode')) {
             settings.power_user.tag_sort_mode = settings.power_user.auto_sort_tags ? tag_sort_mode.ALPHABETICAL : tag_sort_mode.MANUAL;
             delete settings.power_user.auto_sort_tags;
+        }
+        if (settings.power_user.chat_truncation === 100) {
+            settings.power_user.chat_truncation = 30;
         }
         Object.assign(power_user, settings.power_user);
     }
