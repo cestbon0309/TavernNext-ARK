@@ -12,16 +12,6 @@ class PngChunk {
   }
 }
 
-class TextChunkInfo {
-  keyword: string;
-  text: string;
-
-  constructor(keyword: string, text: string) {
-    this.keyword = keyword;
-    this.text = text;
-  }
-}
-
 const PNG_SIGNATURE: number[] = [137, 80, 78, 71, 13, 10, 26, 10];
 const DEFAULT_PNG_BYTES: number[] = [
   137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0,
@@ -86,41 +76,84 @@ export class PngCardStore {
   }
 
   private readCardText(image: Uint8Array): string {
-    const chunks = this.extractChunks(image);
-    let charaText = '';
-    let ccv3Text = '';
-    for (const chunk of chunks) {
-      if (chunk.type !== 'tEXt') {
-        continue;
+    if (!this.hasSignature(image)) {
+      throw new Error('Invalid PNG signature');
+    }
+
+    let charaStart = -1;
+    let charaEnd = -1;
+    let offset = PNG_SIGNATURE.length;
+    while (offset + 12 <= image.byteLength) {
+      const length = this.readUInt32(image, offset);
+      const type = this.readChunkType(image, offset + 4);
+      const dataStart = offset + 8;
+      const dataEnd = dataStart + length;
+      if (dataEnd + 4 > image.byteLength) {
+        throw new Error('Invalid PNG chunk length');
       }
-      const text = this.decodeTextChunk(chunk.data);
-      const keyword = text.keyword.toLowerCase();
-      if (keyword === 'ccv3') {
-        ccv3Text = text.text;
-      } else if (keyword === 'chara') {
-        charaText = text.text;
+
+      if (type === 'tEXt') {
+        const separatorIndex = this.findTextSeparator(image, dataStart, dataEnd);
+        if (separatorIndex >= 0) {
+          const keyword = this.decodeAsciiRange(image, dataStart, separatorIndex).toLowerCase();
+          if (keyword === 'ccv3') {
+            return this.decodeCardJson(image.slice(separatorIndex + 1, dataEnd));
+          }
+          if (keyword === 'chara' && charaStart < 0) {
+            charaStart = separatorIndex + 1;
+            charaEnd = dataEnd;
+          }
+        }
+      }
+
+      offset = dataEnd + 4;
+      if (type === 'IEND') {
+        break;
       }
     }
 
-    const encoded = ccv3Text.length > 0 ? ccv3Text : charaText;
-    if (encoded.length === 0) {
+    if (charaStart < 0 || charaEnd < charaStart) {
       throw new Error('No character metadata');
     }
-    return this.decoder.decodeToString(this.base64.decodeSync(encoded, util.Type.BASIC));
+    return this.decodeCardJson(image.slice(charaStart, charaEnd));
   }
 
   private writeCardText(image: Uint8Array, jsonText: string): Uint8Array {
-    const chunks = this.extractChunks(image);
     const filtered: PngChunk[] = [];
-    for (const chunk of chunks) {
-      if (chunk.type === 'tEXt') {
-        const text = this.decodeTextChunk(chunk.data);
-        const keyword = text.keyword.toLowerCase();
-        if (keyword === 'chara' || keyword === 'ccv3') {
-          continue;
+
+    if (!this.hasSignature(image)) {
+      throw new Error('Invalid PNG signature');
+    }
+
+    let offset = PNG_SIGNATURE.length;
+    while (offset + 12 <= image.byteLength) {
+      const length = this.readUInt32(image, offset);
+      const type = this.readChunkType(image, offset + 4);
+      const dataStart = offset + 8;
+      const dataEnd = dataStart + length;
+      if (dataEnd + 4 > image.byteLength) {
+        throw new Error('Invalid PNG chunk length');
+      }
+
+      let keepChunk = true;
+      if (type === 'tEXt') {
+        const separatorIndex = this.findTextSeparator(image, dataStart, dataEnd);
+        if (separatorIndex >= 0) {
+          const keyword = this.decodeAsciiRange(image, dataStart, separatorIndex).toLowerCase();
+          if (keyword === 'chara' || keyword === 'ccv3') {
+            keepChunk = false;
+          }
         }
       }
-      filtered.push(chunk);
+
+      if (keepChunk) {
+        filtered.push(new PngChunk(type, image.slice(dataStart, dataEnd)));
+      }
+
+      offset = dataEnd + 4;
+      if (type === 'IEND') {
+        break;
+      }
     }
 
     const base64Json = this.base64.encodeToStringSync(this.encoder.encodeInto(jsonText), util.Type.BASIC);
@@ -137,27 +170,9 @@ export class PngCardStore {
     return this.encodeChunks(filtered);
   }
 
-  private extractChunks(image: Uint8Array): PngChunk[] {
-    if (!this.hasSignature(image)) {
-      throw new Error('Invalid PNG signature');
-    }
-    const chunks: PngChunk[] = [];
-    let offset = 8;
-    while (offset + 12 <= image.byteLength) {
-      const length = this.readUInt32(image, offset);
-      const type = this.asciiDecode(image.slice(offset + 4, offset + 8));
-      const dataStart = offset + 8;
-      const dataEnd = dataStart + length;
-      if (dataEnd + 4 > image.byteLength) {
-        throw new Error('Invalid PNG chunk length');
-      }
-      chunks.push(new PngChunk(type, image.slice(dataStart, dataEnd)));
-      offset = dataEnd + 4;
-      if (type === 'IEND') {
-        break;
-      }
-    }
-    return chunks;
+  private decodeCardJson(encodedBytes: Uint8Array): string {
+    const encoded = this.decoder.decodeToString(encodedBytes);
+    return this.decoder.decodeToString(this.base64.decodeSync(encoded, util.Type.BASIC));
   }
 
   private encodeChunks(chunks: PngChunk[]): Uint8Array {
@@ -180,20 +195,6 @@ export class PngCardStore {
       offset += 12 + chunk.data.byteLength;
     }
     return output;
-  }
-
-  private decodeTextChunk(data: Uint8Array): TextChunkInfo {
-    let zeroIndex = -1;
-    for (let index = 0; index < data.byteLength; index += 1) {
-      if (data[index] === 0) {
-        zeroIndex = index;
-        break;
-      }
-    }
-    if (zeroIndex < 0) {
-      throw new Error('Invalid tEXt chunk');
-    }
-    return new TextChunkInfo(this.latin1Decode(data.slice(0, zeroIndex)), this.latin1Decode(data.slice(zeroIndex + 1)));
   }
 
   private encodeTextChunk(keyword: string, text: string): Uint8Array {
@@ -249,8 +250,21 @@ export class PngCardStore {
     return this.latin1Encode(value);
   }
 
-  private asciiDecode(bytes: Uint8Array): string {
-    return this.latin1Decode(bytes);
+  private readChunkType(bytes: Uint8Array, offset: number): string {
+    return String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+  }
+
+  private findTextSeparator(bytes: Uint8Array, start: number, end: number): number {
+    for (let index = start; index < end; index += 1) {
+      if (bytes[index] === 0) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  private decodeAsciiRange(bytes: Uint8Array, start: number, end: number): string {
+    return this.decoder.decodeToString(bytes.slice(start, end));
   }
 
   private latin1Encode(value: string): Uint8Array {
@@ -261,11 +275,4 @@ export class PngCardStore {
     return output;
   }
 
-  private latin1Decode(bytes: Uint8Array): string {
-    let output = '';
-    for (let index = 0; index < bytes.byteLength; index += 1) {
-      output += String.fromCharCode(bytes[index]);
-    }
-    return output;
-  }
 }

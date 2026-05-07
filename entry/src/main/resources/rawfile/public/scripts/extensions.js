@@ -1876,6 +1876,7 @@ async function exportDataArchive() {
 }
 
 async function importDataArchive() {
+    const repairExtensionGitInputId = 'restore_repair_extension_git';
     const modePopup = new Popup(
         '<h3>导入 data 压缩包</h3><p>请选择导入方式。增量导入会保留压缩包中不存在的现有数据；干净导入会先把 data 目录重置成新安装状态，再导入压缩包内容。</p>',
         POPUP_TYPE.CONFIRM,
@@ -1891,6 +1892,13 @@ async function importDataArchive() {
                 result: POPUP_RESULT.CUSTOM1,
                 appendAtEnd: false,
             }],
+            customInputs: [{
+                id: repairExtensionGitInputId,
+                type: 'checkbox',
+                label: '导入完成后自动尝试重建插件 .git 信息',
+                tooltip: '适用于从 TauriTavern 等备份导入的插件。取消勾选可以跳过耗时的 Git 重建，插件通常仍可正常使用，但插件内更新可能需要稍后手动重建或重新安装。',
+                defaultState: true,
+            }],
         },
     );
     const importModeResult = await modePopup.show();
@@ -1899,6 +1907,7 @@ async function importDataArchive() {
         return;
     }
     const mode = importModeResult === POPUP_RESULT.CUSTOM1 ? 'clean' : 'incremental';
+    const repairExtensionGit = Boolean(modePopup.inputResults?.get(repairExtensionGitInputId) ?? true);
     const warning = mode === 'clean'
         ? '<h3>确认干净导入？</h3><p>干净导入会先重置当前 data 目录，现有角色、聊天、设置、密钥、插件和缓存都可能被删除或被压缩包内容替换。是否继续？</p>'
         : '<h3>确认增量导入？</h3><p>增量导入会把压缩包内容合并到当前 data 目录，同路径文件会被覆盖，压缩包中不存在的现有数据会保留。是否继续？</p>';
@@ -1917,7 +1926,7 @@ async function importDataArchive() {
         const response = await fetch('/api/users/restore-data-picker', {
             method: 'POST',
             headers: getRequestHeaders(),
-            body: JSON.stringify({ handle: 'default-user', mode }),
+            body: JSON.stringify({ handle: 'default-user', mode, repairExtensionGit }),
         });
 
         const data = await response.json();

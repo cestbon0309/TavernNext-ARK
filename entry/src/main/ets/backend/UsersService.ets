@@ -47,6 +47,11 @@ class ExtensionGitRepairCandidate {
 
 type DataRestoreMode = 'incremental' | 'clean';
 
+class DataRestoreOptions {
+  mode: DataRestoreMode = 'incremental';
+  repairExtensionGit: boolean = true;
+}
+
 export class UsersService {
   private static readonly keyPrefix: string = 'user:';
   private static readonly avatarPrefix: string = 'avatar:';
@@ -302,12 +307,12 @@ export class UsersService {
     this.restoreProgress.update('正在保存备份文件...');
     await this.allowRestoreProgressFrame();
     this.store.writeBytes(paths.uploadPath, file.bytes);
-    const mode = this.restoreMode(request);
-    return await this.restorePreparedZip(paths, mode);
+    const options = this.restoreOptions(request);
+    return await this.restorePreparedZip(paths, options);
   }
 
   async restoreDataWithPicker(request: HttpRequest): Promise<HttpResponse> {
-    const mode = this.restoreMode(request);
+    const options = this.restoreOptions(request);
     let selectedFiles: string[] = [];
     try {
       const documentPicker = new picker.DocumentViewPicker(this.context);
@@ -339,7 +344,7 @@ export class UsersService {
       return HttpResponse.json(this.error('Failed to read selected backup file'), 400);
     }
 
-    return await this.restorePreparedZip(paths, mode);
+    return await this.restorePreparedZip(paths, options);
   }
 
   async repairExtensionGitRepositories(): Promise<HttpResponse> {
@@ -355,10 +360,11 @@ export class UsersService {
     }
   }
 
-  private async restorePreparedZip(paths: RestorePaths, mode: DataRestoreMode): Promise<HttpResponse> {
+  private async restorePreparedZip(paths: RestorePaths, options: DataRestoreOptions): Promise<HttpResponse> {
     const restoreRoot = paths.restoreRoot;
     const unpackRoot = paths.unpackRoot;
     const previousDataRoot = paths.previousDataRoot;
+    const mode = options.mode;
 
     try {
       this.restoreProgress.update('正在解压备份压缩包...');
@@ -391,8 +397,11 @@ export class UsersService {
       this.dirs.initialize();
       this.dirs.ensureDefaultUserFiles();
       this.ensureDefaultUser();
-      this.restoreProgress.update('正在检查插件 Git 信息...');
-      const gitRepair = await this.rehydrateImportedExtensionRepositories();
+      let gitRepair = this.emptyGitRepairResult(options.repairExtensionGit ? 'pending' : 'disabled');
+      if (options.repairExtensionGit) {
+        this.restoreProgress.update('正在检查插件 Git 信息...');
+        gitRepair = await this.rehydrateImportedExtensionRepositories();
+      }
       this.restoreProgress.update('正在清理临时文件...');
       await this.allowRestoreProgressFrame();
       this.store.deleteDirectory(previousDataRoot);
@@ -402,6 +411,7 @@ export class UsersService {
       response['ok'] = true;
       response['restored'] = true;
       response['mode'] = mode;
+      response['repairExtensionGit'] = options.repairExtensionGit;
       response['message'] = 'Data directory restored.';
       response['extensionGitRepair'] = gitRepair;
       this.restoreProgress.finish('导入完成', this.gitRepairFailures(gitRepair));
@@ -871,6 +881,13 @@ export class UsersService {
       joinPath(this.dirs.restoreRoot, `previous-data-${restoreId}`));
   }
 
+  private restoreOptions(request: HttpRequest): DataRestoreOptions {
+    const options = new DataRestoreOptions();
+    options.mode = this.restoreMode(request);
+    options.repairExtensionGit = this.restoreRepairExtensionGit(request);
+    return options;
+  }
+
   private restoreMode(request: HttpRequest): DataRestoreMode {
     const body = this.bodyAsRecord(request);
     const mode = this.asString(body['mode']) || this.asString(body['restoreMode']);
@@ -878,6 +895,35 @@ export class UsersService {
       return 'clean';
     }
     return 'incremental';
+  }
+
+  private restoreRepairExtensionGit(request: HttpRequest): boolean {
+    const body = this.bodyAsRecord(request);
+    const value = body['repairExtensionGit'] ?? body['repairExtensionGitRepositories'] ?? body['rehydrateExtensionGit'];
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'false' || normalized === '0' || normalized === 'off' || normalized === 'no') {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private emptyGitRepairResult(status: string): JsonRecord {
+    const result = emptyJsonRecord();
+    result['status'] = status;
+    result['checked'] = 0;
+    result['rehydrated'] = 0;
+    result['skipped'] = 0;
+    result['failed'] = 0;
+    result['failedExtensions'] = [];
+    result['succeeded'] = [];
+    result['failedDetails'] = [];
+    result['total'] = 0;
+    return result;
   }
 
   private copySelectedFile(sourceUri: string, targetPath: string): boolean {
