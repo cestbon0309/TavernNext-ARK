@@ -96,8 +96,8 @@ struct Index {
     }
     this.lastRestoreGitRepairFailureKey = key;
     AlertDialog.show({
-      title: '插件 Git 信息重建失败',
-      message: `以下插件的 .git 目录重建失败了：\n\n${unique.map((name: string): string => `- ${name}`).join('\n')}\n\n这应该不会影响你正常使用该插件，但你在更新该插件时，需要卸载再安装最新版。`,
+      title: '插件重新安装失败',
+      message: `以下插件未能通过原始仓库地址重新安装：\n\n${unique.map((name: string): string => `- ${name}`).join('\n')}\n\n这应该不会影响你继续使用导入包里的插件文件，但插件内更新可能需要稍后手动重新安装。`,
       autoCancel: true,
       primaryButton: {
         value: '知道了',
