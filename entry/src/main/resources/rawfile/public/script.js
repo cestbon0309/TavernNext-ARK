@@ -6986,6 +6986,7 @@ export function activateSendButtons() {
     hideStopButton();
     showSwipeButtons();
     delete document.body.dataset.generating;
+    refreshSendButtonVisibility();
 }
 
 /**
@@ -7064,6 +7065,7 @@ export function setOnlineStatus(value) {
     if (previousStatus !== online_status) {
         eventSource.emitAndWait(event_types.ONLINE_STATUS_CHANGED, online_status);
     }
+    refreshSendButtonVisibility();
 }
 
 export function setEditedMessageId(value) {
@@ -7072,6 +7074,14 @@ export function setEditedMessageId(value) {
 
 export function setSendButtonState(value) {
     is_send_press = value;
+    refreshSendButtonVisibility();
+}
+
+export function refreshSendButtonVisibility() {
+    const isConnected = online_status !== undefined && online_status !== 'no_connection';
+    const isGroupLocked = Boolean(selected_group && is_group_generating);
+    const shouldShow = isConnected && !is_send_press && !isGroupLocked;
+    $('#send_but, #mes_continue, #mes_impersonate').toggleClass('displayNone', !shouldShow);
 }
 
 /**
@@ -7658,6 +7668,7 @@ export async function openCharacterChat(file_name) {
     await getChat();
     $('#selected_chat_pole').val(file_name);
     await createOrEditCharacter(new CustomEvent('newChat'));
+    refreshSendButtonVisibility();
 }
 
 ////////// OPTIMZED MAIN API CHANGE FUNCTION ////////////
@@ -10543,6 +10554,8 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
         await createOrEditCharacter(new CustomEvent('newChat'));
         if (deleteCurrentChat) await delChat(chat_file_for_del + '.jsonl');
     }
+
+    refreshSendButtonVisibility();
 }
 
 /**
