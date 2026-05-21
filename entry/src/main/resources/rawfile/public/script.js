@@ -187,6 +187,7 @@ import {
     clamp,
     shakeElement,
     createTimeout,
+    cancelDebounce,
 } from './scripts/utils.js';
 import { getRawEventSourceStream } from './scripts/sse-stream.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
@@ -297,6 +298,8 @@ globalThis.SillyTavern = {
     libs,
     getContext,
 };
+
+globalThis.__tavernNextFlushPersistentState = flushTavernNextPersistentState;
 
 export {
     user_avatar,
@@ -10777,6 +10780,109 @@ export async function saveMetadata() {
     return await saveChatConditional();
 }
 
+let tavernNextPersistentStateFlush = null;
+let tavernNextLifecycleFlushInstalled = false;
+
+/**
+ * Immediately persists debounced frontend state before ArkWeb is background-killed.
+ * This keeps extension settings and chat metadata compatible with the normal SillyTavern save paths.
+ * @param {string} [reason] Flush trigger source.
+ * @returns {Promise<boolean>} True when all attempted saves completed successfully.
+ */
+async function flushTavernNextPersistentState(reason = 'manual') {
+    if (tavernNextPersistentStateFlush) {
+        return tavernNextPersistentStateFlush;
+    }
+
+    tavernNextPersistentStateFlush = (async () => {
+        const started = Date.now();
+        const saves = [];
+
+        try {
+            cancelDebounce(saveSettingsDebounced);
+        } catch (error) {
+            console.warn('Failed to cancel debounced settings save before flush', error);
+        }
+
+        try {
+            cancelDebouncedMetadataSave();
+        } catch (error) {
+            console.warn('Failed to cancel debounced metadata save before flush', error);
+        }
+
+        try {
+            saves.push(saveSettings());
+        } catch (error) {
+            saves.push(Promise.reject(error));
+        }
+
+        try {
+            saves.push(saveMetadata());
+        } catch (error) {
+            saves.push(Promise.reject(error));
+        }
+
+        try {
+            const character = characters[this_chid];
+            const extensions = character?.data?.extensions;
+            if (character?.avatar && extensions && typeof extensions === 'object' && !Array.isArray(extensions)) {
+                saves.push(fetch('/api/characters/merge-attributes', {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify({
+                        avatar: character.avatar,
+                        data: {
+                            extensions,
+                        },
+                    }),
+                    cache: 'no-cache',
+                }).then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Failed to flush character extensions: ${response.statusText}`);
+                    }
+                }));
+            }
+        } catch (error) {
+            saves.push(Promise.reject(error));
+        }
+
+        const results = await Promise.allSettled(saves);
+        const ok = results.every(result => result.status === 'fulfilled');
+        if (!ok) {
+            console.warn('TavernNext persistent state flush failed', reason, results);
+        } else {
+            console.debug(`TavernNext persistent state flushed by ${reason} in ${Date.now() - started}ms`);
+        }
+        return ok;
+    })();
+
+    try {
+        return await tavernNextPersistentStateFlush;
+    } finally {
+        tavernNextPersistentStateFlush = null;
+    }
+}
+
+function installTavernNextLifecycleFlush() {
+    if (tavernNextLifecycleFlushInstalled) {
+        return;
+    }
+    tavernNextLifecycleFlushInstalled = true;
+
+    const flush = (reason) => {
+        void flushTavernNextPersistentState(reason);
+    };
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') {
+            flush('visibility-hidden');
+        }
+    }, true);
+    window.addEventListener('pagehide', () => flush('pagehide'), true);
+    window.addEventListener('beforeunload', () => flush('beforeunload'), true);
+    window.addEventListener('freeze', () => flush('freeze'), true);
+}
+
 export async function saveChatConditional() {
     try {
         await waitUntilCondition(() => !isChatSaving, DEFAULT_SAVE_EDIT_TIMEOUT, 100);
@@ -13981,6 +14087,7 @@ jQuery(async function () {
 
     // Added here to prevent execution before script.js is loaded and get rid of quirky timeouts
     await firstLoadInit();
+    installTavernNextLifecycleFlush();
 
     window.addEventListener('beforeunload', (e) => {
         if (isChatSaving || this_edit_mes_id >= 0) {

@@ -1775,6 +1775,13 @@ export class SillyTavernCore {
     extensions['fav'] = body['fav'] === true || body['fav'] === 'true';
     extensions['world'] = this.asString(body['world']);
     extensions['depth_prompt'] = depthPrompt;
+    const submittedExtensions = this.parseJsonRecord(this.asString(body['extensions']));
+    if (Object.keys(submittedExtensions).length > 0) {
+      const mergedExtensions = this.deepMergeRecord(extensions, submittedExtensions);
+      Object.keys(mergedExtensions).forEach((key: string) => {
+        extensions[key] = mergedExtensions[key];
+      });
+    }
 
     data['name'] = name;
     data['description'] = this.asString(body['description']);

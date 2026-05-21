@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { webview } from '@kit.ArkWeb';
+import { ApplicationStateService } from '../backend/ApplicationStateService';
 import { BackendService, BackendStatus } from '../backend/BackendService';
 import { ChatBrowserItem } from '../backend/ChatBrowserService';
 import { DataRestoreProgressService, DataRestoreProgressState } from '../backend/DataRestoreProgressService';
@@ -37,6 +38,7 @@ struct Index {
   private lastBackPressTime: number = 0;
   private handlingBackPress: boolean = false;
   private backendService: BackendService | null = null;
+  private persistenceFlushInFlight: boolean = false;
 
   aboutToAppear(): void {
     webview.WebviewController.setWebDebuggingAccess(true);
@@ -48,6 +50,11 @@ struct Index {
     });
     const service = BackendService.getInstance(context);
     this.backendService = service;
+    ApplicationStateService.getInstance().subscribe((foreground: boolean) => {
+      if (!foreground) {
+        this.flushWebPersistentState('application-background');
+      }
+    });
     this.chatBrowserDarkMode = service.getChatBrowser().isDarkMode();
     service.getChatBrowser().subscribeOpen(() => {
       this.openChatBrowser();
@@ -58,6 +65,10 @@ struct Index {
     service.start().then((status: BackendStatus) => {
       this.applyStatus(status);
     });
+  }
+
+  aboutToDisappear(): void {
+    this.flushWebPersistentState('page-disappear');
   }
 
   private applyStatus(status: BackendStatus): void {
@@ -834,6 +845,26 @@ struct Index {
       });
     } catch (_err) {
     }
+  }
+
+  private flushWebPersistentState(reason: string): void {
+    if (!this.running || this.persistenceFlushInFlight) {
+      return;
+    }
+
+    this.persistenceFlushInFlight = true;
+    const payload = JSON.stringify(reason);
+    this.controller.runJavaScript(`(async () => {
+      const flush = window.__tavernNextFlushPersistentState;
+      if (typeof flush !== 'function') {
+        return 'missing';
+      }
+      return await flush(${payload}) ? 'ok' : 'failed';
+    })();`).then((_result: string) => {
+      this.persistenceFlushInFlight = false;
+    }).catch((_err: Error) => {
+      this.persistenceFlushInFlight = false;
+    });
   }
 
   private handleBackPress(): void {
