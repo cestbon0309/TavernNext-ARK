@@ -703,10 +703,12 @@ pub unsafe extern "C" fn tavern_tokenizer_encode_pieces(
         }
     };
 
-    let pieces = match registry()
-        .get_canonical(canonical)
-        .and_then(|tokenizer| tokenizer.encode_pieces(input))
-    {
+    let pieces = match registry().get_canonical(canonical).and_then(|tokenizer| {
+        let ids = tokenizer.encode(input)?;
+        ids.into_iter()
+            .map(|id| tokenizer.decode(&[id]))
+            .collect::<Result<Vec<_>, _>>()
+    }) {
         Ok(value) => value,
         Err(error) => {
             return TokenizerJsonStringArrayResult {
@@ -894,8 +896,10 @@ mod tests {
                 "{model} should count tokens"
             );
             if TokenizerRegistry::is_sentencepiece_model(canonical) {
-                let pieces = tokenizer
-                    .encode_pieces("Hello world")
+                let pieces = ids
+                    .iter()
+                    .map(|id| tokenizer.decode(&[*id]))
+                    .collect::<Result<Vec<_>, _>>()
                     .expect("sentencepiece pieces");
                 assert_eq!(pieces.len(), ids.len(), "{model} pieces should match ids");
             }
