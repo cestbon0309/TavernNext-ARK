@@ -327,7 +327,7 @@ public/<request path without leading slash>
 ```json
 {
   "agent": "SillyTavern:1.17.0:TavernNext-OHOS",
-  "pkgVersion": "1.2.1-ohos",
+  "pkgVersion": "1.2.2-ohos",
   "gitRevision": "",
   "gitBranch": "arkts-port",
   "commitDate": "",

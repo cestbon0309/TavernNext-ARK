@@ -1,6 +1,6 @@
 {
   "name": "entry",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Please describe the basic information.",
   "main": "",
   "author": "",
@@ -10,4 +10,3 @@
     "libtavern_tokenizer.so": "file:./src/main/cpp/types/libtavern_tokenizer"
   }
 }
-
