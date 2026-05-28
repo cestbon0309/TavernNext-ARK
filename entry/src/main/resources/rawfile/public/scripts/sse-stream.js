@@ -386,4 +386,8 @@ export function getEventSourceStream() {
     return new EventSourceStream();
 }
 
+export function getRawEventSourceStream() {
+    return new EventSourceStream();
+}
+
 export default EventSourceStream;

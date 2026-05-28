@@ -1594,6 +1594,108 @@ button {
     border-top-color: var(--progAbortedColor);
 }
 
+.parallel_generation_status,
+.custom-parallel_generation_status {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    max-width: 100%;
+}
+
+.parallel_generation_header,
+.custom-parallel_generation_header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.parallel_candidates,
+.custom-parallel_candidates {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+    gap: 8px;
+    width: 100%;
+}
+
+.parallel_candidates .parallel_candidate,
+.parallel_candidates .custom-parallel_candidate,
+.custom-parallel_candidates .parallel_candidate,
+.custom-parallel_candidates .custom-parallel_candidate {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: 74px;
+    margin: 0;
+    padding: 8px;
+    text-align: left;
+    overflow: hidden;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.parallel_candidate_title,
+.custom-parallel_candidate_title,
+.parallel_candidate_status,
+.custom-parallel_candidate_status {
+    font-size: 0.85em;
+    line-height: 1.25;
+}
+
+.parallel_candidate_status,
+.custom-parallel_candidate_status {
+    opacity: 0.75;
+}
+
+.parallel_candidate_meta,
+.custom-parallel_candidate_meta {
+    width: 100%;
+    margin-top: 6px;
+    font-size: 0.9em;
+    line-height: 1.35;
+    opacity: 0.9;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.parallel_candidate.done,
+.custom-parallel_candidate.custom-done {
+    border-color: var(--okGreen70a);
+}
+
+.parallel_candidate.streaming,
+.custom-parallel_candidate.custom-streaming {
+    border-color: var(--SmartThemeQuoteColor);
+}
+
+.parallel_candidate.error,
+.custom-parallel_candidate.custom-error {
+    border-color: var(--crimson70a);
+}
+
+.parallel_candidate.stopped,
+.custom-parallel_candidate.custom-stopped {
+    opacity: 0.75;
+}
+
+.parallel_candidate_detail pre,
+.custom-parallel_candidate_detail pre {
+    white-space: pre-wrap;
+    word-break: break-word;
+    min-height: 35vh;
+    max-height: 70vh;
+    overflow: auto;
+}
+
+.parallel_candidate_detail_status,
+.custom-parallel_candidate_detail_status {
+    opacity: 0.75;
+}
+
 .autoComplete-wrap {
     --targetOffset: 0;
     --direction: column;

@@ -334,6 +334,15 @@
                             </div>
                             <hr>
                         </div>
+                        <div id="parallel-generation-settings-block" class="flex-container gap10h5v justifyCenter width100p">
+                            <div id="parallel_generation_count_block" class="range-block-range-and-counter alignitemscenter flex-container marginBot5 flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
+                                <small data-i18n="Parallel replies">Parallel replies</small>
+                                <input class="neo-range-slider" type="range" id="parallel_generation_count" name="volume" min="1" max="8" step="1">
+                                <div data-randomization-disabled="true" class="wide100p">
+                                    <input class="neo-range-input" type="number" min="1" max="8" step="1" data-for="parallel_generation_count" id="parallel_generation_count_counter">
+                                </div>
+                            </div>
+                        </div>
                         <div id="respective-ranges-and-temps" class="width100p">
                             <!--
                             <div name="OldKoboldTempAndRepPenBlock" class="flex-container gap10h5v justifyCenter" id="range_block">
@@ -5777,6 +5786,21 @@
                                         <span>Open Logs</span>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                        <div id="ohos_llm_transport_container" class="inline-drawer wide100p flexFlowColumn">
+                            <div class="inline-drawer-toggle inline-drawer-header">
+                                <b class="flex-container alignitemscenter flexNoGap">
+                                    <i class="fa-solid fa-network-wired fa-fw"></i>
+                                    <span>LLM Transport</span>
+                                </b>
+                                <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                            </div>
+                            <div class="inline-drawer-content">
+                                <label for="ohos_force_http1_1" class="checkbox_label flexNoGap" title="Keep LLM requests on HTTP/1.1 for better OpenHarmony network stack compatibility.">
+                                    <input id="ohos_force_http1_1" type="checkbox">
+                                    <span>强制http1.1</span>
+                                </label>
                             </div>
                         </div>
                         <div id="assets_container" class="extension_container"></div>

@@ -17,6 +17,7 @@ export class ChatCompletionApiConfig {
   extraHeaders: Record<string, string> = {};
   anthropicBetaHeaderMode: AnthropicBetaHeaderMode = 'none';
   requiresKey: boolean = true;
+  forceHttp1_1: boolean = true;
 }
 
 export class BuiltChatPayload {

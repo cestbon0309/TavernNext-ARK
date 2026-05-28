@@ -35,22 +35,24 @@ export class ChatCompletionRepository {
     if (source === 'cohere') {
       return this.listCohereModels(config);
     }
-    const url = this.http.joinUrl(config.baseUrl, '/models');
-    const result = await this.http.getText(url, this.headers(source, config, '/models', 'application/json'), 30000);
+    const http = this.httpForConfig(config);
+    const url = http.joinUrl(config.baseUrl, '/models');
+    const result = await http.getText(url, this.headers(source, config, '/models', 'application/json'), 30000);
     if (result.statusCode < 200 || result.statusCode >= 300) {
       return HttpResponse.json(this.errorTrue(), 400);
     }
-    return this.http.responseFromRemote(result);
+    return http.responseFromRemote(result);
   }
 
   async generate(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string,
     payload: JsonRecord): Promise<HttpResponse> {
     const logContext = this.logger?.begin(source, config, endpointPath, payload, false) ?? null;
-    const url = this.urlForGenerate(source, config, endpointPath, false);
+    const http = this.httpForConfig(config);
+    const url = this.urlForGenerate(http, source, config, endpointPath, false);
     const headers = this.headers(source, config, endpointPath, 'application/json');
     let result: RemoteHttpResult;
     try {
-      result = await this.http.postJson(url, payload, headers);
+      result = await http.postJson(url, payload, headers);
     } catch (err) {
       this.finishJsonLog(logContext, false, null, '', err instanceof Error ? err.message : JSON.stringify(err));
       throw new Error(err instanceof Error ? err.message : JSON.stringify(err));
@@ -90,7 +92,7 @@ export class ChatCompletionRepository {
       return HttpResponse.json(normalized);
     }
     this.finishJsonLog(logContext, true, parsed, result.text, '');
-    return this.http.responseFromRemote(result);
+    return http.responseFromRemote(result);
   }
 
   async generateStream(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string,
@@ -98,7 +100,8 @@ export class ChatCompletionRepository {
     const logContext = this.logger?.begin(source, config, endpointPath, payload, true) ?? null;
     const streamLog = logContext === null ? null : this.logger?.createStreamSink(logContext);
     const loggingSend = streamLog === null || streamLog === undefined ? send : streamLog.wrapSend(send);
-    const url = this.urlForGenerate(source, config, endpointPath, true);
+    const http = this.httpForConfig(config);
+    const url = this.urlForGenerate(http, source, config, endpointPath, true);
     const headers = this.headers(source, config, endpointPath, 'text/event-stream');
     try {
       if (endpointPath === '/responses') {
@@ -106,7 +109,7 @@ export class ChatCompletionRepository {
         const readableSend = streamLog === null || streamLog === undefined ? loggingSend :
           streamLog.wrapReadableSend(send);
         let loggedCacheUsage = false;
-        await this.http.streamPostJsonEvents(url, payload, headers, async (event: string): Promise<void> => {
+        await http.streamPostJsonEvents(url, payload, headers, async (event: string): Promise<void> => {
           streamLog?.recordEvent(event);
           loggedCacheUsage = this.logPromptCacheUsageFromEvent(source, asStringValue(payload['model']), payload, event,
             loggedCacheUsage);
@@ -120,7 +123,7 @@ export class ChatCompletionRepository {
         const readableSend = streamLog === null || streamLog === undefined ? loggingSend :
           streamLog.wrapReadableSend(send);
         let loggedCacheUsage = false;
-        await this.http.streamPostJsonEvents(url, payload, headers, async (event: string): Promise<void> => {
+        await http.streamPostJsonEvents(url, payload, headers, async (event: string): Promise<void> => {
           streamLog?.recordEvent(event);
           loggedCacheUsage = this.logPromptCacheUsageFromEvent(source, asStringValue(payload['model']), payload, event,
             loggedCacheUsage);
@@ -131,14 +134,14 @@ export class ChatCompletionRepository {
       }
       if (this.containsCacheControl(payload)) {
         let loggedCacheUsage = false;
-        await this.http.streamPostJsonWithEventHook(url, payload, headers, loggingSend, async (event: string): Promise<void> => {
+        await http.streamPostJsonWithEventHook(url, payload, headers, loggingSend, async (event: string): Promise<void> => {
           loggedCacheUsage = this.logPromptCacheUsageFromEvent(source, asStringValue(payload['model']), payload, event,
             loggedCacheUsage);
         }, 300000, cancelToken);
         streamLog?.finishOk();
         return;
       }
-      await this.http.streamPostJson(url, payload, headers, loggingSend, 300000, cancelToken);
+      await http.streamPostJson(url, payload, headers, loggingSend, 300000, cancelToken);
       streamLog?.finishOk();
     } catch (err) {
       streamLog?.finishError(err instanceof Error ? err.message : JSON.stringify(err));
@@ -147,8 +150,9 @@ export class ChatCompletionRepository {
   }
 
   private async listGeminiModels(config: ChatCompletionApiConfig): Promise<HttpResponse> {
-    const url = this.withApiKey(this.http.joinUrl(config.baseUrl, '/v1beta/models'), config);
-    const result = await this.http.getText(url, this.headers('makersuite', config, '/v1beta/models', 'application/json'), 30000);
+    const http = this.httpForConfig(config);
+    const url = this.withApiKey(http.joinUrl(config.baseUrl, '/v1beta/models'), config);
+    const result = await http.getText(url, this.headers('makersuite', config, '/v1beta/models', 'application/json'), 30000);
     if (result.statusCode < 200 || result.statusCode >= 300) {
       return HttpResponse.json(this.errorTrue(), 400);
     }
@@ -175,7 +179,8 @@ export class ChatCompletionRepository {
   }
 
   private async listCohereModels(config: ChatCompletionApiConfig): Promise<HttpResponse> {
-    const result = await this.http.getText(this.http.joinUrl(config.baseUrl, '/models'),
+    const http = this.httpForConfig(config);
+    const result = await http.getText(http.joinUrl(config.baseUrl, '/models'),
       this.headers('cohere', config, '/models', 'application/json'), 30000);
     if (result.statusCode < 200 || result.statusCode >= 300) {
       return HttpResponse.json(this.errorTrue(), 400);
@@ -198,7 +203,7 @@ export class ChatCompletionRepository {
     return HttpResponse.json(response);
   }
 
-  private urlForGenerate(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string,
+  private urlForGenerate(http: RemoteHttpClient, source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string,
     stream: boolean = false): string {
     if (endpointPath === '/interactions') {
       let url = this.geminiInteractionsUrl(config.baseUrl, endpointPath);
@@ -210,11 +215,15 @@ export class ChatCompletionRepository {
       }
       return url;
     }
-    const url = this.http.joinUrl(config.baseUrl, endpointPath);
+    const url = http.joinUrl(config.baseUrl, endpointPath);
     if (source === 'makersuite' || source === 'vertexai') {
       return this.withApiKey(url, config);
     }
     return url;
+  }
+
+  private httpForConfig(config: ChatCompletionApiConfig): RemoteHttpClient {
+    return config.forceHttp1_1 ? this.http : RemoteHttpClient.http2();
   }
 
   private headers(source: ChatCompletionSource, config: ChatCompletionApiConfig, endpointPath: string,

@@ -33,6 +33,10 @@ export class ModelProxyService {
     return this.chatCompletions.generate(request);
   }
 
+  async chatCompletionsGenerateBatchStream(request: HttpRequest): Promise<HttpResponse> {
+    return this.chatCompletions.generateBatchStream(request);
+  }
+
   async openAiGenerate(request: HttpRequest): Promise<HttpResponse> {
     return this.chatCompletionsGenerate(request);
   }

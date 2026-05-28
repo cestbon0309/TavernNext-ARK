@@ -1,4 +1,5 @@
-import { HttpRequest, HttpResponse, JsonArray, JsonRecord, emptyJsonRecord } from '../HttpTypes';
+import { util } from '@kit.ArkTS';
+import { HttpRequest, HttpResponse, HttpStreamSend, JsonArray, JsonRecord, emptyJsonRecord } from '../HttpTypes';
 import { bodyAsRecord, parseJsonRecord } from '../JsonUtils';
 import { proxyErrorResponse } from '../RemoteHttpClient';
 import { SecretsService } from '../SecretsService';
@@ -10,7 +11,7 @@ import { ChatCompletionApiConfig, ChatCompletionSource } from './ChatCompletionT
 import { ChatCompletionRepository } from './http/ChatCompletionRepository';
 import { PayloadBuilderRegistry } from './payload/PayloadBuilderRegistry';
 import { parseChatCompletionSource } from './SourceRegistry';
-import { asBooleanValue } from './JsonHelpers';
+import { asArrayValue, asBooleanValue, asNumberValue, asRecordValue } from './JsonHelpers';
 import { PromptCachingService } from './PromptCaching';
 import { LlmApiLogger } from './LlmApiLogger';
 import { LlmBackgroundTaskService } from '../LlmBackgroundTaskService';
@@ -22,6 +23,8 @@ export class ChatCompletionService {
   private promptCaching: PromptCachingService;
   private llmLogger: LlmApiLogger;
   private backgroundTasks: LlmBackgroundTaskService;
+  private encoder: util.TextEncoder = new util.TextEncoder('utf-8');
+  private base64: util.Base64Helper = new util.Base64Helper();
   private activeStreams: Record<string, CancellationToken | null> = {};
   private activeGenerations: Record<string, CancellationToken | null> = {};
 
@@ -95,11 +98,152 @@ export class ChatCompletionService {
     }
   }
 
+  async generateBatchStream(request: HttpRequest): Promise<HttpResponse> {
+    const body = bodyAsRecord(request);
+    const source = parseChatCompletionSource(`${body['chat_completion_source'] ?? 'openai'}`);
+    if (source === null) {
+      return HttpResponse.json(this.errorTrue(), 400);
+    }
+
+    const candidates = asArrayValue(body['candidates']).slice(0, 16);
+    if (candidates.length === 0) {
+      return HttpResponse.json(this.errorFromText('No candidates provided'), 400);
+    }
+
+    const prepared: ParallelStreamCandidate[] = [];
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = asRecordValue(candidates[index]);
+      if (Object.keys(candidate).length === 0) {
+        continue;
+      }
+      const candidateBody = this.mergeBatchCandidateBody(body, candidate);
+      let config: ChatCompletionApiConfig;
+      try {
+        config = await this.configResolver.resolveGenerateConfig(source, candidateBody);
+      } catch (err) {
+        return proxyErrorResponse(err instanceof Error ? err.message : JSON.stringify(err), 400);
+      }
+      if (this.hasMissingRequiredKey(config)) {
+        return HttpResponse.json(this.errorTrue(), 400);
+      }
+      const built = this.payloadBuilders.build(source, candidateBody);
+      if (!asBooleanValue(candidateBody['stream'])) {
+        return HttpResponse.json(this.errorFromText('Batch stream requires streaming candidates'), 400);
+      }
+      const configured = this.promptCaching.apply(source, config, built.endpointPath, built.body, candidateBody);
+      prepared.push({
+        index: asNumberValue(candidate['index'], index),
+        streamId: this.requestId(candidateBody, 'stream_id'),
+        config: configured,
+        endpointPath: built.endpointPath,
+        body: built.body,
+      });
+    }
+
+    if (prepared.length === 0) {
+      return HttpResponse.json(this.errorFromText('No valid candidates provided'), 400);
+    }
+
+    const response = HttpResponse.stream('text/event-stream; charset=utf-8', async (send) => {
+      const backgroundHandle = await this.backgroundTasks.beginResponse();
+      let completed = false;
+      try {
+        await this.runBatchStreams(source, prepared, send);
+        completed = true;
+      } finally {
+        await this.backgroundTasks.finishResponse(backgroundHandle, completed);
+      }
+    });
+    response.headers['x-accel-buffering'] = 'no';
+    return response;
+  }
+
   cancelStream(request: HttpRequest): HttpResponse {
     const body = bodyAsRecord(request);
     const id = this.requestId(body, 'stream_id');
     const cancelled = this.cancel(this.activeStreams, id);
     return this.cancelResponse(cancelled);
+  }
+
+  private mergeBatchCandidateBody(base: JsonRecord, candidate: JsonRecord): JsonRecord {
+    const merged = emptyJsonRecord();
+    Object.keys(base).forEach((key: string) => {
+      if (key !== 'candidates') {
+        merged[key] = base[key];
+      }
+    });
+    Object.keys(candidate).forEach((key: string) => {
+      if (key !== 'index') {
+        merged[key] = candidate[key];
+      }
+    });
+    return merged;
+  }
+
+  private async runBatchStreams(source: ChatCompletionSource, candidates: ParallelStreamCandidate[],
+    send: HttpStreamSend): Promise<void> {
+    let sendQueue: Promise<void> = Promise.resolve();
+    const sendEvent = async (event: string, value: Object): Promise<void> => {
+      const data = JSON.stringify(value);
+      sendQueue = sendQueue.then(async () => {
+        await send(`event: ${event}\ndata: ${data}\n\n`);
+      });
+      await sendQueue;
+    };
+
+    await Promise.all(candidates.map(async (candidate: ParallelStreamCandidate): Promise<void> => {
+      const cancelToken = this.register(this.activeStreams, candidate.streamId);
+      let completed = false;
+      try {
+        await sendEvent('candidate-start', this.batchEvent(candidate.index));
+        this.logRequest(source, candidate.config, candidate.endpointPath, candidate.body);
+        await this.repository.generateStream(source, candidate.config, candidate.endpointPath, candidate.body,
+          async (chunk: string | Uint8Array): Promise<void> => {
+            await sendEvent('candidate-chunk', this.batchChunkEvent(candidate.index, chunk));
+          }, cancelToken);
+        completed = !cancelToken.isCancelled();
+        await sendEvent('candidate-done', this.batchDoneEvent(candidate.index, cancelToken.isCancelled()));
+      } catch (err) {
+        if (!cancelToken.isCancelled()) {
+          const message = err instanceof Error ? err.message : JSON.stringify(err);
+          await sendEvent('candidate-error', this.batchErrorEvent(candidate.index, message));
+        } else {
+          await sendEvent('candidate-done', this.batchDoneEvent(candidate.index, true));
+        }
+      } finally {
+        this.complete(this.activeStreams, candidate.streamId);
+      }
+    }));
+    await sendEvent('done', emptyJsonRecord());
+  }
+
+  private batchEvent(index: number): JsonRecord {
+    const value = emptyJsonRecord();
+    value['index'] = index;
+    return value;
+  }
+
+  private batchChunkEvent(index: number, chunk: string | Uint8Array): JsonRecord {
+    const value = this.batchEvent(index);
+    value['chunkBase64'] = this.base64Chunk(chunk);
+    return value;
+  }
+
+  private batchDoneEvent(index: number, cancelled: boolean): JsonRecord {
+    const value = this.batchEvent(index);
+    value['cancelled'] = cancelled;
+    return value;
+  }
+
+  private batchErrorEvent(index: number, message: string): JsonRecord {
+    const value = this.batchEvent(index);
+    value['error'] = this.errorFromText(message);
+    return value;
+  }
+
+  private base64Chunk(chunk: string | Uint8Array): string {
+    const bytes = typeof chunk === 'string' ? this.encoder.encodeInto(chunk) : chunk;
+    return this.base64.encodeToStringSync(bytes, util.Type.BASIC);
   }
 
   cancelGeneration(request: HttpRequest): HttpResponse {
@@ -274,4 +418,12 @@ export class ChatCompletionService {
     const stream = asBooleanValue(payload['stream']);
     console.info(`[LLM] source=${source} endpoint=${endpointPath} model=${model} stream=${stream} base=${config.baseUrl}`);
   }
+}
+
+class ParallelStreamCandidate {
+  index: number = 0;
+  streamId: string = '';
+  config: ChatCompletionApiConfig = new ChatCompletionApiConfig();
+  endpointPath: string = '';
+  body: JsonRecord = emptyJsonRecord();
 }

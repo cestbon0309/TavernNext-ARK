@@ -33,6 +33,7 @@ import {
     this_chid,
 } from '../script.js';
 import { getGroupNames, selected_group } from './group-chats.js';
+import { extension_settings } from './extensions.js';
 
 import {
     chatCompletionDefaultPrompts,
@@ -88,6 +89,8 @@ export {
     setOpenAIMessages,
     setOpenAIMessageExamples,
     setupChatCompletionPromptManager,
+    createOpenAIGenerationData,
+    parseChatCompletionLogprobs,
     sendOpenAIRequest,
     TokenHandler,
     IdentifierNotFoundError,
@@ -2583,7 +2586,7 @@ function getVerbosity(settings = null) {
  * @param {import('../script.js').AdditionalRequestOptions} options Additional request options
  * @returns {Promise<object>} Final generation parameters object appropriate for the chat completion source
  */
-export async function createGenerationParameters(settings, model, type, messages, { jsonSchema = null } = {}) {
+export async function createGenerationParameters(settings, model, type, messages, { jsonSchema = null, forceSingleChoice = false, disableTools = false } = {}) {
     // HACK: Filter out null and non-object messages
     if (!Array.isArray(messages)) {
         throw new Error('messages must be an array');
@@ -2675,7 +2678,7 @@ export async function createGenerationParameters(settings, model, type, messages
     const stream = settings.stream_openai && type !== 'quiet' && !isO1;
 
     const noMultiSwipeTypes = ['quiet', 'impersonate', 'continue'];
-    const canMultiSwipe = settings.n > 1 && !noMultiSwipeTypes.includes(type) && canUseMultiSwipeSource;
+    const canMultiSwipe = !forceSingleChoice && settings.n > 1 && !noMultiSwipeTypes.includes(type) && canUseMultiSwipeSource;
 
     let logit_bias = {};
     if (settings.bias_preset_selected
@@ -2715,6 +2718,7 @@ export async function createGenerationParameters(settings, model, type, messages
         'request_image_aspect_ratio': String(settings.request_image_aspect_ratio),
         'custom_prompt_post_processing': settings.custom_prompt_post_processing,
         'verbosity': getVerbosity(settings),
+        'force_http1_1': extension_settings.ohosForceHttp1_1 !== false,
     };
 
     if (settings.chat_completion_source === chat_completion_sources.AZURE_OPENAI) {
@@ -2727,7 +2731,7 @@ export async function createGenerationParameters(settings, model, type, messages
         }
     }
 
-    if (!canMultiSwipe && ToolManager.canPerformToolCalls(type, settings, model)) {
+    if (!disableTools && !canMultiSwipe && ToolManager.canPerformToolCalls(type, settings, model)) {
         await ToolManager.registerFunctionToolsOpenAI(generate_data);
     }
 
@@ -2970,14 +2974,14 @@ export async function createGenerationParameters(settings, model, type, messages
  * @returns {Promise<unknown>}
  * @throws {Error}
  */
-async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } = {}) {
+async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, forceSingleChoice = false, disableTools = false, requestId = null, streamId = null, reportProgress = true } = {}) {
     // Provide default abort signal
     if (!signal) {
         signal = new AbortController().signal;
     }
 
     const model = getChatCompletionModel(oai_settings);
-    const { generate_data, stream, canMultiSwipe } = await createGenerationParameters(oai_settings, model, type, messages, { jsonSchema });
+    const { generate_data, stream, canMultiSwipe } = await createOpenAIGenerationData(type, messages, { jsonSchema, forceSingleChoice, disableTools, requestId, streamId });
     await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, generate_data);
 
     const generate_url = '/api/backends/chat-completions/generate';
@@ -2993,35 +2997,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
         throw new Error(`Got response status ${response.status}`);
     }
     if (stream) {
-        const eventStream = getEventSourceStream();
-        response.body.pipeThrough(eventStream);
-        const reader = eventStream.readable.getReader();
-        return async function* streamData() {
-            let text = '';
-            const swipes = [];
-            const toolCalls = [];
-            const state = { reasoning: '', images: [], signature: '', toolSignatures: {} };
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) return;
-                const rawData = value.data;
-                if (rawData === '[DONE]') return;
-                tryParseStreamingError(response, rawData);
-                const parsed = JSON.parse(rawData);
-
-                if (canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0) {
-                    const swipeIndex = parsed.choices[0].index - 1;
-                    // FIXME: state.reasoning should be an array to support multi-swipe
-                    swipes[swipeIndex] = (swipes[swipeIndex] || '') + getStreamingReply(parsed, state, { overrideShowThoughts: false });
-                } else {
-                    text += getStreamingReply(parsed, state);
-                }
-
-                ToolManager.parseToolCalls(toolCalls, parsed, state.toolSignatures);
-
-                yield { text, swipes: swipes, logprobs: parseChatCompletionLogprobs(parsed), toolCalls: toolCalls, state: state };
-            }
-        };
+        return createOpenAIStreamGenerator(response, canMultiSwipe);
     } else {
         const data = await response.json();
 
@@ -3034,7 +3010,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
             throw new Error(message);
         }
 
-        if (type !== 'quiet') {
+        if (type !== 'quiet' && reportProgress) {
             const logprobs = parseChatCompletionLogprobs(data);
             // Delay is required to allow the active message to be updated to
             // the one we are generating (happens right after sendOpenAIRequest)
@@ -3043,6 +3019,50 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
 
         return data;
     }
+}
+
+async function createOpenAIGenerationData(type, messages, { jsonSchema = null, forceSingleChoice = false, disableTools = false, requestId = null, streamId = null } = {}) {
+    const model = getChatCompletionModel(oai_settings);
+    const { generate_data, stream, canMultiSwipe } = await createGenerationParameters(oai_settings, model, type, messages, { jsonSchema, forceSingleChoice, disableTools });
+    if (requestId) {
+        generate_data.request_id = requestId;
+    }
+    if (streamId) {
+        generate_data.stream_id = streamId;
+    }
+    return { generate_data, stream, canMultiSwipe };
+}
+
+function createOpenAIStreamGenerator(response, canMultiSwipe) {
+    const eventStream = getEventSourceStream();
+    response.body.pipeThrough(eventStream);
+    const reader = eventStream.readable.getReader();
+    return async function* streamData() {
+        let text = '';
+        const swipes = [];
+        const toolCalls = [];
+        const state = { reasoning: '', images: [], signature: '', toolSignatures: {} };
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) return;
+            const rawData = value.data;
+            if (rawData === '[DONE]') return;
+            tryParseStreamingError(response, rawData);
+            const parsed = JSON.parse(rawData);
+
+            if (canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0) {
+                const swipeIndex = parsed.choices[0].index - 1;
+                // FIXME: state.reasoning should be an array to support multi-swipe
+                swipes[swipeIndex] = (swipes[swipeIndex] || '') + getStreamingReply(parsed, state, { overrideShowThoughts: false });
+            } else {
+                text += getStreamingReply(parsed, state);
+            }
+
+            ToolManager.parseToolCalls(toolCalls, parsed, state.toolSignatures);
+
+            yield { text, swipes: swipes, logprobs: parseChatCompletionLogprobs(parsed), toolCalls: toolCalls, state: state };
+        }
+    };
 }
 
 /**
@@ -4326,6 +4346,7 @@ async function getStatusOpen() {
         reverse_proxy: oai_settings.reverse_proxy,
         proxy_password: oai_settings.proxy_password,
         chat_completion_source: oai_settings.chat_completion_source,
+        force_http1_1: extension_settings.ohosForceHttp1_1 !== false,
     };
 
     const validateProxySources = [

@@ -131,6 +131,7 @@ export const extension_settings = {
     apiKey: '',
     autoConnect: false,
     notifyUpdates: false,
+    ohosForceHttp1_1: true,
     disabledExtensions: [],
     expressionOverrides: [],
     memory: {},
@@ -674,6 +675,22 @@ function notifyUpdatesInputHandler() {
     if (extension_settings.notifyUpdates) {
         checkForExtensionUpdates(true);
     }
+}
+
+async function ohosForceHttp1_1InputHandler() {
+    const enabled = !!$('#ohos_force_http1_1').prop('checked');
+    if (!enabled) {
+        const confirmed = await Popup.show.confirm(
+            t`Disable forced HTTP/1.1?`,
+            t`OpenHarmony's network stack may occasionally fail when HTTP/2 is used. Disable this only if you want to test higher LLM streaming concurrency.`
+        );
+        if (!confirmed) {
+            $('#ohos_force_http1_1').prop('checked', true);
+            return;
+        }
+    }
+    extension_settings.ohosForceHttp1_1 = enabled;
+    saveSettingsDebounced();
 }
 
 /**
@@ -1528,6 +1545,8 @@ export async function loadExtensionSettings(settings, versionChanged, enableAuto
     $('#extensions_api_key').val(extension_settings.apiKey);
     $('#extensions_autoconnect').prop('checked', extension_settings.autoConnect);
     $('#extensions_notify_updates').prop('checked', extension_settings.notifyUpdates);
+    extension_settings.ohosForceHttp1_1 = extension_settings.ohosForceHttp1_1 !== false;
+    $('#ohos_force_http1_1').prop('checked', extension_settings.ohosForceHttp1_1);
 
     // Activate offline extensions
     await eventSource.emit(event_types.EXTENSIONS_FIRST_LOAD);
@@ -2042,6 +2061,7 @@ export async function initExtensions() {
     $('#extensions_autoconnect').on('input', autoConnectInputHandler);
     $('#extensions_details').on('click', showExtensionsDetails);
     $('#extensions_notify_updates').on('input', notifyUpdatesInputHandler);
+    $('#ohos_force_http1_1').on('change', ohosForceHttp1_1InputHandler);
     $(document).on('click', '.extensions_info .extension_block .toggle_disable', onDisableExtensionClick);
     $(document).on('click', '.extensions_info .extension_block .toggle_enable', onEnableExtensionClick);
     $(document).on('click', '.extensions_info .extension_block .btn_update', onUpdateClick);

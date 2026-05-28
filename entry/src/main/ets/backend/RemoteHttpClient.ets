@@ -16,8 +16,16 @@ export class RemoteHttpClient {
   private decoder: util.TextDecoder = new util.TextDecoder('utf-8');
   private protocol: http.HttpProtocol | undefined = http.HttpProtocol.HTTP1_1;
 
+  static auto(): RemoteHttpClient {
+    return new RemoteHttpClient(undefined);
+  }
+
   static http1_1(): RemoteHttpClient {
     return new RemoteHttpClient(http.HttpProtocol.HTTP1_1);
+  }
+
+  static http2(): RemoteHttpClient {
+    return new RemoteHttpClient(http.HttpProtocol.HTTP2);
   }
 
   constructor(protocol: http.HttpProtocol | undefined = http.HttpProtocol.HTTP1_1) {

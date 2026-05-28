@@ -3,7 +3,7 @@ import { JsonRecord } from '../HttpTypes';
 import { ChatCompletionApiConfig, ChatCompletionSource } from './ChatCompletionTypes';
 import { parseCustomApiFormat, modelListSourceForCustomFormat } from './CustomApiFormat';
 import { CustomParameters } from './CustomParameters';
-import { asStringValue } from './JsonHelpers';
+import { asBooleanValue, asStringValue } from './JsonHelpers';
 import { sourceSecretKey, supportsReverseProxy } from './SourceRegistry';
 import { VertexAiAuthService } from './VertexAiAuth';
 
@@ -56,12 +56,17 @@ export class ChatCompletionConfigResolver {
   private async resolveConfig(source: ChatCompletionSource, reverseProxy: string, proxyPassword: string, customUrl: string,
     customHeadersRaw: string, zaiEndpoint: string, purpose: ConfigPurpose, payload: JsonRecord): Promise<ChatCompletionApiConfig> {
     if (source === 'custom') {
-      return this.resolveCustomConfig(reverseProxy, proxyPassword, customUrl, customHeadersRaw);
+      const config = this.resolveCustomConfig(reverseProxy, proxyPassword, customUrl, customHeadersRaw);
+      config.forceHttp1_1 = this.shouldForceHttp1_1(payload);
+      return config;
     }
     if (source === 'vertexai' && purpose === 'generate') {
-      return await this.resolveVertexAiGenerateConfig(reverseProxy, proxyPassword, payload);
+      const config = await this.resolveVertexAiGenerateConfig(reverseProxy, proxyPassword, payload);
+      config.forceHttp1_1 = this.shouldForceHttp1_1(payload);
+      return config;
     }
     const config = new ChatCompletionApiConfig();
+    config.forceHttp1_1 = this.shouldForceHttp1_1(payload);
     if (source === 'vertexai' && purpose === 'status') {
       config.baseUrl = VERTEXAI_GLOBAL_BASE;
       config.requiresKey = false;
@@ -78,6 +83,10 @@ export class ChatCompletionConfigResolver {
     config.extraHeaders = this.sourceExtraHeaders(source);
     config.anthropicBetaHeaderMode = source === 'claude' ? 'claude_defaults' : 'none';
     return config;
+  }
+
+  private shouldForceHttp1_1(payload: JsonRecord): boolean {
+    return asBooleanValue(payload['force_http1_1'], true);
   }
 
   private resolveCustomConfig(reverseProxy: string, proxyPassword: string, customUrl: string,
