@@ -1913,7 +1913,7 @@ export function addDOMPurifyHooks() {
         }
 
         /* Retain the classes on UI elements of messages that interact with the main UI */
-        const permittedNodeTypes = ['BUTTON', 'DIV'];
+        const permittedNodeTypes = ['BUTTON', 'DIV', 'SPAN'];
         if (config.MESSAGE_ALLOW_SYSTEM_UI && node.classList.contains('menu_button') && permittedNodeTypes.includes(node.nodeName)) {
             return;
         }

@@ -636,6 +636,8 @@ export let extension_prompts = {};
 export let main_api;// = "kobold";
 let abortController = new AbortController();
 let parallelGenerationSession = null;
+const parallelGenerationSessionsByMessageId = new Map();
+const PARALLEL_CANDIDATE_TERMINAL_STATUSES = new Set(['done', 'error', 'stopped']);
 
 //css
 var css_send_form_display = $('<div id=send_form></div>').css('display');
@@ -3512,6 +3514,13 @@ function createSwipeInfoFromCandidate(candidate, fallbackExtra = {}) {
     delete extra.reasoning_signature;
     delete extra.time_to_first_token;
     delete extra.token_count;
+    delete extra.display_text;
+    delete extra.parallel_generation;
+    delete extra.parallel_generation_pending_selection;
+    delete extra.parallel_generation_session;
+    delete extra.uses_system_ui;
+    delete extra.swipeable;
+    delete extra[IGNORE_SYMBOL];
 
     extra.api = candidate.api ?? getGeneratingApi();
     extra.model = candidate.model ?? getGeneratingModel();
@@ -3526,12 +3535,162 @@ function createSwipeInfoFromCandidate(candidate, fallbackExtra = {}) {
     if (candidate.tokenCount) {
         extra.token_count = candidate.tokenCount;
     }
+    if (Array.isArray(candidate.imageUrls) && candidate.imageUrls.length > 0) {
+        extra.parallel_candidate_image_urls = candidate.imageUrls;
+    }
     return {
         send_date: candidate.sendDate || getMessageTimeStamp(),
         gen_started: candidate.startedAt,
         gen_finished: candidate.finishedAt,
         extra,
     };
+}
+
+function isParallelCandidateTerminal(candidate) {
+    return PARALLEL_CANDIDATE_TERMINAL_STATUSES.has(candidate?.status);
+}
+
+function findParallelCandidateById(candidateId, messageId = null) {
+    const normalizedId = String(candidateId ?? '');
+    if (!normalizedId) {
+        return null;
+    }
+
+    const messageIds = [];
+    if (Number.isInteger(messageId)) {
+        messageIds.push(messageId);
+    }
+    if (parallelGenerationSession?.messageId !== undefined) {
+        messageIds.push(parallelGenerationSession.messageId);
+    }
+    for (const storedMessageId of parallelGenerationSessionsByMessageId.keys()) {
+        messageIds.push(storedMessageId);
+    }
+
+    for (const storedMessageId of [...new Set(messageIds)]) {
+        const session = getParallelSessionForMessage(storedMessageId);
+        const candidate = session?.candidates?.find(candidate => candidate.id === normalizedId);
+        if (candidate) {
+            return candidate;
+        }
+    }
+
+    return null;
+}
+
+function resetParallelCandidateContent(candidate) {
+    candidate.text = '';
+    candidate.displayText = '';
+    candidate.reasoning = '';
+    candidate.imageUrls = [];
+    candidate.logprobs = [];
+    candidate.swipes = [];
+    candidate.toolCalls = [];
+    candidate.tokenCount = 0;
+    candidate.reasoningSignature = null;
+}
+
+function getSuccessfulParallelCandidates(session) {
+    return (session?.candidates ?? [])
+        .filter(candidate => candidate.status === 'done' && typeof candidate.text === 'string');
+}
+
+function createParallelGenerationExtra(session) {
+    return {
+        parallel_generation: true,
+        parallel_generation_count: session?.candidates?.length ?? 0,
+        parallel_generation_pending_selection: true,
+        uses_system_ui: true,
+        swipeable: false,
+        [IGNORE_SYMBOL]: true,
+    };
+}
+
+function serializeParallelCandidateForMessage(candidate) {
+    return {
+        id: candidate.id,
+        index: candidate.index,
+        status: candidate.status,
+        text: candidate.text || '',
+        displayText: candidate.displayText || candidate.text || '',
+        reasoning: candidate.reasoning || '',
+        errorMessage: candidate.error?.message || '',
+        timeToFirstToken: candidate.timeToFirstToken || null,
+        tokenCount: candidate.tokenCount || 0,
+        swipeIndex: Number.isInteger(candidate.swipeIndex) ? candidate.swipeIndex : null,
+        title: candidate.title || '',
+        imageUrls: Array.isArray(candidate.imageUrls) ? candidate.imageUrls : [],
+        startedAt: candidate.startedAt?.toISOString?.() || null,
+        finishedAt: candidate.finishedAt?.toISOString?.() || null,
+        sendDate: candidate.sendDate || null,
+    };
+}
+
+function getSerializableParallelSession(session) {
+    return {
+        id: session.id,
+        status: session.status,
+        startedAt: session.startedAt?.toISOString?.() || null,
+        finishedAt: session.finishedAt?.toISOString?.() || null,
+        candidates: (session.candidates ?? []).map(serializeParallelCandidateForMessage),
+    };
+}
+
+function persistParallelSessionSnapshot(session) {
+    if (typeof session?.messageId !== 'number') {
+        return;
+    }
+
+    const message = chat[session.messageId];
+    if (!message) {
+        return;
+    }
+
+    message.extra = message.extra || {};
+    message.extra.parallel_generation_session = getSerializableParallelSession(session);
+}
+
+function hydrateParallelSessionFromMessage(messageId) {
+    const message = chat[messageId];
+    const snapshot = message?.extra?.parallel_generation_session;
+    if (!snapshot || !Array.isArray(snapshot.candidates)) {
+        return null;
+    }
+
+    const session = {
+        id: snapshot.id,
+        status: snapshot.status || 'finished',
+        startedAt: snapshot.startedAt ? new Date(snapshot.startedAt) : null,
+        finishedAt: snapshot.finishedAt ? new Date(snapshot.finishedAt) : null,
+        messageId,
+        streaming: false,
+        candidates: snapshot.candidates.map(candidate => ({
+            ...candidate,
+            session: null,
+            abortController: new AbortController(),
+            error: candidate.errorMessage ? new Error(candidate.errorMessage) : null,
+            startedAt: candidate.startedAt ? new Date(candidate.startedAt) : null,
+            finishedAt: candidate.finishedAt ? new Date(candidate.finishedAt) : null,
+            imageUrls: Array.isArray(candidate.imageUrls) ? candidate.imageUrls : [],
+            logprobs: [],
+            swipes: [],
+            toolCalls: [],
+        })),
+    };
+
+    for (const candidate of session.candidates) {
+        candidate.session = session;
+    }
+    parallelGenerationSessionsByMessageId.set(messageId, session);
+    return session;
+}
+
+function getParallelSessionForMessage(messageId) {
+    if (!Number.isInteger(messageId)) {
+        return null;
+    }
+
+    return parallelGenerationSessionsByMessageId.get(messageId) || hydrateParallelSessionFromMessage(messageId);
 }
 
 function renderParallelCandidateStatus(candidate) {
@@ -3564,24 +3723,33 @@ function renderParallelCandidateStatus(candidate) {
     if (candidate.error?.message) {
         metadata.push(candidate.error.message);
     }
+    const canStop = !isParallelCandidateTerminal(candidate);
     const body = metadata.length
         ? `<div class="parallel_candidate_meta">${escapeHtml(metadata.join(' | '))}</div>`
         : '';
     return `
-        <button class="menu_button parallel_candidate ${candidate.status}" data-candidate-id="${candidate.id}" type="button">
-            <span class="parallel_candidate_title">${t`Candidate`} ${candidate.index + 1}</span>
+        <div class="menu_button parallel_candidate ${candidate.status}" data-candidate-id="${candidate.id}" data-message-id="${candidate.session?.messageId ?? ''}" role="button" tabindex="0">
+            <span class="parallel_candidate_header">
+                <span class="parallel_candidate_title">${t`Candidate`} ${candidate.index + 1}</span>
+                ${canStop ? `
+                    <span class="menu_button parallel_candidate_stop" data-candidate-id="${candidate.id}" data-message-id="${candidate.session?.messageId ?? ''}" role="button" tabindex="0" title="${t`Stop candidate`}" aria-label="${t`Stop candidate`}">
+                        <i class="fa-solid fa-stop"></i>
+                    </span>
+                ` : ''}
+            </span>
             <span class="parallel_candidate_status">${statusLabels[candidate.status] || candidate.status}</span>
             ${body}
-        </button>
+        </div>
     `;
 }
 
 function renderParallelGenerationStatus(session) {
-    const done = session.candidates.filter(candidate => ['done', 'error', 'stopped'].includes(candidate.status)).length;
+    const done = session.candidates.filter(candidate => isParallelCandidateTerminal(candidate)).length;
+    const title = session.status === 'finished' ? t`Generated replies` : t`Generating replies`;
     return `
         <div class="parallel_generation_status" data-session-id="${session.id}">
             <div class="parallel_generation_header">
-                <strong>${t`Generating replies`}</strong>
+                <strong>${title}</strong>
                 <span>${done}/${session.candidates.length}</span>
             </div>
             <div class="parallel_candidates">
@@ -3605,6 +3773,7 @@ function updateParallelGenerationMessage(session) {
     message.extra = message.extra || {};
     message.extra.display_text = renderParallelGenerationStatus(session);
     message.mes = session.candidates.map(candidate => `${candidate.index + 1}. ${candidate.status}`).join('\n');
+    persistParallelSessionSnapshot(session);
     const messageElement = chatElement.find(`.mes[mesid="${session.messageId}"]`);
     if (messageElement.length) {
         messageElement.find('.mes_text').html(getMessageTextHTML(message, { messageId: session.messageId }));
@@ -3699,7 +3868,7 @@ function getParallelCandidateDetailText(candidate) {
         return t`Waiting to start...`;
     }
     if (candidate.status === 'stopped') {
-        return t`Stopped before receiving content.`;
+        return t`Stopped. Partial content was discarded.`;
     }
     return '';
 }
@@ -3717,7 +3886,19 @@ function createParallelCandidateDetail(candidate) {
     const text = document.createElement('pre');
     text.classList.add('parallel_candidate_detail_text');
 
-    container.append(title, status, text);
+    const actions = document.createElement('div');
+    actions.classList.add('parallel_candidate_detail_actions');
+
+    const switchButton = document.createElement('button');
+    switchButton.type = 'button';
+    switchButton.classList.add('menu_button', 'parallel_candidate_switch');
+    switchButton.textContent = t`Switch to this reply`;
+    switchButton.addEventListener('click', async () => {
+        await switchParallelMessageToCandidate(candidate);
+    });
+
+    actions.appendChild(switchButton);
+    container.append(title, status, text, actions);
     candidate.detailElement = container;
     updateParallelCandidateDetail(candidate);
     return container;
@@ -3736,11 +3917,21 @@ function updateParallelCandidateDetail(candidate) {
 
     const status = candidate.detailElement.querySelector('.parallel_candidate_detail_status');
     const text = candidate.detailElement.querySelector('.parallel_candidate_detail_text');
+    const actions = candidate.detailElement.querySelector('.parallel_candidate_detail_actions');
+    const switchButton = candidate.detailElement.querySelector('.parallel_candidate_switch');
+    const canSwitch = candidate.status === 'done' && Number.isInteger(candidate.swipeIndex);
     if (status instanceof HTMLElement) {
         status.textContent = getParallelCandidateDetailStatus(candidate);
     }
     if (text instanceof HTMLElement) {
         text.textContent = getParallelCandidateDetailText(candidate);
+    }
+    if (actions instanceof HTMLElement) {
+        actions.hidden = !canSwitch;
+    }
+    if (switchButton instanceof HTMLElement) {
+        switchButton.hidden = !canSwitch;
+        switchButton.toggleAttribute('disabled', !canSwitch);
     }
 }
 
@@ -3779,9 +3970,128 @@ async function openParallelCandidateDetail(candidate) {
             if (candidate.detailElement === detail) {
                 candidate.detailElement = null;
             }
+            if (candidate.detailPopup === popup) {
+                candidate.detailPopup = null;
+            }
         },
     });
+    popup.content.classList.add('parallel_candidate_detail_content');
+    candidate.detailPopup = popup;
     await popup.show();
+}
+
+async function switchParallelMessageToCandidate(candidate) {
+    const messageId = candidate?.session?.messageId;
+    if (!Number.isInteger(messageId) || !chat[messageId]) {
+        toastr.warning(t`The generated reply is no longer available.`);
+        return false;
+    }
+    if (candidate.status !== 'done' || !Number.isInteger(candidate.swipeIndex)) {
+        toastr.warning(t`This reply is not ready yet.`);
+        return false;
+    }
+
+    const message = chat[messageId];
+    if (!Array.isArray(message.swipes) || typeof message.swipes[candidate.swipeIndex] !== 'string') {
+        toastr.warning(t`This reply is no longer available.`);
+        return false;
+    }
+
+    const swipeInfoExtra = message.swipe_info?.[candidate.swipeIndex]?.extra;
+    if ((!Array.isArray(candidate.imageUrls) || candidate.imageUrls.length === 0) && Array.isArray(swipeInfoExtra?.parallel_candidate_image_urls)) {
+        candidate.imageUrls = swipeInfoExtra.parallel_candidate_image_urls;
+    }
+    const selectedSwipeText = message.swipes[candidate.swipeIndex];
+    const switched = syncSwipeToMes(messageId, candidate.swipeIndex, message);
+    if (!switched) {
+        toastr.error(t`Could not switch to the selected reply.`);
+        return false;
+    }
+    candidate.text = selectedSwipeText;
+    candidate.displayText = selectedSwipeText;
+
+    if (candidate.title) {
+        message.title = candidate.title;
+    }
+    delete message.extra?.parallel_candidate_image_urls;
+    if (Array.isArray(candidate.imageUrls) && candidate.imageUrls.length > 0 && !message.extra?.media) {
+        await processImageAttachment(message, { imageUrls: candidate.imageUrls });
+    }
+    syncMesToSwipe(messageId);
+
+    parallelGenerationSessionsByMessageId.delete(messageId);
+    const messageElement = addOneMessage(message, { type: 'swipe', forceId: messageId });
+    updateSwipeCounter(messageId, { message, messageElement });
+    statMesProcess(message, candidate.session?.type || 'normal', characters, this_chid, '');
+    showSwipeButtons();
+    refreshSwipeButtons(true);
+    await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, candidate.session?.type || 'normal');
+    await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, candidate.session?.type || 'normal');
+    await eventSource.emit(event_types.MESSAGE_SWIPED, messageId);
+    await eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
+    saveChatAfterParallelGeneration();
+    if (candidate.detailPopup) {
+        await candidate.detailPopup.complete(POPUP_RESULT.AFFIRMATIVE);
+    }
+    return true;
+}
+
+function markParallelCandidateStopped(candidate, reason = t`Stopped`) {
+    if (!candidate || isParallelCandidateTerminal(candidate)) {
+        return false;
+    }
+    if (candidate.abortController && !candidate.abortController.signal.aborted) {
+        candidate.abortController.abort(reason);
+    }
+    candidate.status = 'stopped';
+    candidate.error = null;
+    candidate.finishedAt = new Date();
+    candidate.sendDate = getMessageTimeStamp();
+    resetParallelCandidateContent(candidate);
+    scheduleParallelGenerationMessageUpdate(candidate.session, { immediate: true });
+    scheduleParallelCandidateDetailUpdate(candidate, { immediate: true });
+    return true;
+}
+
+async function requestParallelCandidateCancellation(candidate) {
+    const session = candidate?.session;
+    if (!session) {
+        return;
+    }
+
+    try {
+        if (session.streaming) {
+            await fetch('/api/backends/chat-completions/cancel-stream', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ stream_id: candidate.streamId }),
+            });
+            return;
+        }
+
+        await fetch('/api/backends/chat-completions/cancel-generation', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ request_id: candidate.requestId }),
+        });
+    } catch (error) {
+        console.warn('Could not cancel parallel candidate', error);
+    }
+}
+
+async function stopParallelCandidate(candidate) {
+    const stopped = markParallelCandidateStopped(candidate, t`Stopped candidate`);
+    if (!stopped) {
+        return false;
+    }
+
+    await requestParallelCandidateCancellation(candidate);
+    const session = candidate.session;
+    if (session?.candidates?.every(candidate => isParallelCandidateTerminal(candidate))) {
+        hideStopButton();
+    }
+    eventSource.emit(event_types.GENERATION_STOPPED);
+    return true;
 }
 
 function offsetParallelSeed(value, index) {
@@ -3886,6 +4196,13 @@ async function consumeParallelCandidateStream(candidate, generator, type, { isIm
         scheduleParallelCandidateDetailUpdate(candidate);
     }
 
+    if (candidate.abortController.signal.aborted || candidate.status === 'stopped') {
+        candidate.status = 'stopped';
+        resetParallelCandidateContent(candidate);
+        scheduleParallelCandidateDetailUpdate(candidate, { immediate: true });
+        return;
+    }
+
     const cleanedText = cleanUpMessage({
         getMessage: finalText,
         isImpersonate,
@@ -3936,6 +4253,12 @@ async function consumeOpenAIParallelBatchStream(session, type, generateData, opt
             throw new Error('OpenAI batch stream requires streaming candidates.');
         }
         canMultiSwipeByIndex.set(candidate.index, canMultiSwipe);
+        if (generate_data.model) {
+            candidate.model = generate_data.model;
+        }
+        if (generate_data.chat_completion_source) {
+            candidate.api = generate_data.chat_completion_source;
+        }
         candidates.push({
             index: candidate.index,
             ...generate_data,
@@ -3984,8 +4307,13 @@ async function consumeOpenAIParallelBatchStream(session, type, generateData, opt
         }
         if (eventType === 'candidate-error') {
             const message = data.error?.error?.message || data.error?.message || 'API Error';
-            candidate.error = new Error(message);
-            candidate.status = 'error';
+            if (candidate.abortController.signal.aborted || candidate.status === 'stopped') {
+                candidate.status = 'stopped';
+                resetParallelCandidateContent(candidate);
+            } else {
+                candidate.error = new Error(message);
+                candidate.status = 'error';
+            }
             candidate.finishedAt = new Date();
             candidate.sendDate = getMessageTimeStamp();
             scheduleParallelGenerationMessageUpdate(session, { immediate: true });
@@ -3995,6 +4323,9 @@ async function consumeOpenAIParallelBatchStream(session, type, generateData, opt
         if (eventType === 'candidate-done') {
             if (candidate.status !== 'error') {
                 candidate.status = data.cancelled ? 'stopped' : 'done';
+            }
+            if (candidate.status === 'stopped') {
+                resetParallelCandidateContent(candidate);
             }
             candidate.finishedAt = new Date();
             candidate.sendDate = getMessageTimeStamp();
@@ -4039,6 +4370,13 @@ async function consumeOpenAIParallelBatchStream(session, type, generateData, opt
 
     for (const candidate of session.candidates) {
         const state = stateByIndex.get(candidate.index);
+        if (candidate.abortController.signal.aborted || candidate.status === 'stopped') {
+            candidate.status = 'stopped';
+            resetParallelCandidateContent(candidate);
+            scheduleParallelGenerationMessageUpdate(session, { immediate: true });
+            scheduleParallelCandidateDetailUpdate(candidate, { immediate: true });
+            continue;
+        }
         if (state) {
             const trailingText = state.decoder.decode();
             if (trailingText) {
@@ -4113,6 +4451,14 @@ function parseSseEventsFromText(text, { flush = false } = {}) {
 }
 
 function applyParallelStreamState(candidate, state, stoppingStrings, { isImpersonate = false, isContinue = false } = {}) {
+    if (candidate.abortController.signal.aborted || candidate.status === 'stopped') {
+        candidate.status = 'stopped';
+        resetParallelCandidateContent(candidate);
+        scheduleParallelGenerationMessageUpdate(candidate.session, { immediate: true });
+        scheduleParallelCandidateDetailUpdate(candidate, { immediate: true });
+        return;
+    }
+
     const hasTokenContent = state.text.length > 0 || (state.finalState.reasoning || '').length > 0 || state.swipes.some(swipe => (swipe || '').length > 0);
     if (hasTokenContent && candidate.status === 'requesting') {
         candidate.status = 'streaming';
@@ -4130,6 +4476,14 @@ function applyParallelStreamState(candidate, state, stoppingStrings, { isImperso
 }
 
 function finalizeParallelStreamState(candidate, state, stoppingStrings, { isImpersonate = false, isContinue = false } = {}) {
+    if (candidate.abortController.signal.aborted || candidate.status === 'stopped') {
+        candidate.status = 'stopped';
+        resetParallelCandidateContent(candidate);
+        scheduleParallelGenerationMessageUpdate(candidate.session, { immediate: true });
+        scheduleParallelCandidateDetailUpdate(candidate, { immediate: true });
+        return;
+    }
+
     const cleanedText = cleanUpMessage({
         getMessage: state.text,
         isImpersonate,
@@ -4222,8 +4576,7 @@ async function createParallelPlaceholderMessage(session) {
             api: getGeneratingApi(),
             model: getGeneratingModel(),
             display_text: renderParallelGenerationStatus(session),
-            parallel_generation: true,
-            uses_system_ui: true,
+            ...createParallelGenerationExtra(session),
         },
         gen_started: session.startedAt,
         gen_finished: new Date(),
@@ -4233,6 +4586,11 @@ async function createParallelPlaceholderMessage(session) {
     };
     chat.push(message);
     session.messageId = chat.length - 1;
+    parallelGenerationSessionsByMessageId.set(session.messageId, session);
+    for (const candidate of session.candidates) {
+        candidate.session = session;
+    }
+    persistParallelSessionSnapshot(session);
     message.swipe_info = [{
         send_date: message.send_date,
         gen_started: message.gen_started,
@@ -4250,6 +4608,7 @@ async function deleteParallelPlaceholderMessage(session) {
     }
     if (chat[session.messageId]?.extra?.parallel_generation) {
         chat.splice(session.messageId, 1);
+        parallelGenerationSessionsByMessageId.delete(session.messageId);
         chatElement.find(`.mes[mesid="${session.messageId}"]`).remove();
         chatElement.find('.mes').removeClass('last_mes');
         chatElement.find('.mes').last().addClass('last_mes');
@@ -4258,7 +4617,7 @@ async function deleteParallelPlaceholderMessage(session) {
 }
 
 async function finalizeParallelGenerationSession(session, type) {
-    const successful = session.candidates.filter(candidate => candidate.status === 'done' && typeof candidate.text === 'string');
+    const successful = getSuccessfulParallelCandidates(session);
     if (!successful.length) {
         if (session.candidates.every(candidate => candidate.status === 'stopped')) {
             return null;
@@ -4266,43 +4625,45 @@ async function finalizeParallelGenerationSession(session, type) {
         throw new Error('All parallel generation candidates failed or were stopped.');
     }
 
-    const selected = successful[0];
     const message = chat[session.messageId];
     const generationFinished = new Date();
-    const parallelExtra = { parallel_generation_count: session.candidates.length };
+    const parallelExtra = createParallelGenerationExtra(session);
+    const swipes = [];
+    const swipeInfo = [];
+    for (const candidate of successful) {
+        candidate.swipeIndex = swipes.length;
+        swipes.push(candidate.text);
+        swipeInfo.push(createSwipeInfoFromCandidate(candidate, parallelExtra));
+        scheduleParallelCandidateDetailUpdate(candidate, { immediate: true });
+    }
+    parseReasoningInSwipes(swipes, swipeInfo, null);
+
     message.name = name2;
     message.is_user = false;
     message.is_system = false;
-    message.title = selected.title || '';
-    message.mes = selected.text;
-    message.send_date = selected.sendDate || getMessageTimeStamp();
-    message.gen_started = selected.startedAt || session.startedAt;
-    message.gen_finished = selected.finishedAt || generationFinished;
-    message.extra = createSwipeInfoFromCandidate(selected, parallelExtra).extra;
-    delete message.extra.display_text;
-    delete message.extra.parallel_generation;
+    message.title = '';
+    message.send_date = getMessageTimeStamp();
+    message.gen_started = session.startedAt;
+    message.gen_finished = generationFinished;
+    message.extra = {
+        api: getGeneratingApi(),
+        model: getGeneratingModel(),
+        display_text: renderParallelGenerationStatus(session),
+        ...parallelExtra,
+    };
     message.swipe_id = 0;
-    message.swipes = successful.map(candidate => candidate.text);
-    message.swipe_info = successful.map(candidate => createSwipeInfoFromCandidate(candidate, parallelExtra));
-    parseReasoningInSwipes(message.swipes, message.swipe_info, message.extra?.reasoning_duration);
-    message.mes = message.swipes[0];
-    message.extra = message.swipe_info[0]?.extra || message.extra;
+    message.swipes = swipes;
+    message.swipe_info = swipeInfo;
+    message.mes = session.candidates.map(candidate => `${candidate.index + 1}. ${candidate.status}`).join('\n');
 
-    if (Array.isArray(selected.imageUrls) && selected.imageUrls.length > 0) {
-        await processImageAttachment(message, { imageUrls: selected.imageUrls });
-    }
-
-    if (selected.reasoningSignature) {
-        message.extra.reasoning_signature = selected.reasoningSignature;
-    }
-
-    statMesProcess(message, type, characters, this_chid, '');
-    addOneMessage(message, { type: 'swipe', forceId: session.messageId });
+    session.status = 'finished';
+    session.finishedAt = session.finishedAt || generationFinished;
+    message.extra.display_text = renderParallelGenerationStatus(session);
+    persistParallelSessionSnapshot(session);
+    addOneMessage(message, { type: 'swipe', forceId: session.messageId, showSwipes: false });
     updateSwipeCounter(session.messageId, { message, messageElement: chatElement.find(`.mes[mesid="${session.messageId}"]`) });
-    refreshSwipeButtons(true);
-    await eventSource.emit(event_types.MESSAGE_RECEIVED, session.messageId, type);
-    await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, session.messageId, type);
-    return selected.text;
+    chatElement.find(`.mes[mesid="${session.messageId}"] .swipes-counter`).prop('hidden', true);
+    return successful[0].text;
 }
 
 async function runParallelGeneration({ type, generateData, count, generationStarted, promptReasoning, jsonSchema, isImpersonate, isContinue }) {
@@ -4391,7 +4752,7 @@ async function runParallelGeneration({ type, generateData, count, generationStar
         playMessageSound();
         unblockGeneration(type);
         saveChatAfterParallelGeneration();
-        return Object.defineProperties(new String(text), {
+        return Object.defineProperties(new String(''), {
             'messageChunk': { value: text },
             'fromParallel': { value: true },
         });
@@ -4400,7 +4761,6 @@ async function runParallelGeneration({ type, generateData, count, generationStar
         await deleteParallelPlaceholderMessage(session);
         throw error;
     } finally {
-        cancelParallelGenerationUiTimers(session);
         parallelGenerationSession = null;
     }
 }
@@ -5363,6 +5723,14 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     }
 
     coreChat = await Promise.all(coreChat.map(async (/** @type {ChatMessage} */ chatItem, index) => {
+        if (chatItem.extra?.[IGNORE_SYMBOL] || chatItem.extra?.parallel_generation_pending_selection) {
+            return {
+                ...chatItem,
+                mes: '',
+                index,
+            };
+        }
+
         let message = chatItem.mes;
         let regexType = chatItem.is_user ? regex_placement.USER_INPUT : regex_placement.AI_OUTPUT;
         let options = { isPrompt: true, depth: (coreChat.length - index - (isContinue ? 2 : 1)) };
@@ -6488,10 +6856,7 @@ export function stopGeneration() {
             session.batchAbortController.abort('Clicked stop button');
         }
         for (const candidate of parallelGenerationSession.candidates) {
-            if (!['done', 'error', 'stopped'].includes(candidate.status)) {
-                candidate.abortController.abort('Clicked stop button');
-                candidate.status = 'stopped';
-                scheduleParallelCandidateDetailUpdate(candidate, { immediate: true });
+            if (markParallelCandidateStopped(candidate, 'Clicked stop button')) {
                 stopped = true;
             }
         }
@@ -6608,6 +6973,12 @@ function unblockGeneration(type) {
 
     is_send_press = false;
     activateSendButtons();
+    const pendingParallelMessageId = Number.isInteger(parallelGenerationSession?.messageId)
+        ? parallelGenerationSession.messageId
+        : chat.findLastIndex(message => message?.extra?.parallel_generation_pending_selection);
+    if (pendingParallelMessageId >= 0 && chat[pendingParallelMessageId]?.extra?.parallel_generation_pending_selection) {
+        hideSwipeButtons({ hideCounters: true });
+    }
     setGenerationProgress(0);
     flushEphemeralStoppingStrings();
     flushWIInjections();
@@ -6748,7 +7119,7 @@ function formatMessageHistoryItem(chatItem, isInstruct, forceOutputSequence) {
 
     // If this symbol flag is set, completely ignore the message.
     // This can be used to hide messages without affecting the number of messages in the chat.
-    if (chatItem.extra?.[IGNORE_SYMBOL]) {
+    if (chatItem.extra?.[IGNORE_SYMBOL] || chatItem.extra?.parallel_generation_pending_selection) {
         return '';
     }
 
@@ -12063,9 +12434,32 @@ jQuery(async function () {
     //limit swiping to only last message clicks
     $(document).on('click', '.last_mes .swipe_right', async (e, data) => await swipe(e, SWIPE_DIRECTION.RIGHT, data));
     $(document).on('click', '.last_mes .swipe_left', async (e, data) => await swipe(e, SWIPE_DIRECTION.LEFT, data));
-    $(document).on('click', '.parallel_candidate', async function () {
+    $(document).on('click keydown', '.parallel_candidate_stop', async function (e) {
+        if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') {
+            return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+
         const candidateId = String($(this).data('candidate-id') ?? '');
-        const candidate = parallelGenerationSession?.candidates?.find(candidate => candidate.id === candidateId);
+        const messageId = Number($(this).data('message-id') ?? $(this).closest('.mes').attr('mesid'));
+        const candidate = findParallelCandidateById(candidateId, messageId);
+        if (!candidate) {
+            return;
+        }
+        await stopParallelCandidate(candidate);
+    });
+    $(document).on('click keydown', '.parallel_candidate', async function (e) {
+        if (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ') {
+            return;
+        }
+        if (e.type === 'keydown') {
+            e.preventDefault();
+        }
+
+        const candidateId = String($(this).data('candidate-id') ?? '');
+        const messageId = Number($(this).data('message-id') ?? $(this).closest('.mes').attr('mesid'));
+        const candidate = findParallelCandidateById(candidateId, messageId);
         if (!candidate) {
             return;
         }

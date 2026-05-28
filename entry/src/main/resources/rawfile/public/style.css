@@ -1636,6 +1636,17 @@ button {
     overflow: hidden;
     white-space: normal;
     overflow-wrap: anywhere;
+    cursor: pointer;
+}
+
+.parallel_candidate_header,
+.custom-parallel_candidate_header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    min-width: 0;
 }
 
 .parallel_candidate_title,
@@ -1644,6 +1655,24 @@ button {
 .custom-parallel_candidate_status {
     font-size: 0.85em;
     line-height: 1.25;
+}
+
+.parallel_candidate_title,
+.custom-parallel_candidate_title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.parallel_candidate_stop,
+.custom-parallel_candidate_stop {
+    flex: 0 0 auto;
+    min-width: 28px;
+    min-height: 28px;
+    margin: 0;
+    padding: 4px;
+    line-height: 1;
+    text-align: center;
 }
 
 .parallel_candidate_status,
@@ -1682,18 +1711,65 @@ button {
     opacity: 0.75;
 }
 
+.popup .popup-content.parallel_candidate_detail_content {
+    display: flex;
+    flex-direction: column;
+}
+
+.parallel_candidate_detail,
+.custom-parallel_candidate_detail {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-height: min(70vh, 560px);
+    min-height: min(70dvh, 560px);
+    max-height: 100%;
+}
+
+.parallel_candidate_detail h3,
+.custom-parallel_candidate_detail h3 {
+    flex: 0 0 auto;
+    margin-bottom: 6px;
+    text-align: center;
+}
+
 .parallel_candidate_detail pre,
 .custom-parallel_candidate_detail pre {
+    box-sizing: border-box;
+    flex: 1 1 auto;
     white-space: pre-wrap;
     word-break: break-word;
     min-height: 35vh;
-    max-height: 70vh;
+    min-height: 35dvh;
     overflow: auto;
+    text-align: left;
 }
 
 .parallel_candidate_detail_status,
 .custom-parallel_candidate_detail_status {
+    flex: 0 0 auto;
+    margin: 0 0 8px;
     opacity: 0.75;
+    text-align: center;
+}
+
+.parallel_candidate_detail_actions,
+.custom-parallel_candidate_detail_actions {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    margin-top: 12px;
+    padding-top: 10px;
+}
+
+.parallel_candidate_switch,
+.custom-parallel_candidate_switch {
+    width: auto;
+    min-width: 12em;
+    margin: 0 auto;
 }
 
 .autoComplete-wrap {

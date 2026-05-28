@@ -260,11 +260,13 @@
 
 当候选完成后，创建或更新一条 assistant 消息：
 
-- 默认选择候选 0，或第一个成功完成的候选，作为 `message.mes`。
+- 不再默认选择候选 0 或第一个成功候选。候选全部结束后，聊天流继续显示候选状态 UI，直到用户明确选择某个候选。
 - 所有成功候选写入 `message.swipes`。
 - 每个候选的元信息写入对应 `message.swipe_info`。
-- `message.swipe_id` 指向当前选中候选。
-- `message.extra` 使用当前选中候选的元信息。
+- `message.extra.display_text` 保存候选状态 UI，`message.extra.parallel_generation_pending_selection` 表示这条消息仍在等待用户选择。
+- 等待选择期间，这条消息应从后续 prompt 中排除，避免把候选状态文本当成角色回复。
+- 候选状态快照写入 `message.extra.parallel_generation_session`，生成会话清理后仍可点开候选详情。
+- 用户在候选详情弹窗点击“切换到此回复”后，才把对应 `swipe_id` 同步为当前 `message.mes`，并移除候选状态 UI / pending 标记。
 
 失败候选是否保存需要明确：
 
@@ -277,8 +279,8 @@
 建议：
 
 - 用户消息插入后可以按现有逻辑保存。
-- 并发候选生成中可以只维护前端临时状态。
-- 候选全部完成、全部停止、或用户确认选择后，再保存正式 assistant 消息。
+- 并发候选生成中需要持续更新前端状态，并把轻量候选快照保存到消息 extra，便于生成结束后继续查看。
+- 候选全部完成后保存带候选 UI 的 assistant 消息；用户选择某个候选后再保存普通 assistant 消息。
 - 如果要支持应用后台清理恢复，需要把进行中的 session 状态持久化，这会显著增加复杂度，建议不放首版。
 
 ---
@@ -301,6 +303,8 @@ parallel_<sessionId>_<candidateIndex>
 取消策略：
 
 - 停止单个候选：abort 该候选前端 `AbortController`，同时调用对应后端 cancel 接口。
+- 单候选停止后必须丢弃已经生成到一半的内容，清空候选的文本、reasoning、额外 swipes、工具调用和 logprobs，不能把半截内容保存为 swipe。
+- 已完成、失败、已停止的候选隐藏单候选停止按钮。
 - 停止全部：遍历所有 running/streaming 候选执行取消。
 - 顶部停止按钮在并发模式下应停止整个 session。
 
