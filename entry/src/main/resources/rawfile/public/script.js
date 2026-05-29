@@ -4309,7 +4309,7 @@ async function consumeOpenAIParallelBatchStream(session, type, generateData, opt
     const canMultiSwipeByIndex = new Map();
     const stateByIndex = new Map(session.candidates.map(candidate => [candidate.index, {
         text: '',
-        finalState: {},
+        finalState: { reasoning: '', images: [], signature: '', toolSignatures: {} },
         swipes: [],
         toolCalls: [],
         logprobs: [],
