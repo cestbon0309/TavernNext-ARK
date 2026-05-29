@@ -2487,6 +2487,8 @@
     "Character details are hidden.": "角色詳細資訊已隱藏。",
     "Add a reasoning block": "新增推理區塊",
     "Thought for some time": "思考了一段時間",
+    "Thinking...": "思考中……",
+    "Thought for ${0}": "思考了 ${0}",
     "Confirm Edit": "確認",
     "Remove reasoning": "移除推理",
     "Cancel edit": "取消編輯",

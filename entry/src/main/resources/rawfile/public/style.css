@@ -1733,16 +1733,37 @@ button {
     text-align: center;
 }
 
-.parallel_candidate_detail pre,
-.custom-parallel_candidate_detail pre {
+.parallel_candidate_detail_body,
+.custom-parallel_candidate_detail_body {
     box-sizing: border-box;
     flex: 1 1 auto;
-    white-space: pre-wrap;
-    word-break: break-word;
     min-height: 35vh;
     min-height: 35dvh;
     overflow: auto;
     text-align: left;
+}
+
+.parallel_candidate_detail .mes_reasoning_details,
+.custom-parallel_candidate_detail .mes_reasoning_details {
+    margin-right: 0;
+}
+
+.parallel_candidate_detail .mes_reasoning_summary,
+.custom-parallel_candidate_detail .mes_reasoning_summary {
+    margin-right: 0;
+}
+
+.parallel_candidate_detail .mes_reasoning_actions,
+.custom-parallel_candidate_detail .mes_reasoning_actions {
+    display: none;
+}
+
+.parallel_candidate_detail_text,
+.custom-parallel_candidate_detail_text {
+    box-sizing: border-box;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
 }
 
 .parallel_candidate_detail_status,

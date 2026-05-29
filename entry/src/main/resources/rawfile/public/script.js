@@ -234,7 +234,7 @@ import {
     formatInstructModeStoryString,
     getInstructStoppingSequences,
 } from './scripts/instruct-mode.js';
-import { initLocales, t } from './scripts/i18n.js';
+import { getCurrentLocale, initLocales, t } from './scripts/i18n.js';
 import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, initTokenizers, saveTokenCache } from './scripts/tokenizers.js';
 import {
     user_avatar,
@@ -3851,15 +3851,8 @@ function getParallelCandidateDetailStatus(candidate) {
 
 function getParallelCandidateDetailText(candidate) {
     const content = candidate.displayText || candidate.text || '';
-    if (content || candidate.reasoning || candidate.error?.message) {
-        const parts = [];
-        if (candidate.reasoning) {
-            parts.push(`${t`Reasoning`}:\n${candidate.reasoning}`);
-        }
-        if (content) {
-            parts.push(content);
-        }
-        return parts.join('\n\n') || candidate.error?.message;
+    if (content || candidate.error?.message) {
+        return content || candidate.error?.message;
     }
     if (candidate.status === 'requesting') {
         return candidate.session?.streaming ? t`Waiting for first token...` : t`Waiting for response...`;
@@ -3873,6 +3866,66 @@ function getParallelCandidateDetailText(candidate) {
     return '';
 }
 
+function createParallelCandidateReasoningBlock() {
+    const details = document.createElement('details');
+    details.classList.add('mes_reasoning_details', 'parallel_candidate_reasoning_details');
+
+    const summary = document.createElement('summary');
+    summary.classList.add('mes_reasoning_summary', 'flex-container');
+
+    const headerBlock = document.createElement('div');
+    headerBlock.classList.add('mes_reasoning_header_block', 'flex-container');
+
+    const header = document.createElement('div');
+    header.classList.add('mes_reasoning_header', 'flex-container');
+
+    const title = document.createElement('span');
+    title.classList.add('mes_reasoning_header_title');
+    title.textContent = t`Thought for some time`;
+
+    const arrow = document.createElement('div');
+    arrow.classList.add('mes_reasoning_arrow', 'fa-solid', 'fa-chevron-up');
+
+    const body = document.createElement('div');
+    body.classList.add('mes_reasoning');
+
+    header.append(title, arrow);
+    headerBlock.append(header);
+    summary.append(headerBlock);
+    details.append(summary, body);
+    return details;
+}
+
+function updateParallelCandidateReasoningHeader(candidate) {
+    const headerTitle = candidate.detailElement?.querySelector('.parallel_candidate_reasoning_details .mes_reasoning_header_title');
+    if (!(headerTitle instanceof HTMLElement)) {
+        return;
+    }
+
+    const startedAt = candidate.startedAt instanceof Date ? candidate.startedAt : null;
+    const finishedAt = candidate.finishedAt instanceof Date ? candidate.finishedAt : null;
+    if (startedAt && finishedAt && finishedAt >= startedAt) {
+        const duration = finishedAt.getTime() - startedAt.getTime();
+        const seconds = moment.duration(duration).asSeconds();
+        const durationStr = moment.duration(duration).locale(getCurrentLocale()).humanize({ s: 50, ss: 3 });
+        headerTitle.textContent = t`Thought for ${durationStr}`;
+        headerTitle.dataset.duration = String(seconds);
+        headerTitle.title = `${seconds} seconds`;
+        return;
+    }
+
+    if (isParallelCandidateTerminal(candidate)) {
+        headerTitle.textContent = t`Thought for some time`;
+        headerTitle.dataset.duration = 'unknown';
+        headerTitle.title = '';
+        return;
+    }
+
+    headerTitle.textContent = t`Thinking...`;
+    delete headerTitle.dataset.duration;
+    headerTitle.title = '';
+}
+
 function createParallelCandidateDetail(candidate) {
     const container = document.createElement('div');
     container.classList.add('parallel_candidate_detail');
@@ -3883,8 +3936,15 @@ function createParallelCandidateDetail(candidate) {
     const status = document.createElement('p');
     status.classList.add('parallel_candidate_detail_status');
 
-    const text = document.createElement('pre');
-    text.classList.add('parallel_candidate_detail_text');
+    const body = document.createElement('div');
+    body.classList.add('parallel_candidate_detail_body');
+
+    const reasoning = createParallelCandidateReasoningBlock();
+
+    const text = document.createElement('div');
+    text.classList.add('parallel_candidate_detail_text', 'mes_text');
+
+    body.append(reasoning, text);
 
     const actions = document.createElement('div');
     actions.classList.add('parallel_candidate_detail_actions');
@@ -3898,7 +3958,7 @@ function createParallelCandidateDetail(candidate) {
     });
 
     actions.appendChild(switchButton);
-    container.append(title, status, text, actions);
+    container.append(title, status, body, actions);
     candidate.detailElement = container;
     updateParallelCandidateDetail(candidate);
     return container;
@@ -3917,6 +3977,8 @@ function updateParallelCandidateDetail(candidate) {
 
     const status = candidate.detailElement.querySelector('.parallel_candidate_detail_status');
     const text = candidate.detailElement.querySelector('.parallel_candidate_detail_text');
+    const reasoningDetails = candidate.detailElement.querySelector('.parallel_candidate_reasoning_details');
+    const reasoningText = candidate.detailElement.querySelector('.parallel_candidate_reasoning_details .mes_reasoning');
     const actions = candidate.detailElement.querySelector('.parallel_candidate_detail_actions');
     const switchButton = candidate.detailElement.querySelector('.parallel_candidate_switch');
     const canSwitch = candidate.status === 'done' && Number.isInteger(candidate.swipeIndex);
@@ -3924,8 +3986,23 @@ function updateParallelCandidateDetail(candidate) {
         status.textContent = getParallelCandidateDetailStatus(candidate);
     }
     if (text instanceof HTMLElement) {
-        text.textContent = getParallelCandidateDetailText(candidate);
+        const content = getParallelCandidateDetailText(candidate);
+        text.innerHTML = messageFormatting(content, name2, false, false, candidate.session?.messageId ?? -1, {}, false);
     }
+    if (reasoningDetails instanceof HTMLElement) {
+        const hasReasoning = Boolean(candidate.reasoning);
+        reasoningDetails.hidden = !hasReasoning;
+        reasoningDetails.dataset.state = isParallelCandidateTerminal(candidate) ? 'done' : 'thinking';
+        reasoningDetails.dataset.type = 'model';
+        candidate.detailElement.classList.toggle('reasoning', hasReasoning);
+    }
+    if (reasoningText instanceof HTMLElement) {
+        const displayReasoning = candidate.reasoning
+            ? messageFormatting(candidate.reasoning, '', false, false, candidate.session?.messageId ?? -1, {}, true)
+            : '';
+        reasoningText.innerHTML = displayReasoning;
+    }
+    updateParallelCandidateReasoningHeader(candidate);
     if (actions instanceof HTMLElement) {
         actions.hidden = !canSwitch;
     }
