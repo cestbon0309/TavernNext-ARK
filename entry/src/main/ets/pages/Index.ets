@@ -23,6 +23,7 @@ struct Index {
   @State shellBackground: string = DEFAULT_SHELL_BACKGROUND;
   @State webReady: boolean = false;
   @State chatBrowserOpen: boolean = false;
+  @State chatBrowserOpacity: number = 0;
   @State chatBrowserItems: ChatBrowserItem[] = [];
   @State chatBrowserQuery: string = '';
   @State chatBrowserMessage: string = '';
@@ -36,6 +37,7 @@ struct Index {
   private lastRestoreGitRepairFailureKey: string = '';
   private controller: webview.WebviewController = new webview.WebviewController();
   private webRevealToken: number = 0;
+  private chatBrowserAnimationToken: number = 0;
   private lastBackPressTime: number = 0;
   private handlingBackPress: boolean = false;
   private backendService: BackendService | null = null;
@@ -245,31 +247,6 @@ struct Index {
   @Builder
   private chatBrowserView() {
     Stack({ alignContent: Alignment.TopStart }) {
-      Circle()
-        .width(330)
-        .height(330)
-        .fill('rgba(34,211,238,0.36)')
-        .blur(70)
-        .position({ x: -128, y: 70 })
-      Circle()
-        .width(330)
-        .height(330)
-        .fill('rgba(168,85,247,0.32)')
-        .blur(70)
-        .position({ x: 210, y: 520 })
-      Circle()
-        .width(280)
-        .height(280)
-        .fill('rgba(236,72,153,0.24)')
-        .blur(64)
-        .position({ x: 80, y: 330 })
-      Circle()
-        .width(260)
-        .height(260)
-        .fill('rgba(59,130,246,0.28)')
-        .blur(64)
-        .position({ x: 260, y: 20 })
-
       Column() {
         Column({ space: 12 }) {
           Row() {
@@ -365,6 +342,7 @@ struct Index {
               .fontSize(12)
               .fontColor(this.chatBrowserWarningColor())
               .width('100%')
+              .padding({ left: 20, right: 20 })
           }
 
           if (this.chatBrowserRefreshing) {
@@ -385,24 +363,27 @@ struct Index {
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
             .alignItems(HorizontalAlign.Center)
+            .padding({ left: 20, right: 20 })
           } else if (this.filteredChatBrowserItems().length === 0) {
             Column({ space: 8 }) {
               Text('没有找到聊天')
                 .fontSize(16)
                 .fontColor(this.chatBrowserPrimaryTextColor())
-              Text('换个关键词试试，或先在 SillyTavern 中创建聊天。')
+              Text('换个关键词试试，或先创建聊天。')
                 .fontSize(12)
                 .fontColor(this.chatBrowserSecondaryTextColor())
             }
             .width('100%')
             .layoutWeight(1)
             .justifyContent(FlexAlign.Center)
+            .padding({ left: 20, right: 20 })
           } else {
             List({ space: 12 }) {
               ForEach(this.filteredChatBrowserItems(), (item: ChatBrowserItem) => {
                 ListItem() {
                   this.chatBrowserRow(item)
                 }
+                .padding({ left: 20, right: 20 })
                 .swipeAction({
                   end: {
                     builder: () => {
@@ -421,7 +402,7 @@ struct Index {
         }
         .width('100%')
         .layoutWeight(1)
-        .padding({ left: 20, right: 20, top: 16, bottom: 16 })
+        .padding({ top: 16, bottom: 16 })
       }
       .width('100%')
       .height('100%')
@@ -431,6 +412,8 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor(this.chatBrowserBackgroundColor())
+    .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .opacity(this.chatBrowserOpacity)
     .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
   }
 
@@ -589,16 +572,34 @@ struct Index {
   }
 
   private openChatBrowser(): void {
-    this.chatBrowserOpen = true;
+    const token = ++this.chatBrowserAnimationToken;
+    if (!this.chatBrowserOpen) {
+      this.chatBrowserOpacity = 0;
+      this.chatBrowserOpen = true;
+    }
     this.chatBrowserQuery = '';
     this.chatBrowserMessage = '';
     this.refreshChatBrowserItems(false);
+    setTimeout(() => {
+      if (this.chatBrowserAnimationToken === token && this.chatBrowserOpen) {
+        this.chatBrowserOpacity = 1;
+      }
+    }, 16);
   }
 
   private closeChatBrowser(): void {
-    this.chatBrowserOpen = false;
+    if (!this.chatBrowserOpen) {
+      return;
+    }
+    const token = ++this.chatBrowserAnimationToken;
+    this.chatBrowserOpacity = 0;
     this.chatBrowserMessage = '';
     this.chatBrowserDeletingIds = [];
+    setTimeout(() => {
+      if (this.chatBrowserAnimationToken === token && this.chatBrowserOpacity === 0) {
+        this.chatBrowserOpen = false;
+      }
+    }, CHAT_BROWSER_THEME_ANIMATION_MS);
   }
 
   private refreshChatBrowserItems(forceRefresh: boolean = false): void {
