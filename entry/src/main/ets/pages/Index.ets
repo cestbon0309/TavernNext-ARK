@@ -12,6 +12,7 @@ const CHAT_BROWSER_DELETE_ANIMATION_MS = 220;
 const CHAT_BROWSER_THEME_ANIMATION_MS = 220;
 const CHAT_BROWSER_ROW_HEIGHT = 90;
 const CHAT_BROWSER_DELETE_ACTION_WIDTH = 80;
+const CHAT_BROWSER_DELETE_ACTION_GAP = 12;
 
 @Entry
 @Component
@@ -390,7 +391,7 @@ struct Index {
                     builder: () => {
                       this.chatBrowserDeleteAction(item)
                     },
-                    actionAreaDistance: CHAT_BROWSER_DELETE_ACTION_WIDTH,
+                    actionAreaDistance: CHAT_BROWSER_DELETE_ACTION_WIDTH + CHAT_BROWSER_DELETE_ACTION_GAP,
                     onStateChange: (state: SwipeActionState) => {
                       this.handleChatBrowserSwipeStateChange(item, state);
                     }
@@ -511,7 +512,7 @@ struct Index {
 
   @Builder
   private chatBrowserDeleteAction(item: ChatBrowserItem) {
-    Stack({ alignContent: Alignment.Center }) {
+    Stack({ alignContent: Alignment.End }) {
       Button({ stateEffect: true }) {
         Text('删除')
           .fontSize(15)
@@ -534,7 +535,7 @@ struct Index {
       })
       .animation({ duration: 120, curve: Curve.EaseOut })
     }
-    .width(CHAT_BROWSER_DELETE_ACTION_WIDTH)
+    .width(CHAT_BROWSER_DELETE_ACTION_WIDTH + CHAT_BROWSER_DELETE_ACTION_GAP)
     .height(CHAT_BROWSER_ROW_HEIGHT)
   }
 
