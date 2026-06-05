@@ -30,6 +30,7 @@ struct Index {
   @State chatBrowserDarkMode: boolean = false;
   @State chatBrowserRefreshing: boolean = false;
   @State chatBrowserDeletingIds: string[] = [];
+  @State chatBrowserSwipeProgress: Record<string, number> = {};
   @State restoreProgressActive: boolean = false;
   @State restoreProgressTitle: string = '';
   @State restoreProgressMessage: string = '';
@@ -389,9 +390,15 @@ struct Index {
                     builder: () => {
                       this.chatBrowserDeleteAction(item)
                     },
-                    actionAreaDistance: CHAT_BROWSER_DELETE_ACTION_WIDTH
+                    actionAreaDistance: CHAT_BROWSER_DELETE_ACTION_WIDTH,
+                    onStateChange: (state: SwipeActionState) => {
+                      this.handleChatBrowserSwipeStateChange(item, state);
+                    }
                   },
-                  edgeEffect: SwipeEdgeEffect.Spring
+                  edgeEffect: SwipeEdgeEffect.Spring,
+                  onOffsetChange: (offset: number) => {
+                    this.updateChatBrowserSwipeProgress(item, offset);
+                  }
                 })
               }, (item: ChatBrowserItem) => item.id)
             }
@@ -504,22 +511,31 @@ struct Index {
 
   @Builder
   private chatBrowserDeleteAction(item: ChatBrowserItem) {
-    Button({ stateEffect: true }) {
-      Text('删除')
-        .fontSize(15)
-        .fontWeight(FontWeight.Medium)
-        .fontColor('#FFFFFF')
+    Stack({ alignContent: Alignment.Center }) {
+      Button({ stateEffect: true }) {
+        Text('删除')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+      }
+      .width(CHAT_BROWSER_DELETE_ACTION_WIDTH)
+      .height(CHAT_BROWSER_ROW_HEIGHT)
+      .padding(0)
+      .borderRadius(16)
+      .backgroundColor(this.chatBrowserDeleteButtonColor())
+      .enabled(!this.isChatBrowserItemDeleting(item))
+      .opacity(this.chatBrowserDeleteActionOpacity(item))
+      .scale({
+        x: this.chatBrowserDeleteActionScale(item),
+        y: this.chatBrowserDeleteActionScale(item)
+      })
+      .onClick(() => {
+        this.confirmDeleteChatBrowserItem(item);
+      })
+      .animation({ duration: 120, curve: Curve.EaseOut })
     }
     .width(CHAT_BROWSER_DELETE_ACTION_WIDTH)
     .height(CHAT_BROWSER_ROW_HEIGHT)
-    .padding(0)
-    .borderRadius(16)
-    .backgroundColor(this.chatBrowserDeleteButtonColor())
-    .enabled(!this.isChatBrowserItemDeleting(item))
-    .opacity(this.isChatBrowserItemDeleting(item) ? 0.45 : 1)
-    .onClick(() => {
-      this.confirmDeleteChatBrowserItem(item);
-    })
   }
 
   private handleWebNavigation(request: WebResourceRequest): boolean {
@@ -595,6 +611,7 @@ struct Index {
     this.chatBrowserOpacity = 0;
     this.chatBrowserMessage = '';
     this.chatBrowserDeletingIds = [];
+    this.chatBrowserSwipeProgress = {};
     setTimeout(() => {
       if (this.chatBrowserAnimationToken === token && this.chatBrowserOpacity === 0) {
         this.chatBrowserOpen = false;
@@ -618,6 +635,7 @@ struct Index {
         : this.backendService.getChatBrowser().cachedList();
       this.chatBrowserMessage = forceRefresh ? '聊天缓存已刷新。' : '';
       this.chatBrowserDeletingIds = [];
+      this.chatBrowserSwipeProgress = {};
     } finally {
       this.chatBrowserRefreshing = false;
     }
@@ -637,6 +655,7 @@ struct Index {
         this.chatBrowserItems = this.backendService?.getChatBrowser().refreshCache() ?? [];
         this.chatBrowserMessage = '聊天缓存已刷新。';
         this.chatBrowserDeletingIds = [];
+        this.chatBrowserSwipeProgress = {};
       } finally {
         this.chatBrowserRefreshing = false;
       }
@@ -666,6 +685,55 @@ struct Index {
     return this.chatBrowserDeletingIds.includes(item.id);
   }
 
+  private chatBrowserSwipeProgressFor(item: ChatBrowserItem): number {
+    return this.chatBrowserSwipeProgress[item.id] ?? 0;
+  }
+
+  private chatBrowserDeleteActionOpacity(item: ChatBrowserItem): number {
+    if (this.isChatBrowserItemDeleting(item)) {
+      return 0.45;
+    }
+    return this.chatBrowserSwipeProgressFor(item);
+  }
+
+  private chatBrowserDeleteActionScale(item: ChatBrowserItem): number {
+    return 0.7 + this.chatBrowserSwipeProgressFor(item) * 0.3;
+  }
+
+  private updateChatBrowserSwipeProgress(item: ChatBrowserItem, offset: number): void {
+    const progress = Math.max(0, Math.min(1, Math.abs(offset) / CHAT_BROWSER_DELETE_ACTION_WIDTH));
+    this.setChatBrowserSwipeProgress(item.id, progress);
+  }
+
+  private handleChatBrowserSwipeStateChange(item: ChatBrowserItem, state: SwipeActionState): void {
+    if (state === SwipeActionState.COLLAPSED) {
+      this.setChatBrowserSwipeProgress(item.id, 0);
+      return;
+    }
+    if (state === SwipeActionState.EXPANDED) {
+      this.setChatBrowserSwipeProgress(item.id, 1);
+    }
+  }
+
+  private setChatBrowserSwipeProgress(id: string, progress: number): void {
+    const clamped = Math.max(0, Math.min(1, progress));
+    const current = this.chatBrowserSwipeProgress[id] ?? 0;
+    if (Math.abs(current - clamped) < 0.01) {
+      return;
+    }
+
+    const next: Record<string, number> = {};
+    for (const key of Object.keys(this.chatBrowserSwipeProgress)) {
+      if (key !== id) {
+        next[key] = this.chatBrowserSwipeProgress[key];
+      }
+    }
+    if (clamped > 0) {
+      next[id] = clamped;
+    }
+    this.chatBrowserSwipeProgress = next;
+  }
+
   private beginChatBrowserDeleteAnimation(item: ChatBrowserItem): void {
     if (this.isChatBrowserItemDeleting(item)) {
       return;
@@ -682,6 +750,7 @@ struct Index {
       });
     }
     this.chatBrowserDeletingIds = this.chatBrowserDeletingIds.filter((id: string): boolean => id !== item.id);
+    this.setChatBrowserSwipeProgress(item.id, 0);
     this.chatBrowserMessage = '';
   }
 
