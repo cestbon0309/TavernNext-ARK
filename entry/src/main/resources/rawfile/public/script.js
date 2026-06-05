@@ -704,101 +704,173 @@ export async function pingServer() {
 }
 
 //MARK: firstLoadInit
+function createStartupTrace() {
+    const startedAt = performance.now();
+    const steps = [];
+
+    function record(label, stepStartedAt) {
+        const now = performance.now();
+        const step = {
+            label,
+            durationMs: Math.round(now - stepStartedAt),
+            elapsedMs: Math.round(now - startedAt),
+        };
+        steps.push(step);
+        console.debug(`[TavernNext startup] ${label}: ${step.durationMs}ms, elapsed=${step.elapsedMs}ms`);
+    }
+
+    return {
+        measureSync(label, callback) {
+            const stepStartedAt = performance.now();
+            try {
+                return callback();
+            } finally {
+                record(label, stepStartedAt);
+            }
+        },
+        async measure(label, callback) {
+            const stepStartedAt = performance.now();
+            try {
+                return await callback();
+            } finally {
+                record(label, stepStartedAt);
+            }
+        },
+        async report() {
+            const payload = {
+                totalDurationMs: Math.round(performance.now() - startedAt),
+                steps,
+            };
+            try {
+                await fetch('/api/ohos/startup/frontend', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+            } catch (error) {
+                console.warn('Failed to report TavernNext startup timing', error);
+            }
+        },
+    };
+}
+
 async function firstLoadInit() {
+    const startupTrace = createStartupTrace();
+
     try {
-        const tokenResponse = await fetch('/csrf-token');
-        const tokenData = await tokenResponse.json();
-        token = tokenData.token;
+        await startupTrace.measure('csrf-token', async () => {
+            const tokenResponse = await fetch('/csrf-token');
+            const tokenData = await tokenResponse.json();
+            token = tokenData.token;
+        });
     } catch {
         toastr.error(t`Couldn't get CSRF token. Please refresh the page.`, t`Error`, { timeOut: 0, extendedTimeOut: 0, preventDuplicates: true });
         throw new Error('Initialization failed');
     }
 
-    const initLoaderOverlay = loader.createOverlay();
-    initLoaderOverlay.classList.add('splash-screen');
+    const initLoaderOverlay = startupTrace.measureSync('create splash overlay', () => {
+        const overlay = loader.createOverlay();
+        overlay.classList.add('splash-screen');
 
-    const splashLogo = document.createElement('img');
-    splashLogo.src = '/img/logo.png';
-    splashLogo.alt = 'SillyTavern';
-    splashLogo.className = 'splash-logo';
-    splashLogo.ariaLabel = t`SillyTavern Logo`;
+        const splashLogo = document.createElement('img');
+        splashLogo.src = '/img/logo.png';
+        splashLogo.alt = 'SillyTavern';
+        splashLogo.className = 'splash-logo';
+        splashLogo.ariaLabel = t`SillyTavern Logo`;
 
-    const splashMessage = document.createElement('h2');
-    splashMessage.className = 'splash-message';
-    splashMessage.textContent = t`Initializing…`;
-    splashMessage.dataset.i18n = 'Initializing…';
+        const splashMessage = document.createElement('h2');
+        splashMessage.className = 'splash-message';
+        splashMessage.textContent = t`Initializing…`;
+        splashMessage.dataset.i18n = 'Initializing…';
 
-    initLoaderOverlay.prepend(splashLogo);
-    initLoaderOverlay.appendChild(splashMessage);
-
-    const initLoaderHandle = loader.show({
-        toastMode: loader.ToastMode.NONE,
-        overlayContent: initLoaderOverlay,
+        overlay.prepend(splashLogo);
+        overlay.appendChild(splashMessage);
+        return overlay;
     });
 
-    registerPromptManagerMigration();
-    initDomHandlers();
-    initStandaloneMode();
-    initLibraryShims();
-    addShowdownPatch(showdown);
-    addDOMPurifyHooks();
-    reloadMarkdownProcessor();
-    applyBrowserFixes();
-    await getClientVersion();
-    await initSecrets();
-    await readSecretState();
-    await initLocales();
-    initChatUtilities();
-    initDefaultSlashCommands();
-    initTextGenModels();
-    initOpenAI();
-    initTextGenSettings();
-    initKoboldSettings();
-    initNovelAISettings();
-    initSystemPrompts();
-    initExtensions();
-    initExtensionSlashCommands();
-    ToolManager.initToolSlashCommands();
-    await initPresetManager();
-    await initSystemMessages();
-    await getSettings(initLoaderHandle);
-    initKeyboard();
-    initDynamicStyles();
-    initTags();
-    initBookmarks();
-    await getUserAvatars(true, user_avatar);
-    await getCharacters();
-    await getBackgrounds();
-    await initTokenizers();
-    initBackgrounds();
-    initAuthorsNote();
-    await initPersonas();
-    await initSlashCommandAutoComplete();
-    initMacroAutoComplete();
-    initWorldInfo();
-    initHorde();
-    initRossMods();
-    initStats();
-    initCfg();
-    initLogprobs();
-    initInputMarkdown();
-    initServerHistory();
-    initSettingsSearch();
-    initBulkEdit();
-    initReasoning();
-    initWelcomeScreen();
-    await initScrapers();
-    initCustomSelectedSamplers();
-    initDataMaid();
-    initItemizedPrompts();
-    initAccessibility();
-    initSwipePicker();
-    addDebugFunctions();
+    const initLoaderHandle = startupTrace.measureSync('show splash loader', () => {
+        return loader.show({
+            toastMode: loader.ToastMode.NONE,
+            overlayContent: initLoaderOverlay,
+        });
+    });
+
+    startupTrace.measureSync('early sync initializers', () => {
+        registerPromptManagerMigration();
+        initDomHandlers();
+        initStandaloneMode();
+        initLibraryShims();
+        addShowdownPatch(showdown);
+        addDOMPurifyHooks();
+        reloadMarkdownProcessor();
+        applyBrowserFixes();
+    });
+    await startupTrace.measure('getClientVersion', async () => await getClientVersion());
+    await startupTrace.measure('initSecrets', async () => await initSecrets());
+    await startupTrace.measure('readSecretState', async () => await readSecretState());
+    await startupTrace.measure('initLocales', async () => await initLocales());
+    startupTrace.measureSync('model and extension sync initializers', () => {
+        initChatUtilities();
+        initDefaultSlashCommands();
+        initTextGenModels();
+        initOpenAI();
+        initTextGenSettings();
+        initKoboldSettings();
+        initNovelAISettings();
+        initSystemPrompts();
+        initExtensions();
+        initExtensionSlashCommands();
+        ToolManager.initToolSlashCommands();
+    });
+    await startupTrace.measure('initPresetManager', async () => await initPresetManager());
+    await startupTrace.measure('initSystemMessages', async () => await initSystemMessages());
+    await startupTrace.measure('getSettings', async () => await getSettings(initLoaderHandle, startupTrace));
+    startupTrace.measureSync('post-settings sync initializers', () => {
+        initKeyboard();
+        initDynamicStyles();
+        initTags();
+        initBookmarks();
+    });
+    await startupTrace.measure('getUserAvatars', async () => await getUserAvatars(true, user_avatar));
+    await startupTrace.measure('getCharacters', async () => await getCharacters());
+    await startupTrace.measure('getBackgrounds', async () => await getBackgrounds());
+    await startupTrace.measure('initTokenizers', async () => await initTokenizers());
+    startupTrace.measureSync('post-data sync initializers', () => {
+        initBackgrounds();
+        initAuthorsNote();
+    });
+    await startupTrace.measure('initPersonas', async () => await initPersonas());
+    await startupTrace.measure('initSlashCommandAutoComplete', async () => await initSlashCommandAutoComplete());
+    startupTrace.measureSync('late sync initializers', () => {
+        initMacroAutoComplete();
+        initWorldInfo();
+        initHorde();
+        initRossMods();
+        initStats();
+        initCfg();
+        initLogprobs();
+        initInputMarkdown();
+        initServerHistory();
+        initSettingsSearch();
+        initBulkEdit();
+        initReasoning();
+        initWelcomeScreen();
+    });
+    await startupTrace.measure('initScrapers', async () => await initScrapers());
+    startupTrace.measureSync('final sync initializers', () => {
+        initCustomSelectedSamplers();
+        initDataMaid();
+        initItemizedPrompts();
+        initAccessibility();
+        initSwipePicker();
+        addDebugFunctions();
+    });
     doDailyExtensionUpdatesCheck();
-    await eventSource.emit(event_types.APP_INITIALIZED);
-    await initLoaderHandle.hide();
-    await fixViewport();
-    await eventSource.emit(event_types.APP_READY);
+    await startupTrace.measure('APP_INITIALIZED event', async () => await eventSource.emit(event_types.APP_INITIALIZED));
+    await startupTrace.measure('hide startup loader', async () => await initLoaderHandle.hide());
+    await startupTrace.measure('fixViewport', async () => await fixViewport());
+    await startupTrace.measure('APP_READY event', async () => await eventSource.emit(event_types.APP_READY));
+    await startupTrace.report();
 }
 
 async function fixViewport() {
@@ -9287,13 +9359,16 @@ function reloadLoop() {
 
 //MARK: getSettings()
 ///////////////////////////////////////////
-export async function getSettings(initLoaderHandle = null) {
-    const response = await fetch('/api/settings/get', {
+export async function getSettings(initLoaderHandle = null, startupTrace = null) {
+    const traceSync = (label, callback) => startupTrace ? startupTrace.measureSync(`getSettings: ${label}`, callback) : callback();
+    const trace = async (label, callback) => startupTrace ? await startupTrace.measure(`getSettings: ${label}`, callback) : await callback();
+
+    const response = await trace('fetch /api/settings/get', async () => await fetch('/api/settings/get', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({}),
         cache: 'no-cache',
-    });
+    }));
 
     if (!response.ok) {
         reloadLoop();
@@ -9301,121 +9376,129 @@ export async function getSettings(initLoaderHandle = null) {
         throw new Error('Error getting settings');
     }
 
-    const data = await response.json();
+    const data = await trace('parse settings response', async () => await response.json());
     if (data.result != 'file not find' && data.settings) {
-        settings = JSON.parse(data.settings);
-        if (settings.username !== undefined && settings.username !== '') {
-            name1 = settings.username;
-            $('#your_name').text(name1);
-        }
+        traceSync('parse settings json and account controls', () => {
+            settings = JSON.parse(data.settings);
+            if (settings.username !== undefined && settings.username !== '') {
+                name1 = settings.username;
+                $('#your_name').text(name1);
+            }
 
-        accountStorage.init(settings?.accountStorage);
-        await setUserControls(data.enable_accounts);
-        setRequestCompressionConfig(data.request_compression);
+            accountStorage.init(settings?.accountStorage);
+            setRequestCompressionConfig(data.request_compression);
+        });
+        await trace('setUserControls', async () => await setUserControls(data.enable_accounts));
 
         // Allow subscribers to mutate settings
-        await eventSource.emit(event_types.SETTINGS_LOADED_BEFORE, settings);
+        await trace('SETTINGS_LOADED_BEFORE event', async () => await eventSource.emit(event_types.SETTINGS_LOADED_BEFORE, settings));
 
         //Load AI model config settings
-        amount_gen = settings.amount_gen;
-        if (settings.max_context !== undefined)
-            max_context = parseInt(settings.max_context);
-        parallel_generation_count = clampParallelGenerationCount(settings.parallel_generation_count ?? 1);
+        traceSync('core generation settings', () => {
+            amount_gen = settings.amount_gen;
+            if (settings.max_context !== undefined)
+                max_context = parseInt(settings.max_context);
+            parallel_generation_count = clampParallelGenerationCount(settings.parallel_generation_count ?? 1);
 
-        swipes = settings.swipes !== undefined ? !!settings.swipes : true;  // enable swipes by default
-        $('#swipes-checkbox').prop('checked', swipes); /// swipecode
-        refreshSwipeButtons();
+            swipes = settings.swipes !== undefined ? !!settings.swipes : true;  // enable swipes by default
+            $('#swipes-checkbox').prop('checked', swipes); /// swipecode
+            refreshSwipeButtons();
+        });
 
         // Kobold
-        loadKoboldSettings(data, settings.kai_settings ?? settings, settings);
+        traceSync('loadKoboldSettings', () => loadKoboldSettings(data, settings.kai_settings ?? settings, settings));
 
         // Novel
-        loadNovelSettings(data, settings.nai_settings ?? settings);
+        traceSync('loadNovelSettings', () => loadNovelSettings(data, settings.nai_settings ?? settings));
 
         // TextGen
-        await loadTextGenSettings(data, settings);
+        await trace('loadTextGenSettings', async () => await loadTextGenSettings(data, settings));
 
         // OpenAI
-        loadOpenAISettings(data, settings.oai_settings ?? settings);
+        traceSync('loadOpenAISettings', () => loadOpenAISettings(data, settings.oai_settings ?? settings));
 
         // Horde
-        loadHordeSettings(settings);
+        traceSync('loadHordeSettings', () => loadHordeSettings(settings));
 
         // Load power user settings
-        await loadPowerUserSettings(settings, data);
+        await trace('loadPowerUserSettings', async () => await loadPowerUserSettings(settings, data));
 
         // Apply theme toggles from power user settings
-        applyPowerUserSettings();
+        traceSync('apply power user and basic UI settings', () => {
+            applyPowerUserSettings();
 
-        // Load character tags
-        loadTagsSettings(settings);
+            // Load character tags
+            loadTagsSettings(settings);
 
-        // Load background
-        loadBackgroundSettings(settings);
+            // Load background
+            loadBackgroundSettings(settings);
 
-        // Load proxy presets
-        loadProxyPresets(settings);
+            // Load proxy presets
+            loadProxyPresets(settings);
+        });
 
         // Allow subscribers to mutate settings
-        await eventSource.emit(event_types.SETTINGS_LOADED_AFTER, settings);
+        await trace('SETTINGS_LOADED_AFTER event', async () => await eventSource.emit(event_types.SETTINGS_LOADED_AFTER, settings));
 
-        // Set context size after loading power user (may override the max value)
-        $('#max_context').val(max_context);
-        $('#max_context_counter').val(max_context);
+        traceSync('main API and persona settings', () => {
+            // Set context size after loading power user (may override the max value)
+            $('#max_context').val(max_context);
+            $('#max_context_counter').val(max_context);
 
-        $('#amount_gen').val(amount_gen);
-        $('#amount_gen_counter').val(amount_gen);
-        $('#parallel_generation_count').val(parallel_generation_count);
-        $('#parallel_generation_count_counter').val(parallel_generation_count);
+            $('#amount_gen').val(amount_gen);
+            $('#amount_gen_counter').val(amount_gen);
+            $('#parallel_generation_count').val(parallel_generation_count);
+            $('#parallel_generation_count_counter').val(parallel_generation_count);
 
-        //Load which API we are using
-        if (settings.main_api == undefined) {
-            settings.main_api = 'kobold';
-        }
+            //Load which API we are using
+            if (settings.main_api == undefined) {
+                settings.main_api = 'kobold';
+            }
 
-        if (settings.main_api == 'poe') {
-            settings.main_api = 'openai';
-        }
+            if (settings.main_api == 'poe') {
+                settings.main_api = 'openai';
+            }
 
-        main_api = settings.main_api;
-        $('#main_api').val(main_api);
-        $(`#main_api option[value=${main_api}]`).attr('selected', 'true');
-        changeMainAPI();
+            main_api = settings.main_api;
+            $('#main_api').val(main_api);
+            $(`#main_api option[value=${main_api}]`).attr('selected', 'true');
+            changeMainAPI();
 
-        //Load User's Name and Avatar
-        initUserAvatar(settings.user_avatar);
-        setPersonaDescription();
+            //Load User's Name and Avatar
+            initUserAvatar(settings.user_avatar);
+            setPersonaDescription();
 
-        //Load the active character and group
-        active_character = settings.active_character;
-        active_group = settings.active_group;
+            //Load the active character and group
+            active_character = settings.active_character;
+            active_group = settings.active_group;
 
-        setWorldInfoSettings(settings.world_info_settings ?? settings, data);
+            setWorldInfoSettings(settings.world_info_settings ?? settings, data);
 
-        selected_button = settings.selected_button;
+            selected_button = settings.selected_button;
 
-        // TODO: Move me into firstLoadInit when experimental toggle is removed
-        // power_user.experimental_macro_engine
-        initMacros();
+            // TODO: Move me into firstLoadInit when experimental toggle is removed
+            // power_user.experimental_macro_engine
+            initMacros();
+        });
 
         if (data.enable_extensions) {
             const enableAutoUpdate = Boolean(data.enable_extensions_auto_update);
             const isVersionChanged = settings.currentVersion !== currentVersion;
-            await loadExtensionSettings(settings, isVersionChanged, enableAutoUpdate);
-            await eventSource.emit(event_types.EXTENSION_SETTINGS_LOADED);
+            await trace('loadExtensionSettings', async () => await loadExtensionSettings(settings, isVersionChanged, enableAutoUpdate, startupTrace));
+            await trace('EXTENSION_SETTINGS_LOADED event', async () => await eventSource.emit(event_types.EXTENSION_SETTINGS_LOADED));
         }
 
         firstRun = !!settings.firstRun;
 
         if (firstRun) {
-            await initLoaderHandle?.hide();
-            await doOnboarding(user_avatar);
+            await trace('firstRun hide loader', async () => await initLoaderHandle?.hide());
+            await trace('firstRun onboarding', async () => await doOnboarding(user_avatar));
             firstRun = false;
         }
     }
-    await validateDisabledSamplers();
+    await trace('validateDisabledSamplers', async () => await validateDisabledSamplers());
     settingsReady = true;
-    await eventSource.emit(event_types.SETTINGS_LOADED);
+    await trace('SETTINGS_LOADED event', async () => await eventSource.emit(event_types.SETTINGS_LOADED));
 }
 
 //MARK: saveSettings()

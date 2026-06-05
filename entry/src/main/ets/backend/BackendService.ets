@@ -1,4 +1,5 @@
 import { common, Context } from '@kit.AbilityKit';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { ChatBrowserService } from './ChatBrowserService';
 import { DataDirectories } from './DataDirectories';
 import { CryptoUtils } from './CryptoUtils';
@@ -6,9 +7,9 @@ import { DefaultContentSeeder } from './DefaultContentSeeder';
 import { ExtensionsService } from './ExtensionsService';
 import { FileStore } from './FileStore';
 import { GitService } from './GitService';
-import { JsonRecord } from './HttpTypes';
+import { HttpRequest, HttpResponse, JsonRecord } from './HttpTypes';
 import { HttpServer } from './HttpServer';
-import { asRecord, asString } from './JsonUtils';
+import { asArray, asNumber, asRecord, asString } from './JsonUtils';
 import { LlmBackgroundTaskService } from './LlmBackgroundTaskService';
 import { MediaService } from './MediaService';
 import { ModelProxyService } from './ModelProxyService';
@@ -22,17 +23,27 @@ import { TokenizerService } from './TokenizerService';
 import { UsersService } from './UsersService';
 import { VectorService } from './VectorService';
 
+const DOMAIN = 0x544156;
+const TAG = 'TavernBackendService';
+
 export class BackendStatus {
   running: boolean;
   url: string;
   dataRoot: string;
   message: string;
+  initDurationMs: number;
+  listenDurationMs: number;
+  startupDurationMs: number;
 
-  constructor(running: boolean, url: string, dataRoot: string, message: string) {
+  constructor(running: boolean, url: string, dataRoot: string, message: string, initDurationMs: number = 0,
+    listenDurationMs: number = 0, startupDurationMs: number = 0) {
     this.running = running;
     this.url = url;
     this.dataRoot = dataRoot;
     this.message = message;
+    this.initDurationMs = initDurationMs;
+    this.listenDurationMs = listenDurationMs;
+    this.startupDurationMs = startupDurationMs;
   }
 }
 
@@ -57,22 +68,38 @@ export class BackendService {
   private chatBrowser: ChatBrowserService;
   private staticFiles: StaticFileServer;
   private lastMessage: string = 'Not started';
+  private startPromise: Promise<BackendStatus> | null = null;
+  private initDurationMs: number = 0;
+  private listenDurationMs: number = 0;
+  private startupDurationMs: number = 0;
+  private frontendStartupReport: JsonRecord = {};
 
   private constructor(context: Context) {
+    const initStartedAt = Date.now();
     this.store = new FileStore();
     this.crypto = new CryptoUtils();
     this.directories = new DataDirectories(context.filesDir, this.store);
+    let stepStartedAt = Date.now();
     this.directories.initialize();
+    this.logStartupStep('DataDirectories.initialize', stepStartedAt);
+    stepStartedAt = Date.now();
     new DefaultContentSeeder(this.store, this.directories, context.resourceManager).seedDefaultUser();
+    this.logStartupStep('DefaultContentSeeder.seedDefaultUser', stepStartedAt);
+    stepStartedAt = Date.now();
     this.directories.ensureDefaultUserFiles();
+    this.logStartupStep('DataDirectories.ensureDefaultUserFiles', stepStartedAt);
     this.shellTheme = ShellThemeService.getInstance(context);
+    stepStartedAt = Date.now();
     this.syncShellThemeFromCurrentSettings();
+    this.logStartupStep('syncShellThemeFromCurrentSettings', stepStartedAt);
     this.shareExports = new ShareExportService(context as common.UIAbilityContext, this.store, this.directories.exportRoot);
     this.core = new SillyTavernCore(this.store, this.directories, this.shareExports, context.resourceManager,
       (settings: JsonRecord) => this.syncShellThemeFromSettings(settings));
     this.media = new MediaService(this.store, this.directories, this.crypto);
     this.secrets = new SecretsService(this.store, this.directories.defaultUser, this.crypto);
+    stepStartedAt = Date.now();
     this.git = new GitService(this.store, this.prepareGitCaBundle(context));
+    this.logStartupStep('GitService.prepareGitCaBundle', stepStartedAt);
     this.users = new UsersService(this.store, this.directories, this.crypto, this.shareExports,
       context as common.UIAbilityContext, this.git, context.resourceManager);
     this.extensions = new ExtensionsService(this.store, this.directories, context.resourceManager, this.git);
@@ -83,7 +110,11 @@ export class BackendService {
     this.chatBrowser = new ChatBrowserService(this.store, this.directories);
     this.staticFiles = new StaticFileServer(context.resourceManager, () => this.shellTheme.getBackgroundColor());
     this.server = new HttpServer('127.0.0.1', 8000);
+    stepStartedAt = Date.now();
     this.registerRoutes();
+    this.logStartupStep('registerRoutes', stepStartedAt);
+    this.initDurationMs = Date.now() - initStartedAt;
+    hilog.info(DOMAIN, TAG, 'Backend init finished in %{public}d ms', this.initDurationMs);
   }
 
   static getInstance(context: Context): BackendService {
@@ -98,11 +129,36 @@ export class BackendService {
   }
 
   async start(): Promise<BackendStatus> {
+    if (this.server.isListening()) {
+      return this.status();
+    }
+    if (this.startPromise !== null) {
+      return this.startPromise;
+    }
+
+    this.startPromise = this.startInternal();
+    try {
+      return await this.startPromise;
+    } finally {
+      this.startPromise = null;
+    }
+  }
+
+  private async startInternal(): Promise<BackendStatus> {
+    const listenStartedAt = Date.now();
     try {
       await this.server.start();
-      this.lastMessage = 'ArkTS backend is listening.';
+      this.listenDurationMs = Date.now() - listenStartedAt;
+      this.startupDurationMs = this.initDurationMs + this.listenDurationMs;
+      this.lastMessage = `ArkTS backend is listening. init=${this.initDurationMs}ms listen=${this.listenDurationMs}ms total=${this.startupDurationMs}ms.`;
+      hilog.info(DOMAIN, TAG, 'Backend startup finished: init=%{public}d ms listen=%{public}d ms total=%{public}d ms',
+        this.initDurationMs, this.listenDurationMs, this.startupDurationMs);
     } catch (err) {
-      this.lastMessage = `Failed to start backend: ${JSON.stringify(err)}`;
+      this.listenDurationMs = Date.now() - listenStartedAt;
+      this.startupDurationMs = this.initDurationMs + this.listenDurationMs;
+      this.lastMessage = `Failed to start backend after ${this.startupDurationMs}ms: ${JSON.stringify(err)}`;
+      hilog.error(DOMAIN, TAG, 'Backend startup failed after %{public}d ms: %{public}s', this.startupDurationMs,
+        JSON.stringify(err));
     }
     return this.status();
   }
@@ -115,12 +171,15 @@ export class BackendService {
 
   status(): BackendStatus {
     return new BackendStatus(this.server.isListening(), `http://${this.server.host}:${this.server.port}`,
-      this.directories.dataRoot, this.lastMessage);
+      this.directories.dataRoot, this.lastMessage, this.initDurationMs, this.listenDurationMs, this.startupDurationMs);
   }
 
   private registerRoutes(): void {
     this.server.route('GET', '/', async (request) => this.staticFiles.serve(request));
     this.server.route('GET', '/health', async () => this.core.health());
+    this.server.route('GET', '/api/ohos/backend/status', async () => HttpResponse.json(this.statusJson()));
+    this.server.route('GET', '/api/ohos/startup/report', async () => HttpResponse.json(this.startupReportJson()));
+    this.server.route('POST', '/api/ohos/startup/frontend', async (request) => this.receiveFrontendStartupReport(request));
     this.server.route('GET', '/csrf-token', async () => this.core.csrfToken());
     this.server.route('GET', '/version', async () => this.core.version());
     this.server.route('GET', '/thumbnail', async (request) => await this.media.getDataFile(request));
@@ -454,5 +513,41 @@ export class BackendService {
     this.server.route('POST', '/api/vector/query-multi', async (request) => await this.vectors.queryMulti(request));
     this.server.route('POST', '/api/vector/purge', async (request) => this.vectors.purge(request));
     this.server.route('POST', '/api/vector/purge-all', async () => this.vectors.purgeAll());
+  }
+
+  private statusJson(): JsonRecord {
+    const status = this.status();
+    const value: JsonRecord = {};
+    value['running'] = status.running;
+    value['url'] = status.url;
+    value['dataRoot'] = status.dataRoot;
+    value['message'] = status.message;
+    value['initDurationMs'] = status.initDurationMs;
+    value['listenDurationMs'] = status.listenDurationMs;
+    value['startupDurationMs'] = status.startupDurationMs;
+    value['listenTimings'] = this.server.listenTimingsJson();
+    return value;
+  }
+
+  private receiveFrontendStartupReport(request: HttpRequest): HttpResponse {
+    const body = asRecord(request.body as Object | undefined);
+    const report: JsonRecord = {};
+    report['reportedAtMs'] = Date.now();
+    report['totalDurationMs'] = asNumber(body['totalDurationMs']);
+    report['steps'] = asArray(body['steps']);
+    this.frontendStartupReport = report;
+    return HttpResponse.json(this.startupReportJson());
+  }
+
+  private startupReportJson(): JsonRecord {
+    const value: JsonRecord = {};
+    value['backend'] = this.statusJson();
+    value['httpRequests'] = this.server.requestTimingsJson();
+    value['frontend'] = this.frontendStartupReport;
+    return value;
+  }
+
+  private logStartupStep(label: string, startedAt: number): void {
+    hilog.info(DOMAIN, TAG, '%{public}s took %{public}d ms', label, Date.now() - startedAt);
   }
 }

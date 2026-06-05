@@ -1,7 +1,7 @@
 import { socket } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { HttpRequest, HttpResponse, JsonRecord, jsonMessage, RouteHandler } from './HttpTypes';
+import { HttpRequest, HttpResponse, JsonArray, JsonRecord, jsonMessage, RouteHandler } from './HttpTypes';
 import { MultipartParser } from './MultipartParser';
 
 const DOMAIN = 0x544156;
@@ -20,6 +20,8 @@ export class HttpServer {
   private decoder: util.TextDecoder = new util.TextDecoder();
   private encoder: util.TextEncoder = new util.TextEncoder('utf-8');
   private multipartParser: MultipartParser = new MultipartParser();
+  private requestTimingEntries: JsonRecord[] = [];
+  private listenTimingEntries: JsonRecord[] = [];
   private listening: boolean = false;
   readonly host: string;
   readonly port: number;
@@ -41,6 +43,22 @@ export class HttpServer {
     return this.listening;
   }
 
+  requestTimingsJson(): JsonArray {
+    const result: JsonArray = [];
+    for (const entry of this.requestTimingEntries) {
+      result.push(entry);
+    }
+    return result;
+  }
+
+  listenTimingsJson(): JsonArray {
+    const result: JsonArray = [];
+    for (const entry of this.listenTimingEntries) {
+      result.push(entry);
+    }
+    return result;
+  }
+
   async start(): Promise<void> {
     if (this.listening) {
       return;
@@ -58,24 +76,48 @@ export class HttpServer {
   }
 
   private async listenOnce(): Promise<void> {
+    this.listenTimingEntries = [];
+    const listenStartedAt = Date.now();
+    let stepStartedAt = Date.now();
     const server = socket.constructTCPSocketServerInstance();
+    this.recordListenTiming('constructTCPSocketServerInstance', stepStartedAt, listenStartedAt);
     this.server = server;
+    stepStartedAt = Date.now();
     server.on('connect', (connection: socket.TCPSocketConnection) => {
       this.handleConnection(connection);
     });
     server.on('error', (err: Error) => {
       hilog.error(DOMAIN, TAG, 'Server error: %{public}s', JSON.stringify(err));
     });
+    this.recordListenTiming('register socket callbacks', stepStartedAt, listenStartedAt);
 
     try {
+      stepStartedAt = Date.now();
       await server.listen({ address: this.host, port: this.port });
+      this.recordListenTiming('server.listen', stepStartedAt, listenStartedAt);
     } catch (err) {
       this.server = null;
       hilog.error(DOMAIN, TAG, 'Listen failed: %{public}s', JSON.stringify(err));
       throw new Error(`Listen failed: ${JSON.stringify(err)}`);
     }
+    stepStartedAt = Date.now();
     this.listening = true;
+    this.recordListenTiming('mark listening', stepStartedAt, listenStartedAt);
     hilog.info(DOMAIN, TAG, 'Listening on http://%{public}s:%{public}d', this.host, this.port);
+  }
+
+  private recordListenTiming(label: string, startedAt: number, listenStartedAt: number): void {
+    const finishedAt = Date.now();
+    const entry: JsonRecord = {};
+    entry['label'] = label;
+    entry['durationMs'] = finishedAt - startedAt;
+    entry['elapsedMs'] = finishedAt - listenStartedAt;
+    this.listenTimingEntries.push(entry);
+    while (this.listenTimingEntries.length > 40) {
+      this.listenTimingEntries.shift();
+    }
+    hilog.info(DOMAIN, TAG, 'listen step %{public}s took %{public}d ms elapsed=%{public}d ms', label,
+      entry['durationMs'] as number, entry['elapsedMs'] as number);
   }
 
   async stop(): Promise<void> {
@@ -114,10 +156,18 @@ export class HttpServer {
   }
 
   private async dispatch(connection: socket.TCPSocketConnection, rawRequest: Uint8Array): Promise<void> {
+    const startedAt = Date.now();
+    let method = 'UNKNOWN';
+    let path = '';
+    let statusCode = 500;
+    let handlerDurationMs = 0;
     let response: HttpResponse;
     try {
       const request = this.parseRequest(rawRequest);
+      method = request.method;
+      path = request.path;
       hilog.info(DOMAIN, TAG, '%{public}s %{public}s', request.method, request.path);
+      const handlerStartedAt = Date.now();
       if (request.method === 'OPTIONS') {
         response = HttpResponse.empty(204);
       } else {
@@ -132,6 +182,8 @@ export class HttpServer {
           response = HttpResponse.json(notImplemented, 501);
         }
       }
+      handlerDurationMs = Date.now() - handlerStartedAt;
+      statusCode = response.statusCode;
     } catch (err) {
       hilog.error(DOMAIN, TAG, 'Dispatch failed: %{public}s', JSON.stringify(err));
       if (err instanceof Error && err.name === 'BadRequest') {
@@ -139,6 +191,7 @@ export class HttpServer {
       } else {
         response = HttpResponse.json(jsonMessage('internal_error'), 500);
       }
+      statusCode = response.statusCode;
     }
 
     try {
@@ -155,6 +208,26 @@ export class HttpServer {
       await connection.close();
     } catch (_err) {
     }
+
+    const totalDurationMs = Date.now() - startedAt;
+    this.recordRequestTiming(method, path, statusCode, handlerDurationMs, totalDurationMs);
+  }
+
+  private recordRequestTiming(method: string, path: string, statusCode: number, handlerDurationMs: number,
+    totalDurationMs: number): void {
+    const entry: JsonRecord = {};
+    entry['method'] = method;
+    entry['path'] = path;
+    entry['statusCode'] = statusCode;
+    entry['handlerDurationMs'] = handlerDurationMs;
+    entry['totalDurationMs'] = totalDurationMs;
+    entry['finishedAtMs'] = Date.now();
+    this.requestTimingEntries.push(entry);
+    while (this.requestTimingEntries.length > 300) {
+      this.requestTimingEntries.shift();
+    }
+    hilog.info(DOMAIN, TAG, '%{public}s %{public}s %{public}d total=%{public}d ms handler=%{public}d ms', method,
+      path, statusCode, totalDurationMs, handlerDurationMs);
   }
 
   private hasCompleteRequest(buffer: Uint8Array): boolean {

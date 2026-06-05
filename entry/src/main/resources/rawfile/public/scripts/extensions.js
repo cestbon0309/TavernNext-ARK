@@ -364,7 +364,8 @@ function onToggleAllExtensions(extensionsToToggle, toggleContainer) {
  * @param {'install' | 'update' | 'delete' | 'enable' | 'disable' | 'activate'} hookName The hook to call
  * @returns {Promise<void>}
  */
-async function callExtensionHook(name, hookName) {
+async function callExtensionHook(name, hookName, startupTrace = null) {
+    const trace = async (label, callback) => startupTrace ? await startupTrace.measure(`extension ${name}: ${label}`, callback) : await callback();
     const manifest = manifests[name];
 
     if (!manifest) {
@@ -396,7 +397,7 @@ async function callExtensionHook(name, hookName) {
     console.debug(`callExtensionHook: Calling hook "${hookName}" (function "${hookFunctionName}") for extension "${name}"`);
 
     try {
-        const module = await import(url);
+        const module = await trace(`import hook module ${hookName}`, async () => await import(url));
 
         if (typeof module[hookFunctionName] !== 'function') {
             console.warn(`callExtensionHook: Extension "${name}" hook "${hookName}" references "${hookFunctionName}" which is not an exported function`);
@@ -411,10 +412,10 @@ async function callExtensionHook(name, hookName) {
             TIMEOUT: 'timeout',
         };
 
-        const result = await Promise.race([
+        const result = await trace(`run hook ${hookName}`, async () => await Promise.race([
             (hookCallResult instanceof Promise ? hookCallResult : Promise.resolve(hookCallResult)).then(() => HOOK_RESULT.OK),
             delay(HOOK_TIMEOUT).then(() => HOOK_RESULT.TIMEOUT),
-        ]);
+        ]));
 
         if (result === HOOK_RESULT.TIMEOUT) {
             console.warn(`callExtensionHook: Hook "${hookName}" for extension "${name}" timed out after ${HOOK_TIMEOUT}ms`);
@@ -511,7 +512,9 @@ async function getManifests(names) {
  * Tries to activate all available extensions that are not already active.
  * @returns {Promise<void>}
  */
-async function activateExtensions() {
+async function activateExtensions(startupTrace = null) {
+    const trace = async (label, callback) => startupTrace ? await startupTrace.measure(label, callback) : await callback();
+    const traceExtension = async (name, label, callback) => await trace(`extension ${name}: ${label}`, callback);
     extensionLoadErrors.clear();
     const clientVersion = CLIENT_VERSION.split(':')[1];
     const extensions = Object.entries(manifests).sort((a, b) => sortManifestsByOrder(a[1], b[1]));
@@ -574,13 +577,16 @@ async function activateExtensions() {
         if (meetsModuleRequirements && meetsExtensionDeps && meetsClientMinimumVersion && !isDisabled) {
             try {
                 console.debug('Activating extension', name);
-                const promise = addExtensionLocale(name, manifest).finally(() =>
-                    Promise.all([addExtensionScript(name, manifest), addExtensionStyle(name, manifest)]),
+                const promise = traceExtension(name, 'locale', async () => await addExtensionLocale(name, manifest)).finally(() =>
+                    Promise.all([
+                        traceExtension(name, 'script', async () => await addExtensionScript(name, manifest)),
+                        traceExtension(name, 'style', async () => await addExtensionStyle(name, manifest)),
+                    ]),
                 );
-                await promise
+                await traceExtension(name, 'activate total', async () => await promise)
                     .then(() => {
                         activeExtensions.add(name);
-                        return callExtensionHook(name, 'activate');
+                        return callExtensionHook(name, 'activate', startupTrace);
                     })
                     .catch(err => {
                         console.log('Could not activate extension', name, err);
@@ -1536,32 +1542,39 @@ export async function installExtension(url, global, branch = '') {
  * @param {boolean} versionChanged Is this a version change?
  * @param {boolean} enableAutoUpdate Enable auto-update
  */
-export async function loadExtensionSettings(settings, versionChanged, enableAutoUpdate) {
-    if (settings.extension_settings) {
-        Object.assign(extension_settings, settings.extension_settings);
-    }
+export async function loadExtensionSettings(settings, versionChanged, enableAutoUpdate, startupTrace = null) {
+    const traceSync = (label, callback) => startupTrace ? startupTrace.measureSync(`extensions: ${label}`, callback) : callback();
+    const trace = async (label, callback) => startupTrace ? await startupTrace.measure(`extensions: ${label}`, callback) : await callback();
 
-    $('#extensions_url').val(extension_settings.apiUrl);
-    $('#extensions_api_key').val(extension_settings.apiKey);
-    $('#extensions_autoconnect').prop('checked', extension_settings.autoConnect);
-    $('#extensions_notify_updates').prop('checked', extension_settings.notifyUpdates);
-    extension_settings.ohosForceHttp1_1 = extension_settings.ohosForceHttp1_1 !== false;
-    $('#ohos_force_http1_1').prop('checked', extension_settings.ohosForceHttp1_1);
+    traceSync('apply stored settings', () => {
+        if (settings.extension_settings) {
+            Object.assign(extension_settings, settings.extension_settings);
+        }
+
+        $('#extensions_url').val(extension_settings.apiUrl);
+        $('#extensions_api_key').val(extension_settings.apiKey);
+        $('#extensions_autoconnect').prop('checked', extension_settings.autoConnect);
+        $('#extensions_notify_updates').prop('checked', extension_settings.notifyUpdates);
+        extension_settings.ohosForceHttp1_1 = extension_settings.ohosForceHttp1_1 !== false;
+        $('#ohos_force_http1_1').prop('checked', extension_settings.ohosForceHttp1_1);
+    });
 
     // Activate offline extensions
-    await eventSource.emit(event_types.EXTENSIONS_FIRST_LOAD);
-    const extensions = await discoverExtensions();
-    extensionNames = extensions.map(x => x.name);
-    extensionTypes = Object.fromEntries(extensions.map(x => [x.name, x.type]));
-    manifests = await getManifests(extensionNames);
+    await trace('EXTENSIONS_FIRST_LOAD event', async () => await eventSource.emit(event_types.EXTENSIONS_FIRST_LOAD));
+    const extensions = await trace('discoverExtensions', async () => await discoverExtensions());
+    traceSync('store discovered extensions', () => {
+        extensionNames = extensions.map(x => x.name);
+        extensionTypes = Object.fromEntries(extensions.map(x => [x.name, x.type]));
+    });
+    manifests = await trace('getManifests', async () => await getManifests(extensionNames));
 
     if (versionChanged && enableAutoUpdate) {
-        await autoUpdateExtensions(false);
+        await trace('autoUpdateExtensions', async () => await autoUpdateExtensions(false));
     }
 
-    await activateExtensions();
+    await trace('activateExtensions', async () => await activateExtensions(startupTrace));
     if (extension_settings.autoConnect && extension_settings.apiUrl) {
-        connectToApi(extension_settings.apiUrl);
+        traceSync('connectToApi', () => connectToApi(extension_settings.apiUrl));
     }
 }
 
