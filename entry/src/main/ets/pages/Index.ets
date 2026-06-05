@@ -14,6 +14,280 @@ const CHAT_BROWSER_ROW_HEIGHT = 90;
 const CHAT_BROWSER_DELETE_ACTION_WIDTH = 80;
 const CHAT_BROWSER_DELETE_ACTION_GAP = 12;
 
+type ChatBrowserItemAction = (item: ChatBrowserItem) => void;
+
+@Component
+struct ChatBrowserListCard {
+  @Prop item: ChatBrowserItem = new ChatBrowserItem();
+  @Prop deleting: boolean = false;
+  @Prop darkMode: boolean = false;
+  @State swipeProgress: number = 0;
+  onOpen: ChatBrowserItemAction = (_item: ChatBrowserItem): void => {
+  };
+  onDelete: ChatBrowserItemAction = (_item: ChatBrowserItem): void => {
+  };
+
+  build() {
+    ListItem() {
+      this.chatBrowserRow()
+    }
+    .padding({ left: 20, right: 20 })
+    .swipeAction({
+      end: {
+        builder: () => {
+          this.chatBrowserDeleteAction()
+        },
+        actionAreaDistance: CHAT_BROWSER_DELETE_ACTION_WIDTH + CHAT_BROWSER_DELETE_ACTION_GAP
+      },
+      edgeEffect: SwipeEdgeEffect.Spring,
+      onOffsetChange: (offset: number) => {
+        this.updateSwipeProgress(offset);
+      }
+    })
+  }
+
+  @Builder
+  private chatBrowserRow() {
+    Row({ space: 14 }) {
+      if (this.chatBrowserHasCover()) {
+        Image(this.chatBrowserCoverUrl())
+          .width(56)
+          .height(56)
+          .objectFit(ImageFit.Cover)
+          .backgroundColor(this.chatBrowserCoverBackgroundColor())
+          .borderRadius(28)
+          .border({ width: 2, color: this.chatBrowserAvatarBorderColor() })
+      } else {
+        Text(this.chatBrowserBadgeText())
+          .fontSize(18)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+          .width(56)
+          .height(56)
+          .textAlign(TextAlign.Center)
+          .backgroundColor(this.item.openable ? this.chatBrowserBadgeColor() : this.chatBrowserDisabledBadgeColor())
+          .borderRadius(28)
+          .border({ width: 2, color: this.chatBrowserAvatarBorderColor() })
+      }
+
+      Column({ space: 6 }) {
+        Row() {
+          Text(this.chatBrowserDisplayTitle())
+            .fontSize(17)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(this.chatBrowserPrimaryTextColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+
+          Text(this.formatChatBrowserRelativeTime())
+            .fontSize(13)
+            .fontColor(this.chatBrowserSecondaryTextColor())
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        Row({ space: 16 }) {
+          this.chatBrowserMetric($r('app.media.figma_chat_metric'), `${this.item.chatItems} 条`)
+          this.chatBrowserMetric($r('app.media.figma_chat_storage'), this.item.fileSize)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+      }
+      .layoutWeight(1)
+    }
+    .width('100%')
+    .height(this.deleting ? 0 : CHAT_BROWSER_ROW_HEIGHT)
+    .padding(this.deleting ? 0 : 16)
+    .backgroundColor(this.chatBrowserCardColor())
+    .borderRadius(16)
+    .border({ width: 1, color: this.chatBrowserBorderColor() })
+    .shadow({ radius: 8, color: this.chatBrowserCardShadowColor(), offsetX: 0, offsetY: 2 })
+    .opacity(this.deleting ? 0 : 1)
+    .scale({ x: this.deleting ? 0.96 : 1, y: this.deleting ? 0.96 : 1 })
+    .clip(true)
+    .enabled(this.item.openable && !this.deleting)
+    .onClick(() => {
+      this.onOpen(this.item);
+    })
+    .animation({ duration: CHAT_BROWSER_DELETE_ANIMATION_MS, curve: Curve.EaseInOut })
+  }
+
+  @Builder
+  private chatBrowserMetric(icon: Resource, text: string) {
+    Row({ space: 6 }) {
+      Image(icon)
+        .width(15)
+        .height(15)
+        .fillColor(this.chatBrowserMetricColor())
+      Text(text)
+        .fontSize(13)
+        .fontColor(this.chatBrowserMetricColor())
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    }
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  private chatBrowserDeleteAction() {
+    Stack({ alignContent: Alignment.End }) {
+      Button({ stateEffect: true }) {
+        Text('删除')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+      }
+      .width(CHAT_BROWSER_DELETE_ACTION_WIDTH)
+      .height(CHAT_BROWSER_ROW_HEIGHT)
+      .padding(0)
+      .borderRadius(16)
+      .backgroundColor(this.chatBrowserDeleteButtonColor())
+      .enabled(!this.deleting)
+      .opacity(this.chatBrowserDeleteActionOpacity())
+      .scale({
+        x: this.chatBrowserDeleteActionScale(),
+        y: this.chatBrowserDeleteActionScale()
+      })
+      .onClick(() => {
+        this.onDelete(this.item);
+      })
+      .animation({ duration: 120, curve: Curve.EaseOut })
+    }
+    .width(CHAT_BROWSER_DELETE_ACTION_WIDTH + CHAT_BROWSER_DELETE_ACTION_GAP)
+    .height(CHAT_BROWSER_ROW_HEIGHT)
+  }
+
+  private chatBrowserHasCover(): boolean {
+    return this.item.kind === 'character' && this.item.avatar.length > 0;
+  }
+
+  private chatBrowserCoverUrl(): string {
+    return `http://127.0.0.1:8000/characters/${encodeURIComponent(this.item.avatar)}`;
+  }
+
+  private updateSwipeProgress(offset: number): void {
+    const progress = Math.max(0, Math.min(1, Math.abs(offset) / CHAT_BROWSER_DELETE_ACTION_WIDTH));
+    if (Math.abs(this.swipeProgress - progress) < 0.01) {
+      return;
+    }
+    this.swipeProgress = progress;
+  }
+
+  private chatBrowserDeleteActionOpacity(): number {
+    if (this.deleting) {
+      return 0.45;
+    }
+    return this.swipeProgress;
+  }
+
+  private chatBrowserDeleteActionScale(): number {
+    return 0.7 + this.swipeProgress * 0.3;
+  }
+
+  private chatBrowserBadgeText(): string {
+    if (this.item.kind === 'group' || this.item.kind === 'orphan_group') {
+      return '群';
+    }
+    if (this.item.kind === 'character' || this.item.kind === 'orphan_character') {
+      return '角';
+    }
+    return '文';
+  }
+
+  private chatBrowserCardColor(): string {
+    return this.darkMode ? 'rgba(28,28,38,0.42)' : 'rgba(255,255,255,0.25)';
+  }
+
+  private chatBrowserBorderColor(): string {
+    return this.darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)';
+  }
+
+  private chatBrowserPrimaryTextColor(): string {
+    return this.darkMode ? '#F7F7FA' : '#0A0A0A';
+  }
+
+  private chatBrowserSecondaryTextColor(): string {
+    return this.darkMode ? 'rgba(228,228,236,0.70)' : 'rgba(113,113,130,0.70)';
+  }
+
+  private chatBrowserMetricColor(): string {
+    return this.darkMode ? 'rgba(228,228,236,0.78)' : 'rgba(113,113,130,0.80)';
+  }
+
+  private chatBrowserBadgeColor(): string {
+    return this.darkMode ? '#3B82F6' : '#4A90E2';
+  }
+
+  private chatBrowserDisabledBadgeColor(): string {
+    return this.darkMode ? '#8B5CF6' : '#A855F7';
+  }
+
+  private chatBrowserCoverBackgroundColor(): string {
+    return this.darkMode ? 'rgba(255,255,255,0.08)' : '#E4E7EB';
+  }
+
+  private chatBrowserAvatarBorderColor(): string {
+    return this.darkMode ? 'rgba(147,197,253,0.22)' : 'rgba(74,144,226,0.20)';
+  }
+
+  private chatBrowserDeleteButtonColor(): string {
+    return '#FF4757';
+  }
+
+  private chatBrowserCardShadowColor(): string {
+    return this.darkMode ? 'rgba(0,0,0,0.20)' : 'rgba(0,0,0,0.10)';
+  }
+
+  private chatBrowserDisplayTitle(): string {
+    if (this.item.title.length === 0) {
+      return this.item.chatName;
+    }
+    if (this.item.chatName.length === 0 || this.item.chatName === this.item.title) {
+      return this.item.title;
+    }
+    return `${this.item.title} - ${this.item.chatName}`;
+  }
+
+  private chatBrowserTimestampMs(): number {
+    const parsed = Date.parse(this.item.lastTimestamp);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+    return Math.round(this.item.mtimeMs);
+  }
+
+  private formatChatBrowserRelativeTime(): string {
+    const timestamp = this.chatBrowserTimestampMs();
+    const now = Date.now();
+    const diffMs = Math.max(0, now - timestamp);
+    const minuteMs = 60 * 1000;
+    const hourMs = 60 * minuteMs;
+    const dayMs = 24 * hourMs;
+    if (diffMs < minuteMs) {
+      return '刚刚';
+    }
+    if (diffMs < hourMs) {
+      return `${Math.floor(diffMs / minuteMs)}分钟前`;
+    }
+    if (diffMs < dayMs) {
+      return `${Math.floor(diffMs / hourMs)}小时前`;
+    }
+    if (diffMs < 2 * dayMs) {
+      return '昨天';
+    }
+    if (diffMs < 7 * dayMs) {
+      return `${Math.floor(diffMs / dayMs)}天前`;
+    }
+    if (diffMs < 30 * dayMs) {
+      return `${Math.floor(diffMs / (7 * dayMs))}周前`;
+    }
+    return new Date(timestamp).toLocaleDateString();
+  }
+}
+
 @Entry
 @Component
 struct Index {
@@ -31,7 +305,6 @@ struct Index {
   @State chatBrowserDarkMode: boolean = false;
   @State chatBrowserRefreshing: boolean = false;
   @State chatBrowserDeletingIds: string[] = [];
-  @State chatBrowserSwipeProgress: Record<string, number> = {};
   @State restoreProgressActive: boolean = false;
   @State restoreProgressTitle: string = '';
   @State restoreProgressMessage: string = '';
@@ -382,23 +655,15 @@ struct Index {
           } else {
             List({ space: 12 }) {
               ForEach(this.filteredChatBrowserItems(), (item: ChatBrowserItem) => {
-                ListItem() {
-                  this.chatBrowserRow(item)
-                }
-                .padding({ left: 20, right: 20 })
-                .swipeAction({
-                  end: {
-                    builder: () => {
-                      this.chatBrowserDeleteAction(item)
-                    },
-                    actionAreaDistance: CHAT_BROWSER_DELETE_ACTION_WIDTH + CHAT_BROWSER_DELETE_ACTION_GAP,
-                    onStateChange: (state: SwipeActionState) => {
-                      this.handleChatBrowserSwipeStateChange(item, state);
-                    }
+                ChatBrowserListCard({
+                  item,
+                  deleting: this.isChatBrowserItemDeleting(item),
+                  darkMode: this.chatBrowserDarkMode,
+                  onOpen: (selected: ChatBrowserItem): void => {
+                    this.openChatBrowserItem(selected);
                   },
-                  edgeEffect: SwipeEdgeEffect.Spring,
-                  onOffsetChange: (offset: number) => {
-                    this.updateChatBrowserSwipeProgress(item, offset);
+                  onDelete: (selected: ChatBrowserItem): void => {
+                    this.confirmDeleteChatBrowserItem(selected);
                   }
                 })
               }, (item: ChatBrowserItem) => item.id)
@@ -423,120 +688,6 @@ struct Index {
     .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .opacity(this.chatBrowserOpacity)
     .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
-  }
-
-  @Builder
-  private chatBrowserRow(item: ChatBrowserItem) {
-    Row({ space: 14 }) {
-      if (this.chatBrowserHasCover(item)) {
-        Image(this.chatBrowserCoverUrl(item))
-          .width(56)
-          .height(56)
-          .objectFit(ImageFit.Cover)
-          .backgroundColor(this.chatBrowserCoverBackgroundColor())
-          .borderRadius(28)
-          .border({ width: 2, color: this.chatBrowserAvatarBorderColor() })
-      } else {
-        Text(this.chatBrowserBadgeText(item))
-          .fontSize(18)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#FFFFFF')
-          .width(56)
-          .height(56)
-          .textAlign(TextAlign.Center)
-          .backgroundColor(item.openable ? this.chatBrowserBadgeColor() : this.chatBrowserDisabledBadgeColor())
-          .borderRadius(28)
-          .border({ width: 2, color: this.chatBrowserAvatarBorderColor() })
-      }
-
-      Column({ space: 6 }) {
-        Row() {
-          Text(this.chatBrowserDisplayTitle(item))
-            .fontSize(17)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.chatBrowserPrimaryTextColor())
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-
-          Text(this.formatChatBrowserRelativeTime(item))
-            .fontSize(13)
-            .fontColor(this.chatBrowserSecondaryTextColor())
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-
-        Row({ space: 16 }) {
-          this.chatBrowserMetric($r('app.media.figma_chat_metric'), `${item.chatItems} 条`)
-          this.chatBrowserMetric($r('app.media.figma_chat_storage'), item.fileSize)
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-      }
-      .layoutWeight(1)
-    }
-    .width('100%')
-    .height(this.isChatBrowserItemDeleting(item) ? 0 : CHAT_BROWSER_ROW_HEIGHT)
-    .padding(this.isChatBrowserItemDeleting(item) ? 0 : 16)
-    .backgroundColor(this.chatBrowserCardColor())
-    .borderRadius(16)
-    .border({ width: 1, color: this.chatBrowserBorderColor() })
-    .shadow({ radius: 8, color: this.chatBrowserCardShadowColor(), offsetX: 0, offsetY: 2 })
-    .opacity(this.isChatBrowserItemDeleting(item) ? 0 : 1)
-    .scale({ x: this.isChatBrowserItemDeleting(item) ? 0.96 : 1, y: this.isChatBrowserItemDeleting(item) ? 0.96 : 1 })
-    .clip(true)
-    .enabled(item.openable && !this.isChatBrowserItemDeleting(item))
-    .onClick(() => {
-      this.openChatBrowserItem(item);
-    })
-    .animation({ duration: CHAT_BROWSER_DELETE_ANIMATION_MS, curve: Curve.EaseInOut })
-  }
-
-  @Builder
-  private chatBrowserMetric(icon: Resource, text: string) {
-    Row({ space: 6 }) {
-      Image(icon)
-        .width(15)
-        .height(15)
-        .fillColor(this.chatBrowserMetricColor())
-      Text(text)
-        .fontSize(13)
-        .fontColor(this.chatBrowserMetricColor())
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    }
-    .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  private chatBrowserDeleteAction(item: ChatBrowserItem) {
-    Stack({ alignContent: Alignment.End }) {
-      Button({ stateEffect: true }) {
-        Text('删除')
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor('#FFFFFF')
-      }
-      .width(CHAT_BROWSER_DELETE_ACTION_WIDTH)
-      .height(CHAT_BROWSER_ROW_HEIGHT)
-      .padding(0)
-      .borderRadius(16)
-      .backgroundColor(this.chatBrowserDeleteButtonColor())
-      .enabled(!this.isChatBrowserItemDeleting(item))
-      .opacity(this.chatBrowserDeleteActionOpacity(item))
-      .scale({
-        x: this.chatBrowserDeleteActionScale(item),
-        y: this.chatBrowserDeleteActionScale(item)
-      })
-      .onClick(() => {
-        this.confirmDeleteChatBrowserItem(item);
-      })
-      .animation({ duration: 120, curve: Curve.EaseOut })
-    }
-    .width(CHAT_BROWSER_DELETE_ACTION_WIDTH + CHAT_BROWSER_DELETE_ACTION_GAP)
-    .height(CHAT_BROWSER_ROW_HEIGHT)
   }
 
   private handleWebNavigation(request: WebResourceRequest): boolean {
@@ -612,7 +763,6 @@ struct Index {
     this.chatBrowserOpacity = 0;
     this.chatBrowserMessage = '';
     this.chatBrowserDeletingIds = [];
-    this.chatBrowserSwipeProgress = {};
     setTimeout(() => {
       if (this.chatBrowserAnimationToken === token && this.chatBrowserOpacity === 0) {
         this.chatBrowserOpen = false;
@@ -636,7 +786,6 @@ struct Index {
         : this.backendService.getChatBrowser().cachedList();
       this.chatBrowserMessage = forceRefresh ? '聊天缓存已刷新。' : '';
       this.chatBrowserDeletingIds = [];
-      this.chatBrowserSwipeProgress = {};
     } finally {
       this.chatBrowserRefreshing = false;
     }
@@ -656,7 +805,6 @@ struct Index {
         this.chatBrowserItems = this.backendService?.getChatBrowser().refreshCache() ?? [];
         this.chatBrowserMessage = '聊天缓存已刷新。';
         this.chatBrowserDeletingIds = [];
-        this.chatBrowserSwipeProgress = {};
       } finally {
         this.chatBrowserRefreshing = false;
       }
@@ -688,65 +836,8 @@ struct Index {
     return sorted;
   }
 
-  private chatBrowserHasCover(item: ChatBrowserItem): boolean {
-    return item.kind === 'character' && item.avatar.length > 0;
-  }
-
-  private chatBrowserCoverUrl(item: ChatBrowserItem): string {
-    return `http://127.0.0.1:8000/characters/${encodeURIComponent(item.avatar)}`;
-  }
-
   private isChatBrowserItemDeleting(item: ChatBrowserItem): boolean {
     return this.chatBrowserDeletingIds.includes(item.id);
-  }
-
-  private chatBrowserSwipeProgressFor(item: ChatBrowserItem): number {
-    return this.chatBrowserSwipeProgress[item.id] ?? 0;
-  }
-
-  private chatBrowserDeleteActionOpacity(item: ChatBrowserItem): number {
-    if (this.isChatBrowserItemDeleting(item)) {
-      return 0.45;
-    }
-    return this.chatBrowserSwipeProgressFor(item);
-  }
-
-  private chatBrowserDeleteActionScale(item: ChatBrowserItem): number {
-    return 0.7 + this.chatBrowserSwipeProgressFor(item) * 0.3;
-  }
-
-  private updateChatBrowserSwipeProgress(item: ChatBrowserItem, offset: number): void {
-    const progress = Math.max(0, Math.min(1, Math.abs(offset) / CHAT_BROWSER_DELETE_ACTION_WIDTH));
-    this.setChatBrowserSwipeProgress(item.id, progress);
-  }
-
-  private handleChatBrowserSwipeStateChange(item: ChatBrowserItem, state: SwipeActionState): void {
-    if (state === SwipeActionState.COLLAPSED) {
-      this.setChatBrowserSwipeProgress(item.id, 0);
-      return;
-    }
-    if (state === SwipeActionState.EXPANDED) {
-      this.setChatBrowserSwipeProgress(item.id, 1);
-    }
-  }
-
-  private setChatBrowserSwipeProgress(id: string, progress: number): void {
-    const clamped = Math.max(0, Math.min(1, progress));
-    const current = this.chatBrowserSwipeProgress[id] ?? 0;
-    if (Math.abs(current - clamped) < 0.01) {
-      return;
-    }
-
-    const next: Record<string, number> = {};
-    for (const key of Object.keys(this.chatBrowserSwipeProgress)) {
-      if (key !== id) {
-        next[key] = this.chatBrowserSwipeProgress[key];
-      }
-    }
-    if (clamped > 0) {
-      next[id] = clamped;
-    }
-    this.chatBrowserSwipeProgress = next;
   }
 
   private beginChatBrowserDeleteAnimation(item: ChatBrowserItem): void {
@@ -765,7 +856,6 @@ struct Index {
       });
     }
     this.chatBrowserDeletingIds = this.chatBrowserDeletingIds.filter((id: string): boolean => id !== item.id);
-    this.setChatBrowserSwipeProgress(item.id, 0);
     this.chatBrowserMessage = '';
   }
 
@@ -774,16 +864,6 @@ struct Index {
     setTimeout(() => {
       this.finishChatBrowserDeleteAnimation(item);
     }, CHAT_BROWSER_DELETE_ANIMATION_MS);
-  }
-
-  private chatBrowserBadgeText(item: ChatBrowserItem): string {
-    if (item.kind === 'group' || item.kind === 'orphan_group') {
-      return '群';
-    }
-    if (item.kind === 'character' || item.kind === 'orphan_character') {
-      return '角';
-    }
-    return '文';
   }
 
   private chatBrowserBackgroundColor(): string {
@@ -798,10 +878,6 @@ struct Index {
     return this.chatBrowserDarkMode ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.03)';
   }
 
-  private chatBrowserCardColor(): string {
-    return this.chatBrowserDarkMode ? 'rgba(28,28,38,0.42)' : 'rgba(255,255,255,0.25)';
-  }
-
   private chatBrowserInputColor(): string {
     return this.chatBrowserDarkMode ? 'rgba(30,30,42,0.70)' : 'rgba(243,243,245,0.80)';
   }
@@ -810,20 +886,12 @@ struct Index {
     return this.chatBrowserDarkMode ? 'rgba(255,255,255,0.10)' : 'rgba(236,238,242,0.60)';
   }
 
-  private chatBrowserBorderColor(): string {
-    return this.chatBrowserDarkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)';
-  }
-
   private chatBrowserPrimaryTextColor(): string {
     return this.chatBrowserDarkMode ? '#F7F7FA' : '#0A0A0A';
   }
 
   private chatBrowserSecondaryTextColor(): string {
     return this.chatBrowserDarkMode ? 'rgba(228,228,236,0.70)' : 'rgba(113,113,130,0.70)';
-  }
-
-  private chatBrowserMetricColor(): string {
-    return this.chatBrowserDarkMode ? 'rgba(228,228,236,0.78)' : 'rgba(113,113,130,0.80)';
   }
 
   private chatBrowserIconColor(): string {
@@ -838,74 +906,12 @@ struct Index {
     return this.chatBrowserDarkMode ? '#F2D675' : '#8A5E00';
   }
 
-  private chatBrowserBadgeColor(): string {
-    return this.chatBrowserDarkMode ? '#3B82F6' : '#4A90E2';
-  }
-
-  private chatBrowserDisabledBadgeColor(): string {
-    return this.chatBrowserDarkMode ? '#8B5CF6' : '#A855F7';
-  }
-
-  private chatBrowserCoverBackgroundColor(): string {
-    return this.chatBrowserDarkMode ? 'rgba(255,255,255,0.08)' : '#E4E7EB';
-  }
-
-  private chatBrowserAvatarBorderColor(): string {
-    return this.chatBrowserDarkMode ? 'rgba(147,197,253,0.22)' : 'rgba(74,144,226,0.20)';
-  }
-
-  private chatBrowserDeleteButtonColor(): string {
-    return '#FF4757';
-  }
-
-  private chatBrowserCardShadowColor(): string {
-    return this.chatBrowserDarkMode ? 'rgba(0,0,0,0.20)' : 'rgba(0,0,0,0.10)';
-  }
-
-  private chatBrowserDisplayTitle(item: ChatBrowserItem): string {
-    if (item.title.length === 0) {
-      return item.chatName;
-    }
-    if (item.chatName.length === 0 || item.chatName === item.title) {
-      return item.title;
-    }
-    return `${item.title} - ${item.chatName}`;
-  }
-
   private chatBrowserTimestampMs(item: ChatBrowserItem): number {
     const parsed = Date.parse(item.lastTimestamp);
     if (!Number.isNaN(parsed)) {
       return parsed;
     }
     return Math.round(item.mtimeMs);
-  }
-
-  private formatChatBrowserRelativeTime(item: ChatBrowserItem): string {
-    const timestamp = this.chatBrowserTimestampMs(item);
-    const now = Date.now();
-    const diffMs = Math.max(0, now - timestamp);
-    const minuteMs = 60 * 1000;
-    const hourMs = 60 * minuteMs;
-    const dayMs = 24 * hourMs;
-    if (diffMs < minuteMs) {
-      return '刚刚';
-    }
-    if (diffMs < hourMs) {
-      return `${Math.floor(diffMs / minuteMs)}分钟前`;
-    }
-    if (diffMs < dayMs) {
-      return `${Math.floor(diffMs / hourMs)}小时前`;
-    }
-    if (diffMs < 2 * dayMs) {
-      return '昨天';
-    }
-    if (diffMs < 7 * dayMs) {
-      return `${Math.floor(diffMs / dayMs)}天前`;
-    }
-    if (diffMs < 30 * dayMs) {
-      return `${Math.floor(diffMs / (7 * dayMs))}周前`;
-    }
-    return new Date(timestamp).toLocaleDateString();
   }
 
   private openChatBrowserItem(item: ChatBrowserItem): void {
