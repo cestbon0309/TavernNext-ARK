@@ -666,12 +666,26 @@ struct Index {
   private filteredChatBrowserItems(): ChatBrowserItem[] {
     const query = this.chatBrowserQuery.trim().toLowerCase();
     if (query.length === 0) {
-      return this.chatBrowserItems;
+      return this.sortedChatBrowserItems(this.chatBrowserItems);
     }
-    return this.chatBrowserItems.filter((item: ChatBrowserItem): boolean => {
+    const filtered = this.chatBrowserItems.filter((item: ChatBrowserItem): boolean => {
       const haystack = `${item.title} ${item.subtitle} ${item.chatName} ${item.preview} ${item.fileName}`.toLowerCase();
       return haystack.includes(query);
     });
+    return this.sortedChatBrowserItems(filtered);
+  }
+
+  private sortedChatBrowserItems(items: ChatBrowserItem[]): ChatBrowserItem[] {
+    const sorted = [...items];
+    sorted.sort((left: ChatBrowserItem, right: ChatBrowserItem): number => {
+      const leftTimestamp = this.chatBrowserTimestampMs(left);
+      const rightTimestamp = this.chatBrowserTimestampMs(right);
+      if (leftTimestamp !== rightTimestamp) {
+        return rightTimestamp - leftTimestamp;
+      }
+      return items.indexOf(left) - items.indexOf(right);
+    });
+    return sorted;
   }
 
   private chatBrowserHasCover(item: ChatBrowserItem): boolean {
