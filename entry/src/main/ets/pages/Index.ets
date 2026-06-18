@@ -5,7 +5,7 @@ import { BackendService, BackendStatus } from '../backend/BackendService';
 import { ChatBrowserItem } from '../backend/ChatBrowserService';
 import { DataRestoreProgressService, DataRestoreProgressState } from '../backend/DataRestoreProgressService';
 import { ShellThemeService } from '../backend/ShellThemeService';
-import { WebDialogService } from './WebDialogService';
+import { WebDialogService, WebPromptDialogCancelAction, WebPromptDialogConfirmAction } from './WebDialogService';
 
 const DEFAULT_SHELL_BACKGROUND = '#171717';
 const BACK_EXIT_INTERVAL_MS = 2000;
@@ -16,6 +16,84 @@ const CHAT_BROWSER_DELETE_ACTION_WIDTH = 80;
 const CHAT_BROWSER_DELETE_ACTION_GAP = 12;
 
 type ChatBrowserItemAction = (item: ChatBrowserItem) => void;
+type WebPromptDialogCloseAction = () => void;
+
+@CustomDialog
+struct WebPromptDialog {
+  controller: CustomDialogController;
+  title: string = '';
+  message: string = '';
+  value: string = '';
+  onConfirm: WebPromptDialogConfirmAction = (_value: string): void => {
+  };
+  onCancel: WebPromptDialogCancelAction = (): void => {
+  };
+  onClose: WebPromptDialogCloseAction = (): void => {
+  };
+  @State inputValue: string = '';
+
+  aboutToAppear(): void {
+    this.inputValue = this.value;
+  }
+
+  build() {
+    Column({ space: 16 }) {
+      Text(this.title)
+        .fontSize(20)
+        .fontWeight(FontWeight.Medium)
+        .fontColor('#18202A')
+        .width('100%')
+
+      if (this.message.length > 0) {
+        Text(this.message)
+          .fontSize(15)
+          .fontColor('#4B5563')
+          .width('100%')
+      }
+
+      TextInput({ text: this.inputValue })
+        .width('100%')
+        .height(46)
+        .fontSize(16)
+        .fontColor('#18202A')
+        .backgroundColor('#F3F4F6')
+        .borderRadius(10)
+        .border({ width: 1, color: '#D1D5DB' })
+        .padding({ left: 12, right: 12 })
+        .onChange((value: string) => {
+          this.inputValue = value;
+        })
+
+      Row({ space: 12 }) {
+        Button('取消', { stateEffect: true })
+          .layoutWeight(1)
+          .height(42)
+          .backgroundColor('#F3F4F6')
+          .fontColor('#18202A')
+          .onClick(() => {
+            this.onClose();
+            this.onCancel();
+          })
+
+        Button('确定', { stateEffect: true })
+          .layoutWeight(1)
+          .height(42)
+          .backgroundColor('#3B82F6')
+          .fontColor('#FFFFFF')
+          .onClick(() => {
+            this.onClose();
+            this.onConfirm(this.inputValue);
+          })
+      }
+      .width('100%')
+    }
+    .width('82%')
+    .constraintSize({ maxWidth: 420 })
+    .padding({ left: 22, right: 22, top: 24, bottom: 20 })
+    .backgroundColor('#FFFFFF')
+    .borderRadius(16)
+  }
+}
 
 @Component
 struct ChatBrowserListCard {
@@ -363,6 +441,30 @@ struct Index {
     this.shellBackground = color;
   }
 
+  private showWebPromptDialog(message: string, value: string, onConfirm: WebPromptDialogConfirmAction,
+    onCancel: WebPromptDialogCancelAction): void {
+    let dialog: CustomDialogController | null = null;
+    const closeDialog = (): void => {
+      if (dialog !== null) {
+        dialog.close();
+      }
+    };
+    dialog = new CustomDialogController({
+      builder: WebPromptDialog({
+        title: '输入',
+        message,
+        value,
+        onConfirm,
+        onCancel,
+        onClose: closeDialog
+      }),
+      autoCancel: true,
+      cancel: onCancel,
+      customStyle: true
+    });
+    dialog.open();
+  }
+
   private applyRestoreProgress(state: DataRestoreProgressState): void {
     this.restoreProgressActive = state.active;
     this.restoreProgressTitle = state.title;
@@ -436,7 +538,10 @@ struct Index {
             return true;
           })
           .onPrompt((event) => {
-            this.webDialogService.handlePrompt(event.message, event.value, (value: string) => {
+            this.webDialogService.handlePrompt(event.message, event.value, (message: string, value: string,
+              onConfirm: WebPromptDialogConfirmAction, onCancel: WebPromptDialogCancelAction) => {
+              this.showWebPromptDialog(message, value, onConfirm, onCancel);
+            }, (value: string) => {
               event.result.handlePromptConfirm(value);
             }, () => {
               event.result.handleCancel();
