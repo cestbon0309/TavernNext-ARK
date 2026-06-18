@@ -1,3 +1,4 @@
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { DataDirectories, UserDirectories } from './DataDirectories';
 import { FileEntry, FileStore } from './FileStore';
 import { asArray, asBoolean, asNumber, asRecord, asString, bodyAsRecord } from './JsonUtils';
@@ -9,6 +10,8 @@ type ChatBrowserOpenListener = () => void;
 
 const CHAT_BROWSER_SETTINGS_FILE = 'chat-browser-settings.json';
 const CHAT_BROWSER_CACHE_FILE = 'chat-browser-cache.json';
+const DOMAIN = 0x544156;
+const TAG = 'TavernChatBrowser';
 
 class OkResponse {
   ok: boolean = true;
@@ -49,6 +52,8 @@ export class ChatBrowserService {
   private cacheLoaded: boolean = false;
   private cacheRefreshedAt: number = 0;
   private listeners: ChatBrowserOpenListener[] = [];
+  private refreshTimingEntries: JsonRecord[] = [];
+  private lastListTiming: JsonRecord = emptyJsonRecord();
 
   constructor(store: FileStore, dirs: DataDirectories) {
     this.store = store;
@@ -116,28 +121,64 @@ export class ChatBrowserService {
     return this.cachedItems;
   }
 
+  refreshTimingsJson(): JsonArray {
+    const result: JsonArray = [];
+    for (const entry of this.refreshTimingEntries) {
+      result.push(entry);
+    }
+    return result;
+  }
+
   refreshCache(): ChatBrowserItem[] {
+    const refreshStartedAt = Date.now();
+    const listStartedAt = Date.now();
     const items = this.listAll();
+    const listDurationMs = Date.now() - listStartedAt;
     this.cachedItems = items;
     this.cacheLoaded = true;
     this.cacheRefreshedAt = Date.now();
+    const writeStartedAt = Date.now();
     this.writeCache();
+    const writeDurationMs = Date.now() - writeStartedAt;
+    this.recordRefreshTiming(items.length, listDurationMs, writeDurationMs, Date.now() - refreshStartedAt);
     return items;
   }
 
   listAll(): ChatBrowserItem[] {
+    const totalStartedAt = Date.now();
     const items: ChatBrowserItem[] = [];
     const characterChatDirs: Record<string, boolean> = {};
+
+    const characterStartedAt = Date.now();
     this.collectCharacterChats(items, characterChatDirs);
+    const characterDurationMs = Date.now() - characterStartedAt;
+    const characterItems = items.length;
+
+    const orphanCharacterStartedAt = Date.now();
     this.collectOrphanCharacterChats(items, characterChatDirs);
+    const orphanCharacterDurationMs = Date.now() - orphanCharacterStartedAt;
+    const orphanCharacterItems = items.length - characterItems;
+
+    const groupStartedAt = Date.now();
     this.collectGroupChats(items);
+    const groupDurationMs = Date.now() - groupStartedAt;
+    const groupItems = items.length - characterItems - orphanCharacterItems;
+
+    const rootStartedAt = Date.now();
     this.collectRootChats(items);
+    const rootDurationMs = Date.now() - rootStartedAt;
+    const rootItems = items.length - characterItems - orphanCharacterItems - groupItems;
+
+    const sortStartedAt = Date.now();
     items.sort((left: ChatBrowserItem, right: ChatBrowserItem): number => {
       if (left.mtimeMs !== right.mtimeMs) {
         return right.mtimeMs - left.mtimeMs;
       }
       return `${left.title} ${left.chatName}`.localeCompare(`${right.title} ${right.chatName}`);
     });
+    const sortDurationMs = Date.now() - sortStartedAt;
+    this.recordListTiming(items.length, characterItems, orphanCharacterItems, groupItems, rootItems, characterDurationMs,
+      orphanCharacterDurationMs, groupDurationMs, rootDurationMs, sortDurationMs, Date.now() - totalStartedAt);
     return items;
   }
 
@@ -180,6 +221,48 @@ export class ChatBrowserService {
     cache['refreshedAt'] = this.cacheRefreshedAt;
     cache['items'] = this.cachedItems;
     this.store.writeJson(this.cachePath, cache);
+  }
+
+  private recordListTiming(itemCount: number, characterItems: number, orphanCharacterItems: number, groupItems: number,
+    rootItems: number, characterDurationMs: number, orphanCharacterDurationMs: number, groupDurationMs: number,
+    rootDurationMs: number, sortDurationMs: number, totalDurationMs: number): void {
+    const timing = emptyJsonRecord();
+    timing['itemCount'] = itemCount;
+    timing['characterItems'] = characterItems;
+    timing['orphanCharacterItems'] = orphanCharacterItems;
+    timing['groupItems'] = groupItems;
+    timing['rootItems'] = rootItems;
+    timing['characterDurationMs'] = characterDurationMs;
+    timing['orphanCharacterDurationMs'] = orphanCharacterDurationMs;
+    timing['groupDurationMs'] = groupDurationMs;
+    timing['rootDurationMs'] = rootDurationMs;
+    timing['sortDurationMs'] = sortDurationMs;
+    timing['totalDurationMs'] = totalDurationMs;
+    this.lastListTiming = timing;
+  }
+
+  private recordRefreshTiming(itemCount: number, listDurationMs: number, writeDurationMs: number,
+    totalDurationMs: number): void {
+    const list = this.lastListTiming;
+    const entry = emptyJsonRecord();
+    entry['finishedAtMs'] = Date.now();
+    entry['itemCount'] = itemCount;
+    entry['listDurationMs'] = listDurationMs;
+    entry['writeCacheDurationMs'] = writeDurationMs;
+    entry['totalDurationMs'] = totalDurationMs;
+    entry['list'] = list;
+    this.refreshTimingEntries.push(entry);
+    while (this.refreshTimingEntries.length > 80) {
+      this.refreshTimingEntries.shift();
+    }
+
+    hilog.info(DOMAIN, TAG, 'refreshCache items=%{public}d total=%{public}d ms list=%{public}d ms write=%{public}d ms',
+      itemCount, totalDurationMs, listDurationMs, writeDurationMs);
+    hilog.info(DOMAIN, TAG,
+      'listAll items=%{public}d total=%{public}d ms character=%{public}d ms orphanCharacter=%{public}d ms group=%{public}d ms root=%{public}d ms sort=%{public}d ms',
+      itemCount, asNumber(list['totalDurationMs']), asNumber(list['characterDurationMs']),
+      asNumber(list['orphanCharacterDurationMs']), asNumber(list['groupDurationMs']), asNumber(list['rootDurationMs']),
+      asNumber(list['sortDurationMs']));
   }
 
   private itemsFromJson(values: JsonArray): ChatBrowserItem[] {

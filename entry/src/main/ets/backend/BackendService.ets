@@ -526,6 +526,7 @@ export class BackendService {
     value['listenDurationMs'] = status.listenDurationMs;
     value['startupDurationMs'] = status.startupDurationMs;
     value['listenTimings'] = this.server.listenTimingsJson();
+    value['chatBrowserRefreshTimings'] = this.chatBrowser.refreshTimingsJson();
     return value;
   }
 
