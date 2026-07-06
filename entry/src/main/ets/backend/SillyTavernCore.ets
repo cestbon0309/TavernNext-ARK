@@ -1795,7 +1795,14 @@ export class SillyTavernCore {
     data['tags'] = tags;
     data['creator'] = this.asString(body['creator']);
     data['character_version'] = this.asString(body['character_version']);
-    data['alternate_greetings'] = this.asArray(body['alternate_greetings']);
+    const greetings = this.asArray(body['alternate_greetings']);
+    if (greetings.length === 0) {
+      const singleGreeting = this.asString(body['alternate_greetings']);
+      if (singleGreeting.length > 0) {
+        greetings.push(singleGreeting);
+      }
+    }
+    data['alternate_greetings'] = greetings;
     data['extensions'] = extensions;
 
     card['spec'] = 'chara_card_v2';

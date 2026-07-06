@@ -1,5 +1,5 @@
 import { util } from '@kit.ArkTS';
-import { emptyJsonRecord, HttpUploadedFile, JsonRecord } from './HttpTypes';
+import { emptyJsonRecord, HttpUploadedFile, JsonArray, JsonRecord } from './HttpTypes';
 
 class MultipartHeaders {
   name: string = '';
@@ -70,7 +70,16 @@ export class MultipartParser {
     if (headers.fileName.length > 0) {
       result.files.push(new HttpUploadedFile(headers.name, headers.fileName, headers.contentType, content));
     } else {
-      result.fields[headers.name] = this.decoder.decodeToString(content);
+      const decoded: string = this.decoder.decodeToString(content);
+      const name: string = headers.name;
+      const existing = result.fields[name] as string | JsonArray | undefined;
+      if (existing === undefined) {
+        result.fields[name] = decoded;
+      } else if (Array.isArray(existing)) {
+        (existing as JsonArray).push(decoded);
+      } else {
+        result.fields[name] = [existing, decoded] as JsonArray;
+      }
     }
   }
 
