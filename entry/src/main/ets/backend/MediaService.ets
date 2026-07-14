@@ -261,6 +261,15 @@ export class MediaService {
     }
   }
 
+  async processCharacterAvatarUpload(request: HttpRequest): Promise<Uint8Array | null> {
+    const file = request.file('avatar');
+    if (file === null) {
+      return null;
+    }
+    const crop = this.parseCrop(request.query['crop']);
+    return await this.processAvatarUpload(file.bytes, crop);
+  }
+
   async uploadImage(request: HttpRequest): Promise<HttpResponse> {
     const body = this.bodyAsRecord(request);
     const base64Text = this.asString(body['image']);

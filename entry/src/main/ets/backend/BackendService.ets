@@ -174,6 +174,33 @@ export class BackendService {
       this.directories.dataRoot, this.lastMessage, this.initDurationMs, this.listenDurationMs, this.startupDurationMs);
   }
 
+  private async createCharacter(request: HttpRequest): Promise<HttpResponse> {
+    try {
+      const avatarImage = await this.media.processCharacterAvatarUpload(request);
+      return this.core.createCharacter(request, avatarImage);
+    } catch (_err) {
+      return HttpResponse.text('Is not a valid image', 400);
+    }
+  }
+
+  private async editCharacter(request: HttpRequest): Promise<HttpResponse> {
+    try {
+      const avatarImage = await this.media.processCharacterAvatarUpload(request);
+      return this.core.editCharacter(request, avatarImage);
+    } catch (_err) {
+      return HttpResponse.text('Is not a valid image', 400);
+    }
+  }
+
+  private async editCharacterAvatar(request: HttpRequest): Promise<HttpResponse> {
+    try {
+      const avatarImage = await this.media.processCharacterAvatarUpload(request);
+      return this.core.editCharacterAvatar(request, avatarImage);
+    } catch (_err) {
+      return HttpResponse.text('Is not a valid image', 400);
+    }
+  }
+
   private registerRoutes(): void {
     this.server.route('GET', '/', async (request) => this.staticFiles.serve(request));
     this.server.route('GET', '/health', async () => this.core.health());
@@ -215,9 +242,9 @@ export class BackendService {
 
     this.server.route('POST', '/api/characters/all', async () => this.core.listCharacters());
     this.server.route('POST', '/api/characters/get', async (request) => this.core.getCharacter(request));
-    this.server.route('POST', '/api/characters/create', async (request) => this.core.createCharacter(request));
-    this.server.route('POST', '/api/characters/edit', async (request) => this.core.editCharacter(request));
-    this.server.route('POST', '/api/characters/edit-avatar', async (request) => this.core.editCharacterAvatar(request));
+    this.server.route('POST', '/api/characters/create', async (request) => await this.createCharacter(request));
+    this.server.route('POST', '/api/characters/edit', async (request) => await this.editCharacter(request));
+    this.server.route('POST', '/api/characters/edit-avatar', async (request) => await this.editCharacterAvatar(request));
     this.server.route('POST', '/api/characters/edit-attribute',
       async (request) => this.core.editCharacterAttribute(request));
     this.server.route('POST', '/api/characters/merge-attributes',

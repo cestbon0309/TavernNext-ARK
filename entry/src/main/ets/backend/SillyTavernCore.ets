@@ -598,21 +598,24 @@ export class SillyTavernCore {
     return HttpResponse.json(this.toCharacterResponse(this.normalizeCharacterCard(card), pngName, entry, false));
   }
 
-  createCharacter(request: HttpRequest): HttpResponse {
+  createCharacter(request: HttpRequest, avatarImage: Uint8Array | null = null): HttpResponse {
     const body = this.bodyAsRecord(request);
     const chName = sanitizeFileName(this.asString(body['ch_name']) || 'New Character');
     const rawFileName = this.asString(body['file_name']);
     const internalName = rawFileName.length > 0 ? withoutExtension(sanitizeFileName(rawFileName)) : this.uniqueName(chName,
       this.userDirs.characters, '.png');
     const card = this.buildCharacterCard(body, chName);
-    if (!this.cardStore.writeCard(joinPath(this.userDirs.characters, `${internalName}.png`), card)) {
+    const path = joinPath(this.userDirs.characters, `${internalName}.png`);
+    const written = avatarImage === null ? this.cardStore.writeCard(path, card) :
+      this.cardStore.writeCardWithBase(path, avatarImage, card);
+    if (!written) {
       return HttpResponse.json(jsonMessage('failed_to_write_character'), 500);
     }
     this.store.ensureDir(joinPath(this.userDirs.chats, internalName));
     return HttpResponse.text(`${internalName}.png`);
   }
 
-  editCharacter(request: HttpRequest): HttpResponse {
+  editCharacter(request: HttpRequest, avatarImage: Uint8Array | null = null): HttpResponse {
     const body = this.bodyAsRecord(request);
     const avatarUrl = this.asString(body['avatar_url']);
     if (avatarUrl.length === 0) {
@@ -622,20 +625,24 @@ export class SillyTavernCore {
     const chName = this.asString(body['ch_name']) || this.asString(body['name']) || internalName;
     const card = this.buildCharacterCard(body, chName);
     const path = joinPath(this.userDirs.characters, `${internalName}.png`);
-    if (!this.cardStore.writeCard(path, card)) {
+    const written = avatarImage === null ? this.cardStore.writeCard(path, card) :
+      this.cardStore.writeCardWithBase(path, avatarImage, card);
+    if (!written) {
       return HttpResponse.json(jsonMessage('failed_to_write_character'), 500);
+    }
+    if (avatarImage !== null) {
+      this.invalidateAvatarThumbnail(`${internalName}.png`);
     }
     return HttpResponse.json(new OkResponse());
   }
 
-  editCharacterAvatar(request: HttpRequest): HttpResponse {
+  editCharacterAvatar(request: HttpRequest, avatarImage: Uint8Array | null = null): HttpResponse {
     const body = this.bodyAsRecord(request);
     const avatarUrl = this.asString(body['avatar_url']);
-    const file = request.file('avatar');
     if (avatarUrl.length === 0) {
       return HttpResponse.text('Error: no avatar_url in request body', 400);
     }
-    if (file === null) {
+    if (avatarImage === null) {
       return HttpResponse.text('Error: no file uploaded', 400);
     }
 
@@ -646,7 +653,7 @@ export class SillyTavernCore {
       return HttpResponse.text('Error: failed to read character data', 400);
     }
 
-    const written = this.cardStore.writeCardWithBase(path, file.bytes, card);
+    const written = this.cardStore.writeCardWithBase(path, avatarImage, card);
     if (!written) {
       return HttpResponse.json(jsonMessage('failed_to_write_character'), 500);
     }
