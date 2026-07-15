@@ -326,3 +326,34 @@ select.keyselect+span.select2-container .select2-selection--multiple {
     overflow-y: auto;
     overflow-x: hidden;
 }
+
+#world_info option:not(:checked) {
+    background-color: transparent;
+    color: var(--SmartThemeBodyColor);
+}
+
+#world_info option:checked {
+    background-color: color-mix(in srgb, var(--SmartThemeQuoteColor) 45%, var(--SmartThemeBlurTintColor));
+    color: var(--SmartThemeBodyColor);
+    font-weight: 700;
+}
+
+#select2-world_info-results .select2-results__option--selectable {
+    opacity: 0.75;
+}
+
+#select2-world_info-results .select2-results__option--selected.select2-results__option--selectable {
+    background-color: color-mix(in srgb, var(--SmartThemeQuoteColor) 25%, transparent);
+    font-weight: 600;
+    opacity: 1;
+}
+
+#select2-world_info-results .select2-results__option::before {
+    background-color: transparent;
+}
+
+#select2-world_info-results .select2-results__option--selected::before {
+    color: var(--SmartThemeBodyColor);
+    background-color: var(--SmartThemeQuoteColor);
+    border-color: var(--SmartThemeQuoteColor);
+}

@@ -81,8 +81,11 @@ export let world_info_character_strategy = world_info_insertion_strategy.charact
 export let world_info_budget_cap = 0;
 export let world_info_max_recursion_steps = 0;
 const saveWorldDebounced = debounce(async (name, data) => await _save(name, data), debounce_timeout.relaxed);
+function syncSelectedWorldInfo() {
+    Object.assign(world_info, { globalSelect: [...selected_world_info] });
+}
 const saveSettingsDebounced = debounce(() => {
-    Object.assign(world_info, { globalSelect: selected_world_info });
+    syncSelectedWorldInfo();
     saveSettings();
 }, debounce_timeout.relaxed);
 const sortFn = (a, b) => b.order - a.order;
@@ -846,7 +849,8 @@ export function updateWorldInfoSettings(settings, activeWorldInfo) {
 
     if (Array.isArray(activeWorldInfo)) {
         delete settings.world_info;
-        selected_world_info = activeWorldInfo;
+        selected_world_info = [...activeWorldInfo];
+        syncSelectedWorldInfo();
     }
 
     saveSettingsDebounced();
@@ -5716,6 +5720,7 @@ export function onWorldInfoChange(args, text) {
         selected_world_info = tempWorldInfo;
     }
 
+    syncSelectedWorldInfo();
     saveSettingsDebounced();
     eventSource.emit(event_types.WORLDINFO_SETTINGS_UPDATED);
     return '';
@@ -6053,7 +6058,7 @@ function updateAuxBooks(fileName, computeNext) {
 }
 
 export function initWorldInfo() {
-    $('#world_info').on('mousedown change', async function (e) {
+    $('#world_info').on('change', async function (e) {
         // If there's no world names, don't do anything
         if (world_names.length === 0) {
             e.preventDefault();
@@ -6245,8 +6250,10 @@ export function initWorldInfo() {
         await assignLorebookToChat({ shiftKey: true, altKey: false });
     });
 
-    // Not needed on mobile
-    if (!isMobile()) {
+    const mobile = isMobile();
+    const arkWeb = navigator.userAgent.includes('ArkWeb/');
+
+    if (!mobile) {
         $('#world_editor_select').select2({
             placeholder: t`--- Pick to Edit ---`,
             searchInputPlaceholder: t`Search...`,
@@ -6254,7 +6261,9 @@ export function initWorldInfo() {
             closeOnSelect: true,
             multiple: false,
         });
+    }
 
+    if (!mobile || arkWeb) {
         $('#world_info').select2({
             width: '100%',
             placeholder: t`No Worlds active. Click here to select.`,
