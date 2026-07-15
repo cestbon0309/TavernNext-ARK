@@ -4,6 +4,7 @@ import { ApplicationStateService } from '../backend/ApplicationStateService';
 import { BackendService, BackendStatus } from '../backend/BackendService';
 import { ChatBrowserItem } from '../backend/ChatBrowserService';
 import { DataRestoreProgressService, DataRestoreProgressState } from '../backend/DataRestoreProgressService';
+import { ExportedFile } from '../backend/ShareExportService';
 import { ShellThemeService } from '../backend/ShellThemeService';
 import { WebDialogService, WebPromptDialogCancelAction, WebPromptDialogConfirmAction } from './WebDialogService';
 
@@ -390,6 +391,9 @@ struct Index {
   @State restoreProgressDetail: string = '';
   private lastRestoreGitRepairFailureKey: string = '';
   private controller: webview.WebviewController = new webview.WebviewController();
+  private downloadDelegate: webview.WebDownloadDelegate = new webview.WebDownloadDelegate();
+  private downloadDelegateConfigured: boolean = false;
+  private webDownloads: Map<string, ExportedFile> = new Map<string, ExportedFile>();
   private webDialogService: WebDialogService = new WebDialogService();
   private webRevealToken: number = 0;
   private chatBrowserAnimationToken: number = 0;
@@ -514,6 +518,9 @@ struct Index {
           .height('100%')
           .backgroundColor(this.shellBackground)
           .opacity(this.webReady ? 1 : 0)
+          .onControllerAttached(() => {
+            this.attachDownloadDelegate();
+          })
           .onOverrideUrlLoading((request) => this.handleWebNavigation(request))
           .onPageBegin(() => {
             this.pageError = '';
@@ -1139,6 +1146,83 @@ struct Index {
     }).catch((_err: Error) => {
       this.showToast('删除失败。');
     });
+  }
+
+  private attachDownloadDelegate(): void {
+    try {
+      if (!this.downloadDelegateConfigured) {
+        this.downloadDelegate.onBeforeDownload((item: webview.WebDownloadItem): void => {
+          this.startWebDownload(item);
+        });
+        this.downloadDelegate.onDownloadFinish((item: webview.WebDownloadItem): void => {
+          this.finishWebDownload(item);
+        });
+        this.downloadDelegate.onDownloadFailed((item: webview.WebDownloadItem): void => {
+          this.failWebDownload(item);
+        });
+        this.downloadDelegateConfigured = true;
+      }
+      this.controller.setDownloadDelegate(this.downloadDelegate);
+    } catch (_err) {
+      this.showToast('下载功能初始化失败。');
+    }
+  }
+
+  private startWebDownload(item: webview.WebDownloadItem): void {
+    const service = this.backendService;
+    if (service === null) {
+      this.cancelWebDownload(item);
+      this.showToast('下载服务尚未就绪。');
+      return;
+    }
+
+    let file: ExportedFile | null = null;
+    try {
+      file = service.prepareWebDownload(item.getSuggestedFileName(), item.getMimeType());
+      this.webDownloads.set(item.getGuid(), file);
+      item.start(file.path);
+      this.showToast(`正在下载：${file.fileName}`);
+    } catch (_err) {
+      this.webDownloads.delete(item.getGuid());
+      if (file !== null) {
+        service.discardWebDownload(file);
+      }
+      this.cancelWebDownload(item);
+      this.showToast('无法开始下载。');
+    }
+  }
+
+  private finishWebDownload(item: webview.WebDownloadItem): void {
+    const file = this.takeWebDownload(item.getGuid());
+    const service = this.backendService;
+    if (file === null || service === null) {
+      this.showToast('下载完成，但无法打开分享面板。');
+      return;
+    }
+    service.shareWebDownload(file).catch((_err: Error) => {
+      this.showToast('下载完成，但分享面板打开失败。');
+    });
+  }
+
+  private failWebDownload(item: webview.WebDownloadItem): void {
+    const file = this.takeWebDownload(item.getGuid());
+    if (file !== null && this.backendService !== null) {
+      this.backendService.discardWebDownload(file);
+    }
+    this.showToast(`下载失败，错误码：${item.getLastErrorCode()}`);
+  }
+
+  private takeWebDownload(guid: string): ExportedFile | null {
+    const file = this.webDownloads.get(guid);
+    this.webDownloads.delete(guid);
+    return file ?? null;
+  }
+
+  private cancelWebDownload(item: webview.WebDownloadItem): void {
+    try {
+      item.cancel();
+    } catch (_err) {
+    }
   }
 
   private showToast(message: string): void {

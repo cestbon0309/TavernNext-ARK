@@ -15,7 +15,7 @@ import { MediaService } from './MediaService';
 import { ModelProxyService } from './ModelProxyService';
 import { joinPath } from './PathUtils';
 import { SecretsService } from './SecretsService';
-import { ShareExportService } from './ShareExportService';
+import { ExportedFile, ShareExportService } from './ShareExportService';
 import { ShellThemeService } from './ShellThemeService';
 import { SillyTavernCore } from './SillyTavernCore';
 import { StaticFileServer } from './StaticFileServer';
@@ -126,6 +126,18 @@ export class BackendService {
 
   getChatBrowser(): ChatBrowserService {
     return this.chatBrowser;
+  }
+
+  prepareWebDownload(fileName: string, contentType: string): ExportedFile {
+    return this.shareExports.webDownloadFileReference(fileName, contentType);
+  }
+
+  async shareWebDownload(file: ExportedFile): Promise<void> {
+    await this.shareExports.share(file, file.fileName);
+  }
+
+  discardWebDownload(file: ExportedFile): void {
+    this.shareExports.discard(file);
   }
 
   async start(): Promise<BackendStatus> {

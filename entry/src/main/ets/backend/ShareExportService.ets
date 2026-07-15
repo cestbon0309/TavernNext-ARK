@@ -5,7 +5,7 @@ import { systemShare } from '@kit.ShareKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { FileStore } from './FileStore';
 import { emptyJsonRecord, HttpResponse, JsonRecord } from './HttpTypes';
-import { joinPath, sanitizeFileName } from './PathUtils';
+import { extensionOf, joinPath, sanitizeFileName, withoutExtension } from './PathUtils';
 
 const DOMAIN = 0x544156;
 const TAG = 'TavernShareExport';
@@ -51,6 +51,26 @@ export class ShareExportService {
     const path = joinPath(directory, safeFileName);
     this.store.ensureDir(directory);
     return new ExportedFile(path, fileUri.getUriFromPath(path), safeFileName, contentType, utd);
+  }
+
+  webDownloadFileReference(fileName: string, contentType: string): ExportedFile {
+    const safeFileName = sanitizeFileName(fileName);
+    const extension = extensionOf(safeFileName);
+    const baseName = withoutExtension(safeFileName) || 'download';
+    const normalizedContentType = contentType.split(';')[0].trim() ||
+      ShareExportService.contentTypeForExtension(extension);
+    let candidate = safeFileName === 'unnamed' ? `download${extension}` : safeFileName;
+    let suffix = 1;
+    while (this.store.exists(joinPath(this.root, 'downloads', candidate))) {
+      candidate = `${baseName}_${suffix}${extension}`;
+      suffix += 1;
+    }
+    return this.exportFileReference('downloads', candidate, normalizedContentType,
+      ShareExportService.utdForContentType(normalizedContentType, extension));
+  }
+
+  discard(file: ExportedFile): void {
+    this.store.deleteFile(file.path);
   }
 
   async share(file: ExportedFile, title: string = ''): Promise<void> {
@@ -127,5 +147,18 @@ export class ShareExportService {
       default:
         return uniformTypeDescriptor.UniformDataType.FILE;
     }
+  }
+
+  static utdForContentType(contentType: string, extension: string): string {
+    try {
+      if (contentType.length > 0 && contentType !== 'application/octet-stream') {
+        return uniformTypeDescriptor.getUniformDataTypeByMIMEType(contentType);
+      }
+      if (extension.length > 0) {
+        return uniformTypeDescriptor.getUniformDataTypeByFilenameExtension(extension);
+      }
+    } catch (_err) {
+    }
+    return ShareExportService.utdForExtension(extension);
   }
 }
