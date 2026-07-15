@@ -1,0 +1,15 @@
+{
+  "fixture": "long-chat-300",
+  "character_file": "characters/Mock_Long_Chat_300.png",
+  "chat_file": "chats/Mock_Long_Chat_300/Mock_Long_Chat_300_300_rounds.jsonl",
+  "rounds": 300,
+  "jsonl_lines": 601,
+  "messages": 600,
+  "user_message_length": 50,
+  "assistant_message_length": 1000,
+  "reasoning_length": 1500,
+  "sha256": {
+    "character": "ca9a348422d399ec5acac4047869f787638597cdf2382f96affdc868c315d23b",
+    "chat": "8a79504c7f939571165c67891baa7e496b6a3bf91e62212f79db81c2c2483488"
+  }
+}
