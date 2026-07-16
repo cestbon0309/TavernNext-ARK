@@ -242,7 +242,7 @@ curl.exe -N http://127.0.0.1:8000/api/dev/llm-api-logs/stream
 
 增量导入会保留压缩包中不存在的现有数据；干净导入会先把 data 目录重置到新安装状态，再导入压缩包内容。恢复 data zip 会覆盖同路径数据，请先确认备份来源可信。
 
-如果从 TauriTavern 备份导入的插件缺少 `.git` 目录，插件页的 `重建插件 Git 信息` 按钮可以手动扫描缺失仓库信息的插件，并尝试使用 `data/_tauritavern/extension-sources/{local|global}` 里的来源记录重建 `.git`。完成后会列出成功项和失败原因。
+如果从 TauriTavern 备份导入的插件缺少 `.git` 目录，插件页的 `重建插件 Git 信息` 按钮可以手动扫描缺失仓库信息的插件，并尝试使用 `data/_tauritavern/extension-sources/{local|global}` 里的来源记录重建 `.git`。该过程不会替换插件目录，会保留插件自行存放在目录内的配置、数据库、缓存和用户文件；完成后会列出成功项和失败原因。
 
 ## 开发注意事项
 

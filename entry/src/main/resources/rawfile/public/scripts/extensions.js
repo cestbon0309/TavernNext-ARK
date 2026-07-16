@@ -1927,8 +1927,8 @@ async function importDataArchive() {
             customInputs: [{
                 id: repairExtensionGitInputId,
                 type: 'checkbox',
-                label: '导入完成后自动尝试重新安装缺失 Git 信息的插件',
-                tooltip: '适用于从 TauriTavern 等备份导入的插件。取消勾选可以跳过耗时的 Git clone，插件通常仍可正常使用，但插件内更新可能需要稍后手动重新安装。',
+                label: '导入完成后自动尝试重建缺失的插件 Git 信息',
+                tooltip: '适用于从 TauriTavern 等备份导入的插件。重建只补充 .git，不替换插件目录，会保留插件自行保存的配置和数据。',
                 defaultState: true,
             }],
         },
@@ -1998,15 +1998,15 @@ function gitRepairResultHtml(data) {
     const skipped = Number(data.skipped ?? 0);
     const failed = Number(data.failed ?? failedDetails.length);
     const sections = [
-        `<p>检查完成：共 ${total} 个记录，已检查 ${checked} 个，成功重新安装 ${installedCount} 个，跳过 ${skipped} 个，失败 ${failed} 个。</p>`,
+        `<p>检查完成：共 ${total} 个记录，已检查 ${checked} 个，成功重建 ${installedCount} 个，跳过 ${skipped} 个，失败 ${failed} 个。</p>`,
     ];
 
     if (succeeded.length > 0) {
-        sections.push(`<h4>重新安装成功</h4><ul>${succeeded.map(entry => `<li>${escapeHtml(gitRepairEntryName(entry))}</li>`).join('')}</ul>`);
+        sections.push(`<h4>重建成功</h4><ul>${succeeded.map(entry => `<li>${escapeHtml(gitRepairEntryName(entry))}</li>`).join('')}</ul>`);
     }
 
     if (failedDetails.length > 0) {
-        sections.push(`<h4>重新安装失败</h4><ul>${failedDetails.map(entry => {
+        sections.push(`<h4>重建失败</h4><ul>${failedDetails.map(entry => {
             const name = escapeHtml(gitRepairEntryName(entry));
             const reason = escapeHtml(entry?.reason || 'Unknown error');
             return `<li><strong>${name}</strong><br><small>${reason}</small></li>`;
@@ -2014,18 +2014,18 @@ function gitRepairResultHtml(data) {
     }
 
     if (succeeded.length === 0 && failedDetails.length === 0) {
-        sections.push('<p>没有发现需要重新安装的插件仓库。</p>');
+        sections.push('<p>没有发现需要重建 Git 信息的插件仓库。</p>');
     }
 
-    return `<h3>插件重新安装结果</h3>${sections.join('')}`;
+    return `<h3>插件 Git 信息重建结果</h3>${sections.join('')}`;
 }
 
 async function repairExtensionGitRepositories() {
     const confirmation = await callGenericPopup(
-        '<h3>重新安装缺失 Git 信息的插件？</h3><p>将检查导入数据中的 <code>_tauritavern/extension-sources/{local|global}</code>，为缺少 <code>.git</code> 目录的插件通过原始仓库地址重新 clone 安装。clone 成功后才会替换当前插件目录，失败时会保留现有插件目录。</p>',
+        '<h3>重建缺失的插件 Git 信息？</h3><p>将检查导入数据中的 <code>_tauritavern/extension-sources/{local|global}</code>，并只为缺少 <code>.git</code> 的插件补充仓库信息。现有插件目录不会被替换，其中保存的配置、数据库、缓存和用户文件都会保留。</p>',
         POPUP_TYPE.CONFIRM,
         '',
-        { okButton: '开始重新安装', cancelButton: '取消', wide: false, large: false },
+        { okButton: '开始重建', cancelButton: '取消', wide: false, large: false },
     );
 
     if (confirmation !== POPUP_RESULT.AFFIRMATIVE) {
@@ -2041,7 +2041,7 @@ async function repairExtensionGitRepositories() {
         });
         const data = await response.json();
         if (!response.ok) {
-            toastr.error(data.error || data.message || '插件重新安装失败');
+            toastr.error(data.error || data.message || '插件 Git 信息重建失败');
             return;
         }
 
@@ -2050,9 +2050,9 @@ async function repairExtensionGitRepositories() {
         if (failed > 0) {
             toastr.warning(`插件 Git 信息检查完成，${installedCount} 个成功，${failed} 个失败`);
         } else if (installedCount > 0) {
-            toastr.success(`插件重新安装完成，${installedCount} 个成功`);
+            toastr.success(`插件 Git 信息重建完成，${installedCount} 个成功`);
         } else {
-            toastr.info('没有发现需要重新安装的插件仓库');
+            toastr.info('没有发现需要重建 Git 信息的插件仓库');
         }
         await callGenericPopup(gitRepairResultHtml(data), POPUP_TYPE.TEXT, '', {
             okButton: '关闭',
@@ -2062,7 +2062,7 @@ async function repairExtensionGitRepositories() {
         });
     } catch (error) {
         console.error('Failed to reinstall extension Git repositories', error);
-        toastr.error('插件重新安装失败');
+        toastr.error('插件 Git 信息重建失败');
     }
 }
 

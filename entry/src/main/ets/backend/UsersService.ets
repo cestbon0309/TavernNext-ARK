@@ -688,6 +688,9 @@ export class UsersService {
       const metadata = this.store.readJsonRecord(candidate.metadataPath);
       const remoteUrl = this.extensionRemoteUrl(metadata);
       const reference = this.asString(metadata['reference']);
+      const recordedCommit = this.asString(metadata['installed_commit']).trim();
+      const installedCommit = this.isFullCommit(recordedCommit) ? recordedCommit :
+        (this.isFullCommit(reference) ? reference.trim() : '');
       if (remoteUrl.length === 0) {
         result['failed'] = Number(result['failed'] ?? 0) + 1;
         this.addGitRepairFailure(result, candidate.scope, extensionName, '缺少原始仓库地址');
@@ -695,8 +698,8 @@ export class UsersService {
         continue;
       }
       try {
-        this.restoreProgress.update('正在重新安装缺失 Git 信息的插件...', this.extensionGitRepairDetail(extensionName, result, total));
-        await this.cloneAndReplaceExtension(candidate, remoteUrl, reference);
+        this.restoreProgress.update('正在安全重建缺失 Git 信息的插件...', this.extensionGitRepairDetail(extensionName, result, total));
+        await this.repairExtensionRepository(candidate, remoteUrl, reference, installedCommit);
         result['rehydrated'] = Number(result['rehydrated'] ?? 0) + 1;
         result['installed'] = Number(result['installed'] ?? 0) + 1;
         this.addGitRepairSuccess(result, candidate.scope, extensionName);
@@ -709,35 +712,52 @@ export class UsersService {
     }
   }
 
-  private async cloneAndReplaceExtension(candidate: ExtensionGitRepairCandidate, remoteUrl: string, reference: string): Promise<void> {
+  private async repairExtensionRepository(candidate: ExtensionGitRepairCandidate, remoteUrl: string, reference: string,
+    installedCommit: string): Promise<void> {
+    const gitPath = joinPath(candidate.path, '.git');
+    if (installedCommit.length > 0) {
+      try {
+        await this.git.rehydrate(remoteUrl, candidate.path, reference, installedCommit);
+        return;
+      } catch (_err) {
+        if (this.store.exists(gitPath) && !this.store.deleteDirectory(gitPath)) {
+          throw new Error('Failed to clean incomplete extension Git metadata');
+        }
+      }
+    }
+
+    await this.cloneAndAttachExtensionGit(candidate, remoteUrl, reference);
+  }
+
+  private async cloneAndAttachExtensionGit(candidate: ExtensionGitRepairCandidate, remoteUrl: string,
+    reference: string): Promise<void> {
     const parentPath = this.store.directoryName(candidate.path);
     const suffix = this.timestampWithMs();
     const clonePath = joinPath(parentPath, `.${candidate.name}.git-install-${suffix}`);
-    const backupPath = joinPath(parentPath, `.${candidate.name}.imported-backup-${suffix}`);
+    const clonedGitPath = joinPath(clonePath, '.git');
+    const targetGitPath = joinPath(candidate.path, '.git');
     this.store.deleteDirectory(clonePath);
-    this.store.deleteDirectory(backupPath);
 
     try {
-      await this.git.clone(remoteUrl, clonePath, { branch: reference, depth: 1, timeoutMs: 30000 });
+      const branch = this.isFullCommit(reference) ? '' : reference;
+      await this.git.clone(remoteUrl, clonePath, { branch, depth: 1, timeoutMs: 30000 });
       if (!this.store.exists(joinPath(clonePath, 'manifest.json'))) {
         throw new Error('Cloned repository does not contain manifest.json');
       }
-      if (this.store.exists(candidate.path) && !this.store.moveDirectory(candidate.path, backupPath)) {
-        throw new Error('Failed to move imported extension directory aside');
+      if (!this.store.exists(clonedGitPath)) {
+        throw new Error('Cloned repository does not contain Git metadata');
       }
-      if (!this.store.moveDirectory(clonePath, candidate.path)) {
-        if (this.store.exists(backupPath)) {
-          this.store.moveDirectory(backupPath, candidate.path);
-        }
-        throw new Error('Failed to install cloned extension directory');
+      if (this.store.exists(targetGitPath)) {
+        throw new Error('Extension Git metadata already exists');
       }
-      this.store.deleteDirectory(backupPath);
+      if (!this.store.moveDirectory(clonedGitPath, targetGitPath)) {
+        this.store.deleteDirectory(targetGitPath);
+        throw new Error('Failed to attach cloned extension Git metadata');
+      }
     } catch (err) {
-      this.store.deleteDirectory(clonePath);
-      if (!this.store.exists(candidate.path) && this.store.exists(backupPath)) {
-        this.store.moveDirectory(backupPath, candidate.path);
-      }
       throw new Error(this.errorMessage(err));
+    } finally {
+      this.store.deleteDirectory(clonePath);
     }
   }
 
