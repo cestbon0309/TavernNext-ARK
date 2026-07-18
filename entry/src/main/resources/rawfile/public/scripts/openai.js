@@ -250,6 +250,17 @@ export const reasoning_effort_types = {
     max: 'max',
 };
 
+function getDefaultReasoningEffortOptions() {
+    return [
+        { value: reasoning_effort_types.auto, label: reasoning_effort_types.auto },
+        { value: reasoning_effort_types.min, label: reasoning_effort_types.min },
+        { value: reasoning_effort_types.low, label: reasoning_effort_types.low },
+        { value: reasoning_effort_types.medium, label: reasoning_effort_types.medium },
+        { value: reasoning_effort_types.high, label: reasoning_effort_types.high },
+        { value: reasoning_effort_types.max, label: reasoning_effort_types.max },
+    ];
+}
+
 export const verbosity_levels = {
     auto: 'auto',
     low: 'low',
@@ -491,6 +502,7 @@ const default_settings = {
     custom_prompt_post_processing: custom_prompt_post_processing_types.NONE,
     show_thoughts: true,
     reasoning_effort: reasoning_effort_types.auto,
+    reasoning_effort_options: getDefaultReasoningEffortOptions(),
     verbosity: verbosity_levels.auto,
     enable_web_search: false,
     request_images: false,
@@ -2561,6 +2573,97 @@ function getReasoningEffort(settings = null, model = null) {
     return reasoningEffort;
 }
 
+function normalizeReasoningEffortOptions(options) {
+    if (!Array.isArray(options)) {
+        return getDefaultReasoningEffortOptions();
+    }
+
+    const normalized = [];
+    const values = new Set();
+    for (const option of options) {
+        const value = typeof option === 'string' ? option.trim() : String(option?.value ?? '').trim();
+        if (!value || values.has(value)) {
+            continue;
+        }
+        normalized.push({ value, label: value });
+        values.add(value);
+        if (normalized.length === 20) {
+            break;
+        }
+    }
+    return normalized.length > 0 ? normalized : getDefaultReasoningEffortOptions();
+}
+
+function refreshReasoningEffortOptions() {
+    const options = normalizeReasoningEffortOptions(oai_settings.reasoning_effort_options);
+    oai_settings.reasoning_effort_options = options;
+    const $select = $('#openai_reasoning_effort').empty();
+    for (const option of options) {
+        const element = document.createElement('option');
+        element.value = option.value;
+        element.text = option.label;
+        $select.append(element);
+    }
+    if (!options.some(option => option.value === oai_settings.reasoning_effort)) {
+        oai_settings.reasoning_effort = options[0].value;
+    }
+    $select.val(oai_settings.reasoning_effort);
+}
+
+async function manageReasoningEffortOptions() {
+    const options = normalizeReasoningEffortOptions(oai_settings.reasoning_effort_options)
+        .map(option => ({ ...option }));
+    const $content = $('<div class="flex-container flexFlowColumn wide100p"></div>');
+    $content.append($('<p></p>').text(t`Configure the reasoning effort levels. Each level is shown and sent to the API exactly as entered.`));
+    const $list = $('<div class="flex-container flexFlowColumn wide100p"></div>');
+    const render = () => {
+        $list.empty();
+        options.forEach((option, index) => {
+            const $row = $('<div class="flex-container oneline-dropdown wide100p"></div>');
+            const $level = $('<input type="text" class="text_pole flex1" placeholder="Reasoning effort">').val(option.value);
+            const $remove = $('<button type="button" class="menu_button fa-solid fa-trash" title="Remove level"></button>');
+            $level.on('input', function () {
+                const value = String($(this).val());
+                options[index].value = value;
+                options[index].label = value;
+            });
+            $remove.on('click', () => {
+                options.splice(index, 1);
+                render();
+            });
+            $row.append($level, $remove);
+            $list.append($row);
+        });
+    };
+    const $controls = $('<div class="flex-container justifyCenter marginTop10"></div>');
+    const $add = $('<button type="button" class="menu_button"></button>').text(t`Add level`);
+    const $reset = $('<button type="button" class="menu_button"></button>').text(t`Reset defaults`);
+    $add.on('click', () => {
+        const value = `custom-${options.length + 1}`;
+        options.push({ value, label: t`Custom level` });
+        render();
+    });
+    $reset.on('click', () => {
+        options.splice(0, options.length, ...getDefaultReasoningEffortOptions());
+        render();
+    });
+    $controls.append($add, $reset);
+    $content.append($list, $controls);
+    render();
+
+    const result = await callGenericPopup($content, POPUP_TYPE.CONFIRM, '', {
+        wide: true,
+        okButton: t`Save`,
+        cancelButton: t`Cancel`,
+    });
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return;
+    }
+    oai_settings.reasoning_effort_options = normalizeReasoningEffortOptions(options);
+    refreshReasoningEffortOptions();
+    saveSettingsDebounced();
+}
+
 /**
  * Get the verbosity from chat completion settings
  * @param {ChatCompletionSettings} settings Chat completion settings
@@ -4254,6 +4357,7 @@ function loadOpenAISettings(data, settings) {
     }
     $('#openai_logit_bias_preset').trigger('change');
 
+    refreshReasoningEffortOptions();
     setNamesBehaviorControls();
     setContinuePostfixControls();
     setToolReasoningControls();
@@ -6948,6 +7052,8 @@ export function initOpenAI() {
         oai_settings.reasoning_effort = String($(this).val());
         saveSettingsDebounced();
     });
+
+    $('#openai_reasoning_effort_manage').on('click', manageReasoningEffortOptions);
 
     $('#openai_verbosity').on('input', function () {
         oai_settings.verbosity = String($(this).val());
