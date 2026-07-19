@@ -1,6 +1,6 @@
 # TarvenNext 局域网同步兼容分析
 
-本文档分析目录 `C:\Users\Cestbon\Desktop\TavernNext\TarvenNext` 中现有“局域网同步”实现，目标是帮助 `tavernnext-ohos` 兼容其传输方式，实现与该项目的数据互传。
+本文档分析目录 `<TavernNext 工作区>\TarvenNext` 中现有“局域网同步”实现，目标是帮助 `tavernnext-ohos` 兼容其传输方式，实现与该项目的数据互传。
 
 本文只做分析，不包含修改建议落地代码。
 

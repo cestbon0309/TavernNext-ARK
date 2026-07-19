@@ -1,6 +1,6 @@
 # TauriTavern Provider 处理逻辑梳理
 
-本文记录 `C:/Users/Cestbon/Desktop/TavernNext/TarvenNext` 中 TauriTavern Rust 后端处理模型 provider 的方式，重点覆盖 chat-completions provider 适配层、每个相关文件职责、核心接口实现，以及对当前 OHOS ArkTS 后端的启发。
+本文记录 `<TavernNext 工作区>/TarvenNext` 中 TauriTavern Rust 后端处理模型 provider 的方式，重点覆盖 chat-completions provider 适配层、每个相关文件职责、核心接口实现，以及对当前 OHOS ArkTS 后端的启发。
 
 当前结论：
 
@@ -1082,7 +1082,7 @@ entry/src/main/ets/backend/model/
 
 验证状态：
 
-- 使用 `DEVECO_SDK_HOME=E:\Huawei\DevEco Studio\sdk`、`OHOS_SDK_HOME=E:\Huawei\DevEco Studio\sdk\default\openharmony` 执行 `hvigorw.bat assembleHap --mode module -p module=entry@default -p product=default`，构建通过。
+- 使用 `DEVECO_SDK_HOME=<DevEco SDK 路径>`、`OHOS_SDK_HOME=<DevEco SDK 路径>\default\openharmony` 执行 `hvigorw.bat assembleHap --mode module -p module=entry@default -p product=default`，构建通过。
 - 构建仍会输出项目既有 warning：部分旧文件的异常处理提示，以及 `rawfile/public/global.d.ts` 被打包的 source code warning；这些不是本轮 provider 分层新增错误。
 
 ## 21. 行为等价补齐进度

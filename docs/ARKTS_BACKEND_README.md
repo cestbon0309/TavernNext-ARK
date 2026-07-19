@@ -294,17 +294,17 @@ OpenAI chat-completions、SillyTavern 本地 tokenizer native 化、第三方扩
 命令行构建：
 
 ```powershell
-$env:DEVECO_SDK_HOME='E:\Huawei\DevEco Studio\sdk'
-& 'E:\Huawei\DevEco Studio\tools\hvigor\bin\hvigorw.bat' assembleHap --mode module -p module=entry@default -p product=default
+$env:DEVECO_SDK_HOME='<DevEco SDK 路径>'
+& '<DevEco Studio 路径>\tools\hvigor\bin\hvigorw.bat' assembleHap --mode module -p module=entry@default -p product=default
 ```
 
 安装、启动和端口映射：
 
 ```powershell
-& 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' install -r .\entry\build\default\outputs\default\entry-default-signed.hap
-& 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' shell aa force-stop com.esoteric.tavernnext
-& 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' shell aa start -a EntryAbility -b com.esoteric.tavernnext
-& 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' fport tcp:8000 tcp:8000
+& '<DevEco SDK 路径>\default\openharmony\toolchains\hdc.exe' install -r .\entry\build\default\outputs\default\entry-default-signed.hap
+& '<DevEco SDK 路径>\default\openharmony\toolchains\hdc.exe' shell aa force-stop com.esoteric.tavernnext
+& '<DevEco SDK 路径>\default\openharmony\toolchains\hdc.exe' shell aa start -a EntryAbility -b com.esoteric.tavernnext
+& '<DevEco SDK 路径>\default\openharmony\toolchains\hdc.exe' fport tcp:8000 tcp:8000
 ```
 
 常用验证命令：
@@ -324,7 +324,7 @@ $badZip = Join-Path $env:TEMP 'tavernnext-bad.zip'
 Set-Content -LiteralPath $badZip -Value 'bad zip' -NoNewline -Encoding ascii
 curl.exe -i -F "archive=@$badZip;type=application/zip" http://127.0.0.1:8000/api/users/restore-data
 
-& 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' shell uitest uiInput click 680 1340
-& 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' shell snapshot_display -f /data/local/tmp/tavernnext.jpeg
-& 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' file recv /data/local/tmp/tavernnext.jpeg .\tavernnext.jpeg
+& '<DevEco SDK 路径>\default\openharmony\toolchains\hdc.exe' shell uitest uiInput click 680 1340
+& '<DevEco SDK 路径>\default\openharmony\toolchains\hdc.exe' shell snapshot_display -f /data/local/tmp/tavernnext.jpeg
+& '<DevEco SDK 路径>\default\openharmony\toolchains\hdc.exe' file recv /data/local/tmp/tavernnext.jpeg .\tavernnext.jpeg
 ```

@@ -77,7 +77,7 @@ export class ChatBrowserService {
 
   isDarkMode(): boolean {
     const settings = this.store.readJsonRecord(this.settingsPath);
-    return settings['darkMode'] !== false;
+    return settings['darkMode'] === true;
   }
 
   setDarkMode(darkMode: boolean): void {

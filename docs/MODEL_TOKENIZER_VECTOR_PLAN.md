@@ -224,7 +224,7 @@ data/<user>/vectors/<source>/<collectionId>/<model>/
 
 ## 2. TauriTavern 的解决方案
 
-项目位置：`C:/Users/Cestbon/Desktop/TavernNext/TarvenNext`
+项目位置：`<TavernNext 工作区>/TarvenNext`
 
 它不是保留 Express 路由，而是把前端 API 改成 Tauri command，再在 Rust 里重写后端。
 
@@ -366,7 +366,7 @@ miktik = { version = "0.2.0", default-features = false, features = ["openai", "h
 
 ## 3. MikTik 编译成 OHOS so 的可行性
 
-项目位置：`C:/Users/Cestbon/Desktop/TavernNext/MikTik`
+项目位置：`<TavernNext 工作区>/MikTik`
 
 MikTik 当前是 Rust library crate，不是 ArkTS 可直接 import 的 `.so`。需要做桥接层。
 

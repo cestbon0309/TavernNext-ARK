@@ -2587,13 +2587,13 @@ decode 响应：
 常用验证命令：
 
 ```powershell
-$env:DEVECO_SDK_HOME='E:\Huawei\DevEco Studio\sdk'
-& 'E:\Huawei\DevEco Studio\tools\hvigor\bin\hvigorw.bat' assembleHap --mode module -p module=entry@default -p product=default
+$env:DEVECO_SDK_HOME='<DevEco SDK 路径>'
+& '<DevEco Studio 路径>\tools\hvigor\bin\hvigorw.bat' assembleHap --mode module -p module=entry@default -p product=default
 
-& 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' install -r .\entry\build\default\outputs\default\entry-default-signed.hap
-& 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' shell aa force-stop com.esoteric.tavernnext
-& 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' shell aa start -a EntryAbility -b com.esoteric.tavernnext
-& 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' fport tcp:8000 tcp:8000
+& '<DevEco SDK 路径>\default\openharmony\toolchains\hdc.exe' install -r .\entry\build\default\outputs\default\entry-default-signed.hap
+& '<DevEco SDK 路径>\default\openharmony\toolchains\hdc.exe' shell aa force-stop com.esoteric.tavernnext
+& '<DevEco SDK 路径>\default\openharmony\toolchains\hdc.exe' shell aa start -a EntryAbility -b com.esoteric.tavernnext
+& '<DevEco SDK 路径>\default\openharmony\toolchains\hdc.exe' fport tcp:8000 tcp:8000
 
 curl.exe -i http://127.0.0.1:8000/health
 curl.exe -i -X POST http://127.0.0.1:8000/api/ping
@@ -2612,14 +2612,14 @@ curl.exe -i -F "archive=@$badZip;type=application/zip" http://127.0.0.1:8000/api
 UI 截图：
 
 ```powershell
-& 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' shell snapshot_display -f /data/local/tmp/tavernnext.jpeg
-& 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' file recv /data/local/tmp/tavernnext.jpeg .\tavernnext.jpeg
+& '<DevEco SDK 路径>\default\openharmony\toolchains\hdc.exe' shell snapshot_display -f /data/local/tmp/tavernnext.jpeg
+& '<DevEco SDK 路径>\default\openharmony\toolchains\hdc.exe' file recv /data/local/tmp/tavernnext.jpeg .\tavernnext.jpeg
 ```
 
 模拟点击：
 
 ```powershell
-& 'E:\Huawei\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe' shell uitest uiInput click <x> <y>
+& '<DevEco SDK 路径>\default\openharmony\toolchains\hdc.exe' shell uitest uiInput click <x> <y>
 ```
 
 ## 16. 已知限制和后续对齐点

@@ -137,6 +137,7 @@ struct ChatBrowserListCard {
           .backgroundColor(this.chatBrowserCoverBackgroundColor())
           .borderRadius(28)
           .border({ width: 2, color: this.chatBrowserAvatarBorderColor() })
+          .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
       } else {
         Text(this.chatBrowserBadgeText())
           .fontSize(18)
@@ -148,6 +149,7 @@ struct ChatBrowserListCard {
           .backgroundColor(this.item.openable ? this.chatBrowserBadgeColor() : this.chatBrowserDisabledBadgeColor())
           .borderRadius(28)
           .border({ width: 2, color: this.chatBrowserAvatarBorderColor() })
+          .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
       }
 
       Column({ space: 6 }) {
@@ -159,12 +161,14 @@ struct ChatBrowserListCard {
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
+            .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
 
           Text(this.formatChatBrowserRelativeTime())
             .fontSize(13)
             .fontColor(this.chatBrowserSecondaryTextColor())
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
         }
         .width('100%')
         .alignItems(VerticalAlign.Center)
@@ -202,11 +206,13 @@ struct ChatBrowserListCard {
         .width(15)
         .height(15)
         .fillColor(this.chatBrowserMetricColor())
+        .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
       Text(text)
         .fontSize(13)
         .fontColor(this.chatBrowserMetricColor())
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
+        .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
     }
     .alignItems(VerticalAlign.Center)
   }
@@ -667,8 +673,32 @@ struct Index {
               .fontColor(this.chatBrowserPrimaryTextColor())
               .lineHeight(42)
               .letterSpacing(-0.7)
+              .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
 
             Blank()
+
+            Button({ stateEffect: true }) {
+              Stack() {
+                Image($r('app.media.ic_controlcenter_dark_filled'))
+                  .width(20)
+                  .height(20)
+                  .fillColor(this.chatBrowserPrimaryTextColor())
+                  .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
+              }
+              .width('100%')
+              .height('100%')
+            }
+            .width(36)
+            .height(36)
+            .padding(0)
+            .margin({ right: 8 })
+            .borderRadius(18)
+            .backgroundColor(this.chatBrowserChromeColor())
+            .accessibilityText(this.chatBrowserDarkMode ? '切换到亮色模式' : '切换到暗色模式')
+            .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
+            .onClick(() => {
+              this.toggleChatBrowserDarkMode();
+            })
 
             Button({ stateEffect: true }) {
               Stack() {
@@ -676,6 +706,7 @@ struct Index {
                   .width(20)
                   .height(20)
                   .fillColor(this.chatBrowserPrimaryTextColor())
+                  .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
               }
               .width('100%')
               .height('100%')
@@ -685,6 +716,7 @@ struct Index {
             .padding(0)
             .borderRadius(18)
             .backgroundColor(this.chatBrowserChromeColor())
+            .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
             .onClick(() => {
               this.closeChatBrowser();
             })
@@ -703,6 +735,7 @@ struct Index {
                 .backgroundColor(this.chatBrowserInputColor())
                 .borderRadius(14)
                 .padding({ left: 44, right: 16 })
+                .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
                 .onChange((value: string) => {
                   this.chatBrowserQuery = value;
                 })
@@ -712,6 +745,7 @@ struct Index {
                 .height(18)
                 .fillColor(this.chatBrowserIconColor())
                 .position({ x: 16, y: 14 })
+                .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
             }
             .layoutWeight(1)
             .height(46)
@@ -722,6 +756,7 @@ struct Index {
                   .width(20)
                   .height(20)
                   .fillColor(this.chatBrowserIconColor())
+                  .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
               }
               .width('100%')
               .height('100%')
@@ -733,6 +768,7 @@ struct Index {
             .backgroundColor(this.chatBrowserInputColor())
             .opacity(this.chatBrowserRefreshing ? 0.5 : 1)
             .enabled(!this.chatBrowserRefreshing)
+            .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
             .onClick(() => {
               this.manualRefreshChatBrowserItems();
             })
@@ -754,6 +790,7 @@ struct Index {
               .fontColor(this.chatBrowserWarningColor())
               .width('100%')
               .padding({ left: 20, right: 20 })
+              .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
           }
 
           if (this.chatBrowserRefreshing) {
@@ -769,6 +806,7 @@ struct Index {
               Text('正在刷新聊天缓存...')
                 .fontSize(14)
                 .fontColor(this.chatBrowserSecondaryTextColor())
+                .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
             }
             .width('100%')
             .layoutWeight(1)
@@ -780,9 +818,11 @@ struct Index {
               Text('没有找到聊天')
                 .fontSize(16)
                 .fontColor(this.chatBrowserPrimaryTextColor())
+                .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
               Text('换个关键词试试，或先创建聊天。')
                 .fontSize(12)
                 .fontColor(this.chatBrowserSecondaryTextColor())
+                .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
             }
             .width('100%')
             .layoutWeight(1)
@@ -877,6 +917,7 @@ struct Index {
 
   private openChatBrowser(): void {
     const token = ++this.chatBrowserAnimationToken;
+    this.loadChatBrowserDarkMode();
     if (!this.chatBrowserOpen) {
       this.chatBrowserOpacity = 0;
       this.chatBrowserOpen = true;
@@ -1040,6 +1081,19 @@ struct Index {
 
   private chatBrowserWarningColor(): string {
     return this.chatBrowserDarkMode ? '#F2D675' : '#8A5E00';
+  }
+
+  private loadChatBrowserDarkMode(): void {
+    if (this.backendService !== null) {
+      this.chatBrowserDarkMode = this.backendService.getChatBrowser().isDarkMode();
+    }
+  }
+
+  private toggleChatBrowserDarkMode(): void {
+    this.chatBrowserDarkMode = !this.chatBrowserDarkMode;
+    if (this.backendService !== null) {
+      this.backendService.getChatBrowser().setDarkMode(this.chatBrowserDarkMode);
+    }
   }
 
   private chatBrowserTimestampMs(item: ChatBrowserItem): number {

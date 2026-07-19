@@ -149,7 +149,7 @@
 
 现有基础：
 
-- [HttpServer.ets](/C:/Users/Cestbon/Desktop/TavernNext/TavernNext/tavernnext-ohos/entry/src/main/ets/backend/HttpServer.ets)
+- [HttpServer.ets](../entry/src/main/ets/backend/HttpServer.ets)
 
 结论：
 
@@ -165,7 +165,7 @@
 
 现有基础：
 
-- [RemoteHttpClient.ets](/C:/Users/Cestbon/Desktop/TavernNext/TavernNext/tavernnext-ohos/entry/src/main/ets/backend/RemoteHttpClient.ets)
+- [RemoteHttpClient.ets](../entry/src/main/ets/backend/RemoteHttpClient.ets)
 
 结论：
 
@@ -188,7 +188,7 @@
 
 现有基础：
 
-- [FileStore.ets](/C:/Users/Cestbon/Desktop/TavernNext/TavernNext/tavernnext-ohos/entry/src/main/ets/backend/FileStore.ets)
+- [FileStore.ets](../entry/src/main/ets/backend/FileStore.ets)
 
 结论：
 
@@ -198,7 +198,7 @@
 
 现有基础：
 
-- [DataDirectories.ets](/C:/Users/Cestbon/Desktop/TavernNext/TavernNext/tavernnext-ohos/entry/src/main/ets/backend/DataDirectories.ets)
+- [DataDirectories.ets](../entry/src/main/ets/backend/DataDirectories.ets)
 
 结论：
 
@@ -281,18 +281,18 @@ SDK 已确认有：
 
 建议修改：
 
-1. [BackendService.ets](/C:/Users/Cestbon/Desktop/TavernNext/TavernNext/tavernnext-ohos/entry/src/main/ets/backend/BackendService.ets)
+1. [BackendService.ets](../entry/src/main/ets/backend/BackendService.ets)
    - 初始化 `LanSyncService`
    - 注册 LAN Sync route
    - 注册给网页前端调用的管理接口
 
-2. [HttpServer.ets](/C:/Users/Cestbon/Desktop/TavernNext/TavernNext/tavernnext-ohos/entry/src/main/ets/backend/HttpServer.ets)
+2. [HttpServer.ets](../entry/src/main/ets/backend/HttpServer.ets)
    - 视需要增强：
      - wildcard path 处理
      - 更大 body 支持
      - 更稳的 bytes 响应
 
-3. [HttpTypes.ets](/C:/Users/Cestbon/Desktop/TavernNext/TavernNext/tavernnext-ohos/entry/src/main/ets/backend/HttpTypes.ets)
+3. [HttpTypes.ets](../entry/src/main/ets/backend/HttpTypes.ets)
    - 视需要补充状态码/stream 辅助
 
 ### 4.3 前端网页层
@@ -312,10 +312,10 @@ SDK 已确认有：
 
 建议修改：
 
-4. [script.js](/C:/Users/Cestbon/Desktop/TavernNext/TavernNext/tavernnext-ohos/entry/src/main/resources/rawfile/public/script.js)
+4. [script.js](../entry/src/main/resources/rawfile/public/script.js)
    - 接入 Sync 入口
 
-5. [popup.js](/C:/Users/Cestbon/Desktop/TavernNext/TavernNext/tavernnext-ohos/entry/src/main/resources/rawfile/public/scripts/popup.js)
+5. [popup.js](../entry/src/main/resources/rawfile/public/scripts/popup.js)
    - 若要复用现有 popup 体系，可能需要少量接入
 
 ### 4.4 原生桥
@@ -328,7 +328,7 @@ SDK 已确认有：
 
 建议修改：
 
-2. [Index.ets](/C:/Users/Cestbon/Desktop/TavernNext/TavernNext/tavernnext-ohos/entry/src/main/ets/pages/Index.ets)
+2. [Index.ets](../entry/src/main/ets/pages/Index.ets)
    - 注入扫码 JS bridge
    - 前端调用原生扫码
    - 回传 Pair URI
@@ -444,7 +444,7 @@ TarvenNext 用途：
 
 ### 6.1 当前项目已有的相关目录
 
-从 [DataDirectories.ets](/C:/Users/Cestbon/Desktop/TavernNext/TavernNext/tavernnext-ohos/entry/src/main/ets/backend/DataDirectories.ets) 看，当前项目已有：
+从 [DataDirectories.ets](../entry/src/main/ets/backend/DataDirectories.ets) 看，当前项目已有：
 
 - `default-user/extensions`
 - `default-user/backgrounds`
@@ -487,7 +487,7 @@ TarvenNext 用途：
 
 ### 6.4 当前项目的 third-party 资源暴露方式
 
-[ExtensionsService.ets](/C:/Users/Cestbon/Desktop/TavernNext/TavernNext/tavernnext-ohos/entry/src/main/ets/backend/ExtensionsService.ets) 显示：
+[ExtensionsService.ets](../entry/src/main/ets/backend/ExtensionsService.ets) 显示：
 
 - 它已经接受 `third-party/<name>` 命名
 - 已经能从多个 root 提供 `/scripts/extensions/third-party/*`
