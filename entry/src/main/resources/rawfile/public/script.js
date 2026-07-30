@@ -300,6 +300,11 @@ globalThis.SillyTavern = {
 };
 
 globalThis.__tavernNextFlushPersistentState = flushTavernNextPersistentState;
+globalThis.__tavernNextIsChatVisible = () => {
+    const chatId = getCurrentChatId();
+    const hasActiveTarget = selected_group || this_chid !== undefined;
+    return Boolean(chatId && hasActiveTarget && !document.querySelector('#chat .welcomePanel'));
+};
 
 export {
     user_avatar,

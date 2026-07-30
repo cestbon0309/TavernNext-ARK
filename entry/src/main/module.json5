@@ -17,6 +17,9 @@
       },
       {
         "name": "ohos.permission.KEEP_BACKGROUND_RUNNING"
+      },
+      {
+        "name": "ohos.permission.DLP_GET_HIDE_STATUS"
       }
     ],
     "pages": "$profile:main_pages",

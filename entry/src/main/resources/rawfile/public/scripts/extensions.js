@@ -132,6 +132,7 @@ export const extension_settings = {
     autoConnect: false,
     notifyUpdates: false,
     ohosForceHttp1_1: true,
+    ohosAntiPeepEnabled: false,
     disabledExtensions: [],
     expressionOverrides: [],
     memory: {},
@@ -697,6 +698,49 @@ async function ohosForceHttp1_1InputHandler() {
     }
     extension_settings.ohosForceHttp1_1 = enabled;
     saveSettingsDebounced();
+}
+
+async function applyOhosAntiPeepSetting(enabled, notifySuccess) {
+    const checkbox = $('#ohos_anti_peep_enabled');
+    const previousEnabled = !!extension_settings.ohosAntiPeepEnabled;
+    checkbox.prop('disabled', true);
+    try {
+        const response = await fetch('/api/ohos/anti-peep/settings', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ enabled }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.message || '当前设备无法启用防窥保护');
+        }
+
+        extension_settings.ohosAntiPeepEnabled = !!data.enabled;
+        checkbox.prop('checked', extension_settings.ohosAntiPeepEnabled);
+        if (previousEnabled !== extension_settings.ohosAntiPeepEnabled) {
+            saveSettingsDebounced();
+        }
+        if (notifySuccess) {
+            toastr.success(data.message || (enabled ? '防窥保护已启用' : '防窥保护已关闭'), '防窥保护');
+        }
+        return true;
+    } catch (error) {
+        console.error('Failed to update anti-peep setting', error);
+        extension_settings.ohosAntiPeepEnabled = enabled ? false : previousEnabled;
+        checkbox.prop('checked', extension_settings.ohosAntiPeepEnabled);
+        if (previousEnabled !== extension_settings.ohosAntiPeepEnabled) {
+            saveSettingsDebounced();
+        }
+        toastr.error(error instanceof Error ? error.message : '防窥保护设置失败', '防窥保护');
+        return false;
+    } finally {
+        checkbox.prop('disabled', false);
+    }
+}
+
+async function ohosAntiPeepInputHandler() {
+    const enabled = !!$('#ohos_anti_peep_enabled').prop('checked');
+    await applyOhosAntiPeepSetting(enabled, true);
 }
 
 /**
@@ -1557,6 +1601,12 @@ export async function loadExtensionSettings(settings, versionChanged, enableAuto
         $('#extensions_notify_updates').prop('checked', extension_settings.notifyUpdates);
         extension_settings.ohosForceHttp1_1 = extension_settings.ohosForceHttp1_1 !== false;
         $('#ohos_force_http1_1').prop('checked', extension_settings.ohosForceHttp1_1);
+        extension_settings.ohosAntiPeepEnabled = extension_settings.ohosAntiPeepEnabled === true;
+        $('#ohos_anti_peep_enabled').prop('checked', extension_settings.ohosAntiPeepEnabled);
+    });
+
+    await trace('sync anti-peep setting', async () => {
+        await applyOhosAntiPeepSetting(extension_settings.ohosAntiPeepEnabled, false);
     });
 
     // Activate offline extensions
@@ -2075,6 +2125,7 @@ export async function initExtensions() {
     $('#extensions_details').on('click', showExtensionsDetails);
     $('#extensions_notify_updates').on('input', notifyUpdatesInputHandler);
     $('#ohos_force_http1_1').on('change', ohosForceHttp1_1InputHandler);
+    $('#ohos_anti_peep_enabled').on('change', ohosAntiPeepInputHandler);
     $(document).on('click', '.extensions_info .extension_block .toggle_disable', onDisableExtensionClick);
     $(document).on('click', '.extensions_info .extension_block .toggle_enable', onEnableExtensionClick);
     $(document).on('click', '.extensions_info .extension_block .btn_update', onUpdateClick);

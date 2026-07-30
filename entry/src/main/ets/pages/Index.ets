@@ -1,5 +1,6 @@
 import { common } from '@kit.AbilityKit';
 import { webview } from '@kit.ArkWeb';
+import { AntiPeepService, AntiPeepStateListener } from '../backend/AntiPeepService';
 import { ApplicationStateService } from '../backend/ApplicationStateService';
 import { BackendService, BackendStatus } from '../backend/BackendService';
 import { ChatBrowserItem } from '../backend/ChatBrowserService';
@@ -15,6 +16,7 @@ const CHAT_BROWSER_THEME_ANIMATION_MS = 220;
 const CHAT_BROWSER_ROW_HEIGHT = 90;
 const CHAT_BROWSER_DELETE_ACTION_WIDTH = 80;
 const CHAT_BROWSER_DELETE_ACTION_GAP = 12;
+const ANTI_PEEP_CHAT_CHECK_INTERVAL_MS = 150;
 
 type ChatBrowserItemAction = (item: ChatBrowserItem) => void;
 type WebPromptDialogCloseAction = () => void;
@@ -395,8 +397,10 @@ struct Index {
   @State restoreProgressTitle: string = '';
   @State restoreProgressMessage: string = '';
   @State restoreProgressDetail: string = '';
+  @State antiPeepMaskVisible: boolean = false;
   private lastRestoreGitRepairFailureKey: string = '';
   private controller: webview.WebviewController = new webview.WebviewController();
+  private antiPeepController: webview.WebviewController = new webview.WebviewController();
   private downloadDelegate: webview.WebDownloadDelegate = new webview.WebDownloadDelegate();
   private downloadDelegateConfigured: boolean = false;
   private webDownloads: Map<string, ExportedFile> = new Map<string, ExportedFile>();
@@ -407,6 +411,14 @@ struct Index {
   private handlingBackPress: boolean = false;
   private backendService: BackendService | null = null;
   private persistenceFlushInFlight: boolean = false;
+  private antiPeepService: AntiPeepService | null = null;
+  private antiPeepRisk: boolean = false;
+  private antiPeepCheckTimer: number = -1;
+  private antiPeepCheckInFlight: boolean = false;
+  private antiPeepCheckToken: number = 0;
+  private antiPeepStateListener: AntiPeepStateListener = (peeping: boolean): void => {
+    this.applyAntiPeepRisk(peeping);
+  };
 
   aboutToAppear(): void {
     webview.WebviewController.setWebDebuggingAccess(true);
@@ -418,9 +430,13 @@ struct Index {
     });
     const service = BackendService.getInstance(context);
     this.backendService = service;
+    this.antiPeepService = service.getAntiPeep();
+    this.antiPeepService.subscribe(this.antiPeepStateListener);
     ApplicationStateService.getInstance().subscribe((foreground: boolean) => {
       if (!foreground) {
         this.flushWebPersistentState('application-background');
+      } else {
+        this.antiPeepService?.refreshStatus();
       }
     });
     service.getChatBrowser().subscribeOpen(() => {
@@ -436,6 +452,9 @@ struct Index {
 
   aboutToDisappear(): void {
     this.flushWebPersistentState('page-disappear');
+    this.antiPeepService?.unsubscribe(this.antiPeepStateListener);
+    this.stopAntiPeepChatChecks();
+    this.antiPeepMaskVisible = false;
   }
 
   private applyStatus(status: BackendStatus): void {
@@ -606,10 +625,81 @@ struct Index {
       if (this.restoreProgressActive) {
         this.restoreProgressOverlay()
       }
+
+      if (this.antiPeepMaskVisible) {
+        this.antiPeepMask()
+      }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(this.shellBackground)
+  }
+
+  @Builder
+  private antiPeepMask() {
+    Web({ src: `${this.url}/anti-peep.html`, controller: this.antiPeepController })
+      .javaScriptAccess(false)
+      .domStorageAccess(false)
+      .databaseAccess(false)
+      .imageAccess(false)
+      .onlineImageAccess(false)
+      .width('100%')
+      .height('100%')
+      .backgroundColor('#10131A')
+      .onOverrideUrlLoading((_request) => true)
+  }
+
+  private applyAntiPeepRisk(peeping: boolean): void {
+    this.antiPeepRisk = peeping;
+    if (!peeping) {
+      this.stopAntiPeepChatChecks();
+      this.antiPeepMaskVisible = false;
+      return;
+    }
+    this.antiPeepMaskVisible = this.webReady;
+    this.checkAntiPeepChatVisibility();
+    if (this.antiPeepCheckTimer < 0) {
+      this.antiPeepCheckTimer = setInterval(() => {
+        this.checkAntiPeepChatVisibility();
+      }, ANTI_PEEP_CHAT_CHECK_INTERVAL_MS);
+    }
+  }
+
+  private stopAntiPeepChatChecks(): void {
+    this.antiPeepCheckToken++;
+    this.antiPeepCheckInFlight = false;
+    if (this.antiPeepCheckTimer >= 0) {
+      clearInterval(this.antiPeepCheckTimer);
+      this.antiPeepCheckTimer = -1;
+    }
+  }
+
+  private checkAntiPeepChatVisibility(): void {
+    if (!this.antiPeepRisk || this.antiPeepCheckInFlight || !this.running) {
+      return;
+    }
+    this.antiPeepCheckInFlight = true;
+    const token = this.antiPeepCheckToken;
+    this.controller.runJavaScript(`(() => {
+      if (typeof window.__tavernNextIsChatVisible !== 'function') {
+        return 'unknown';
+      }
+      return window.__tavernNextIsChatVisible() ? 'visible' : 'hidden';
+    })();`).then((result: string) => {
+      if (token !== this.antiPeepCheckToken || !this.antiPeepRisk) {
+        return;
+      }
+      const normalized = (result ?? '').replace(/"/g, '');
+      this.antiPeepMaskVisible = normalized === 'visible' || normalized === 'unknown';
+    }).catch((_error: Error) => {
+      if (token === this.antiPeepCheckToken && this.antiPeepRisk && this.webReady) {
+        this.antiPeepMaskVisible = true;
+      }
+    }).finally(() => {
+      if (token === this.antiPeepCheckToken) {
+        this.antiPeepCheckInFlight = false;
+      }
+    });
   }
 
   @Builder

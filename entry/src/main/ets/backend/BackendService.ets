@@ -1,5 +1,6 @@
 import { common, Context } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { AntiPeepService } from './AntiPeepService';
 import { ChatBrowserService } from './ChatBrowserService';
 import { DataDirectories } from './DataDirectories';
 import { CryptoUtils } from './CryptoUtils';
@@ -66,6 +67,7 @@ export class BackendService {
   private shareExports: ShareExportService;
   private shellTheme: ShellThemeService;
   private chatBrowser: ChatBrowserService;
+  private antiPeep: AntiPeepService;
   private staticFiles: StaticFileServer;
   private lastMessage: string = 'Not started';
   private startPromise: Promise<BackendStatus> | null = null;
@@ -108,6 +110,7 @@ export class BackendService {
     this.tokenizers = new TokenizerService();
     this.vectors = new VectorService(this.store, this.directories, this.secrets);
     this.chatBrowser = new ChatBrowserService(this.store, this.directories);
+    this.antiPeep = new AntiPeepService();
     this.staticFiles = new StaticFileServer(context.resourceManager, () => this.shellTheme.getBackgroundColor());
     this.server = new HttpServer('127.0.0.1', 8000);
     stepStartedAt = Date.now();
@@ -126,6 +129,10 @@ export class BackendService {
 
   getChatBrowser(): ChatBrowserService {
     return this.chatBrowser;
+  }
+
+  getAntiPeep(): AntiPeepService {
+    return this.antiPeep;
   }
 
   prepareWebDownload(fileName: string, contentType: string): ExportedFile {
@@ -229,6 +236,9 @@ export class BackendService {
     this.server.route('POST', '/api/ohos/chats/browser/refresh', async () => this.chatBrowser.refreshResponse());
     this.server.route('POST', '/api/ohos/chats/browser/delete',
       async (request) => this.chatBrowser.deleteResponse(request));
+    this.server.route('GET', '/api/ohos/anti-peep/settings', async () => this.antiPeep.statusResponse());
+    this.server.route('POST', '/api/ohos/anti-peep/settings',
+      async (request) => await this.antiPeep.updateSettings(request));
 
     this.server.route('POST', '/api/ping', async () => this.core.ping());
 
