@@ -1,6 +1,6 @@
-type RestoreProgressListener = (state: DataRestoreProgressState) => void;
+type ArchiveProgressListener = (state: DataArchiveProgressState) => void;
 
-export class DataRestoreProgressState {
+export class DataArchiveProgressState {
   active: boolean = false;
   title: string = '';
   message: string = '';
@@ -8,34 +8,35 @@ export class DataRestoreProgressState {
   failedExtensionGitRepairs: string[] = [];
 }
 
-export class DataRestoreProgressService {
-  private static instance: DataRestoreProgressService | null = null;
-  private state: DataRestoreProgressState = new DataRestoreProgressState();
-  private listeners: RestoreProgressListener[] = [];
+export class DataArchiveProgressService {
+  private static instance: DataArchiveProgressService | null = null;
+  private state: DataArchiveProgressState = new DataArchiveProgressState();
+  private listeners: ArchiveProgressListener[] = [];
 
-  static getInstance(): DataRestoreProgressService {
-    if (DataRestoreProgressService.instance === null) {
-      DataRestoreProgressService.instance = new DataRestoreProgressService();
+  static getInstance(): DataArchiveProgressService {
+    if (DataArchiveProgressService.instance === null) {
+      DataArchiveProgressService.instance = new DataArchiveProgressService();
     }
-    return DataRestoreProgressService.instance;
+    return DataArchiveProgressService.instance;
   }
 
-  subscribe(listener: RestoreProgressListener): void {
+  subscribe(listener: ArchiveProgressListener): void {
     this.listeners.push(listener);
     listener(this.snapshot());
   }
 
-  begin(message: string, detail: string = ''): void {
+  begin(title: string, message: string, detail: string = ''): void {
     this.state.active = true;
-    this.state.title = '正在导入数据';
+    this.state.title = title;
     this.state.message = message;
     this.state.detail = detail;
+    this.state.failedExtensionGitRepairs = [];
     this.notify();
   }
 
   update(message: string, detail: string = ''): void {
     if (!this.state.active) {
-      this.begin(message, detail);
+      this.begin('正在处理数据', message, detail);
       return;
     }
     this.state.message = message;
@@ -43,17 +44,17 @@ export class DataRestoreProgressService {
     this.notify();
   }
 
-  finish(message: string = '导入完成', failedExtensionGitRepairs: string[] = []): void {
+  finish(message: string = '处理完成', failedExtensionGitRepairs: string[] = []): void {
     this.state.active = false;
-    this.state.title = '数据导入';
+    this.state.title = '';
     this.state.message = message;
     this.state.detail = '';
     this.state.failedExtensionGitRepairs = failedExtensionGitRepairs;
     this.notify();
   }
 
-  private snapshot(): DataRestoreProgressState {
-    const copy = new DataRestoreProgressState();
+  private snapshot(): DataArchiveProgressState {
+    const copy = new DataArchiveProgressState();
     copy.active = this.state.active;
     copy.title = this.state.title;
     copy.message = this.state.message;

@@ -3,7 +3,7 @@ import { webview } from '@kit.ArkWeb';
 import { ApplicationStateService } from '../backend/ApplicationStateService';
 import { BackendService, BackendStatus } from '../backend/BackendService';
 import { ChatBrowserItem } from '../backend/ChatBrowserService';
-import { DataRestoreProgressService, DataRestoreProgressState } from '../backend/DataRestoreProgressService';
+import { DataArchiveProgressService, DataArchiveProgressState } from '../backend/DataArchiveProgressService';
 import { ExportedFile } from '../backend/ShareExportService';
 import { ShellThemeService } from '../backend/ShellThemeService';
 import { WebDialogService, WebPromptDialogCancelAction, WebPromptDialogConfirmAction } from './WebDialogService';
@@ -391,10 +391,10 @@ struct Index {
   @State chatBrowserDarkMode: boolean = false;
   @State chatBrowserRefreshing: boolean = false;
   @State chatBrowserDeletingIds: string[] = [];
-  @State restoreProgressActive: boolean = false;
-  @State restoreProgressTitle: string = '';
-  @State restoreProgressMessage: string = '';
-  @State restoreProgressDetail: string = '';
+  @State archiveProgressActive: boolean = false;
+  @State archiveProgressTitle: string = '';
+  @State archiveProgressMessage: string = '';
+  @State archiveProgressDetail: string = '';
   private lastRestoreGitRepairFailureKey: string = '';
   private controller: webview.WebviewController = new webview.WebviewController();
   private downloadDelegate: webview.WebDownloadDelegate = new webview.WebDownloadDelegate();
@@ -426,8 +426,8 @@ struct Index {
     service.getChatBrowser().subscribeOpen(() => {
       this.openChatBrowser();
     });
-    DataRestoreProgressService.getInstance().subscribe((state: DataRestoreProgressState) => {
-      this.applyRestoreProgress(state);
+    DataArchiveProgressService.getInstance().subscribe((state: DataArchiveProgressState) => {
+      this.applyArchiveProgress(state);
     });
     service.start().then((status: BackendStatus) => {
       this.applyStatus(status);
@@ -475,11 +475,11 @@ struct Index {
     dialog.open();
   }
 
-  private applyRestoreProgress(state: DataRestoreProgressState): void {
-    this.restoreProgressActive = state.active;
-    this.restoreProgressTitle = state.title;
-    this.restoreProgressMessage = state.message;
-    this.restoreProgressDetail = state.detail;
+  private applyArchiveProgress(state: DataArchiveProgressState): void {
+    this.archiveProgressActive = state.active;
+    this.archiveProgressTitle = state.title;
+    this.archiveProgressMessage = state.message;
+    this.archiveProgressDetail = state.detail;
     if (!state.active && state.failedExtensionGitRepairs.length > 0) {
       this.showExtensionGitRepairFailureDialog(state.failedExtensionGitRepairs);
     }
@@ -603,8 +603,8 @@ struct Index {
         this.chatBrowserView()
       }
 
-      if (this.restoreProgressActive) {
-        this.restoreProgressOverlay()
+      if (this.archiveProgressActive) {
+        this.archiveProgressOverlay()
       }
     }
     .width('100%')
@@ -613,7 +613,7 @@ struct Index {
   }
 
   @Builder
-  private restoreProgressOverlay() {
+  private archiveProgressOverlay() {
     Stack({ alignContent: Alignment.Center }) {
       Column({ space: 14 }) {
         Progress({ value: 0, total: 100, type: ProgressType.Ring })
@@ -625,21 +625,21 @@ struct Index {
             status: ProgressStatus.LOADING
           })
 
-        Text(this.restoreProgressTitle.length > 0 ? this.restoreProgressTitle : '正在导入数据')
+        Text(this.archiveProgressTitle.length > 0 ? this.archiveProgressTitle : '正在处理数据')
           .fontSize(18)
           .fontWeight(FontWeight.Medium)
           .fontColor('#F6F7F9')
           .textAlign(TextAlign.Center)
           .width('100%')
 
-        Text(this.restoreProgressMessage.length > 0 ? this.restoreProgressMessage : '请稍候...')
+        Text(this.archiveProgressMessage.length > 0 ? this.archiveProgressMessage : '请稍候...')
           .fontSize(14)
           .fontColor('#D9DEE7')
           .textAlign(TextAlign.Center)
           .width('100%')
 
-        if (this.restoreProgressDetail.length > 0) {
-          Text(this.restoreProgressDetail)
+        if (this.archiveProgressDetail.length > 0) {
+          Text(this.archiveProgressDetail)
             .fontSize(12)
             .fontColor('#AEB7C6')
             .textAlign(TextAlign.Center)

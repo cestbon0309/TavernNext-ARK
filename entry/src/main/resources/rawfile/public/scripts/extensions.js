@@ -1886,8 +1886,19 @@ export async function openThirdPartyExtensionMenu(suggestUrl = '') {
     await installExtension(url, global, branchName);
 }
 
+let dataExportInFlight = false;
+
 async function exportDataArchive() {
+    if (dataExportInFlight) {
+        return;
+    }
+    dataExportInFlight = true;
+    const button = $('#data_export_button');
+    button.addClass('disabled').attr('aria-disabled', 'true');
     try {
+        if (typeof window.__tavernNextFlushPersistentState === 'function') {
+            await window.__tavernNextFlushPersistentState('data-export');
+        }
         const response = await fetch('/api/users/backup', {
             method: 'POST',
             headers: getRequestHeaders(),
@@ -1904,6 +1915,9 @@ async function exportDataArchive() {
     } catch (error) {
         console.error('Failed to export data archive', error);
         toastr.error('导出 data 压缩包失败');
+    } finally {
+        dataExportInFlight = false;
+        button.removeClass('disabled').removeAttr('aria-disabled');
     }
 }
 
