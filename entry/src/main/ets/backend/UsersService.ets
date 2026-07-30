@@ -13,6 +13,7 @@ import { joinPath, sanitizeFileName, withoutExtension } from './PathUtils';
 import { ExportedFile, ShareExportService } from './ShareExportService';
 
 type JsonValue = Object | string | number | boolean | null | JsonArray;
+const DATA_BACKUP_FILE_PATTERN: RegExp = /^tavernnext-data-\d{8}-\d{6}(?:-\d{1,6})?\.zip$/;
 
 class TavernUser {
   handle: string = '';
@@ -77,6 +78,7 @@ export class UsersService {
     this.context = context;
     this.git = git;
     this.manager = manager;
+    this.shareExports.discardExportFiles('users', DATA_BACKUP_FILE_PATTERN);
     this.ensureDefaultUser();
   }
 
@@ -300,7 +302,7 @@ export class UsersService {
       await zlib.compressFile(this.dirs.dataRoot, file.path, options);
       this.archiveProgress.update('压缩完成，正在打开系统分享面板...', file.fileName);
       await this.allowArchiveProgressFrame();
-      const response = await this.shareExports.shareHttpResponse(file, 'TavernNext data backup');
+      const response = await this.shareExports.shareHttpResponse(file, 'TavernNext data backup', true);
       finishMessage = response.statusCode >= 400 ? '压缩完成，但分享面板打开失败' : '导出完成';
       return response;
     } catch (err) {

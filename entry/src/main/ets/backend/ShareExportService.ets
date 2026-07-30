@@ -3,7 +3,7 @@ import { uniformTypeDescriptor } from '@kit.ArkData';
 import { fileUri } from '@kit.CoreFileKit';
 import { systemShare } from '@kit.ShareKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { FileStore } from './FileStore';
+import { FileEntry, FileStore } from './FileStore';
 import { emptyJsonRecord, HttpResponse, JsonRecord } from './HttpTypes';
 import { extensionOf, joinPath, sanitizeFileName, withoutExtension } from './PathUtils';
 
@@ -30,6 +30,8 @@ export class ShareExportService {
   private context: common.UIAbilityContext;
   private store: FileStore;
   private root: string;
+  private pendingTemporaryShares: Map<string, systemShare.ShareController> =
+    new Map<string, systemShare.ShareController>();
 
   constructor(context: common.UIAbilityContext, store: FileStore, root: string) {
     this.context = context;
@@ -73,7 +75,26 @@ export class ShareExportService {
     this.store.deleteFile(file.path);
   }
 
-  async share(file: ExportedFile, title: string = ''): Promise<void> {
+  discardExportFiles(category: string, fileNamePattern: RegExp): number {
+    const safeCategory = sanitizeFileName(category);
+    if (safeCategory.length === 0) {
+      return 0;
+    }
+    const directory = joinPath(this.root, safeCategory);
+    const files = this.store.list(directory).filter((entry: FileEntry): boolean => {
+      return entry.isFile && fileNamePattern.test(entry.name);
+    });
+    let deleted = 0;
+    for (const file of files) {
+      if (this.store.deleteFile(file.path)) {
+        deleted += 1;
+      }
+    }
+    return deleted;
+  }
+
+  async share(file: ExportedFile, title: string = '', discardOnPanelEnd: boolean = false): Promise<void> {
+    let cleanupTemporaryShare: (() => void) | null = null;
     try {
       const record: systemShare.SharedRecord = {
         utd: file.utd,
@@ -84,18 +105,22 @@ export class ShareExportService {
       };
       const data = new systemShare.SharedData(record);
       const controller = new systemShare.ShareController(data);
+      if (discardOnPanelEnd) {
+        cleanupTemporaryShare = this.trackTemporaryShare(controller, file);
+      }
       await controller.show(this.context, {
         selectionMode: systemShare.SelectionMode.SINGLE,
         previewMode: systemShare.SharePreviewMode.DEFAULT,
       });
     } catch (err) {
+      cleanupTemporaryShare?.();
       throw new Error(`ShareKit failed: ${JSON.stringify(err)}`);
     }
   }
 
-  async shareHttpResponse(file: ExportedFile, title: string = ''): Promise<HttpResponse> {
+  async shareHttpResponse(file: ExportedFile, title: string = '', discardOnPanelEnd: boolean = false): Promise<HttpResponse> {
     try {
-      await this.share(file, title);
+      await this.share(file, title, discardOnPanelEnd);
       return HttpResponse.json(this.responseBody(file, true));
     } catch (err) {
       hilog.warn(DOMAIN, TAG, 'ShareKit failed: %{public}s', JSON.stringify(err));
@@ -104,6 +129,40 @@ export class ShareExportService {
       response['message'] = 'Export file was written, but ShareKit failed to open.';
       return HttpResponse.json(response, 500);
     }
+  }
+
+  private trackTemporaryShare(controller: systemShare.ShareController, file: ExportedFile): () => void {
+    let dismissCallback: () => void = (): void => {
+    };
+    const completedCallback = (_result: systemShare.ShareOperationResult): void => {
+      this.finishTemporaryShare(controller, file, completedCallback, dismissCallback);
+    };
+    dismissCallback = (): void => {
+      this.finishTemporaryShare(controller, file, completedCallback, dismissCallback);
+    };
+    this.pendingTemporaryShares.set(file.path, controller);
+    controller.on('shareCompleted', completedCallback);
+    controller.on('dismiss', dismissCallback);
+    return (): void => {
+      this.finishTemporaryShare(controller, file, completedCallback, dismissCallback);
+    };
+  }
+
+  private finishTemporaryShare(controller: systemShare.ShareController, file: ExportedFile,
+    completedCallback: (result: systemShare.ShareOperationResult) => void, dismissCallback: () => void): void {
+    if (this.pendingTemporaryShares.get(file.path) !== controller) {
+      return;
+    }
+    this.pendingTemporaryShares.delete(file.path);
+    try {
+      controller.off('shareCompleted', completedCallback);
+    } catch (_err) {
+    }
+    try {
+      controller.off('dismiss', dismissCallback);
+    } catch (_err) {
+    }
+    this.discard(file);
   }
 
   private responseBody(file: ExportedFile, shared: boolean): JsonRecord {
