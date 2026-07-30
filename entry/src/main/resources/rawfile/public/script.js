@@ -300,6 +300,7 @@ globalThis.SillyTavern = {
 };
 
 globalThis.__tavernNextFlushPersistentState = flushTavernNextPersistentState;
+globalThis.__tavernNextSetPersistentStateSuspended = setTavernNextPersistentStateSuspended;
 
 export {
     user_avatar,
@@ -9503,6 +9504,10 @@ export async function getSettings(initLoaderHandle = null, startupTrace = null) 
 
 //MARK: saveSettings()
 export async function saveSettings(loopCounter = 0) {
+    if (tavernNextPersistentStateSuspended) {
+        return;
+    }
+
     if (!settingsReady) {
         console.warn('Settings not ready, scheduling another save');
         saveSettingsDebounced();
@@ -10860,11 +10865,25 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
 }
 
 export async function saveMetadata() {
+    if (tavernNextPersistentStateSuspended) {
+        return;
+    }
+
     return await saveChatConditional();
 }
 
 let tavernNextPersistentStateFlush = null;
 let tavernNextLifecycleFlushInstalled = false;
+let tavernNextPersistentStateSuspended = false;
+
+function setTavernNextPersistentStateSuspended(suspended, reason = 'manual') {
+    tavernNextPersistentStateSuspended = Boolean(suspended);
+    if (tavernNextPersistentStateSuspended) {
+        cancelDebounce(saveSettingsDebounced);
+        cancelDebouncedMetadataSave();
+    }
+    console.debug(`TavernNext persistent state ${tavernNextPersistentStateSuspended ? 'suspended' : 'resumed'} by ${reason}`);
+}
 
 /**
  * Immediately persists debounced frontend state before ArkWeb is background-killed.
@@ -10873,6 +10892,11 @@ let tavernNextLifecycleFlushInstalled = false;
  * @returns {Promise<boolean>} True when all attempted saves completed successfully.
  */
 async function flushTavernNextPersistentState(reason = 'manual') {
+    if (tavernNextPersistentStateSuspended) {
+        console.debug(`Skipped TavernNext persistent state flush by ${reason}`);
+        return true;
+    }
+
     if (tavernNextPersistentStateFlush) {
         return tavernNextPersistentStateFlush;
     }
