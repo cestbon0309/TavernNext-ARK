@@ -16,3 +16,4 @@
 *.png.tmp
 *.log
 /AGENTS.md
+/.local/

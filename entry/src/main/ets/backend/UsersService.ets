@@ -3,14 +3,14 @@ import { zlib } from '@kit.BasicServicesKit';
 import { fileIo, picker } from '@kit.CoreFileKit';
 import { resourceManager } from '@kit.LocalizationKit';
 import { CryptoUtils } from './CryptoUtils';
-import { DataRestoreProgressService } from './DataRestoreProgressService';
+import { DataArchiveProgressService } from './DataArchiveProgressService';
 import { DataDirectories, UserDirectories } from './DataDirectories';
 import { DefaultContentSeeder } from './DefaultContentSeeder';
 import { FileEntry, FileStore } from './FileStore';
 import { GitService } from './GitService';
 import { emptyJsonRecord, HttpRequest, HttpResponse, JsonArray, JsonRecord } from './HttpTypes';
 import { joinPath, sanitizeFileName, withoutExtension } from './PathUtils';
-import { ShareExportService } from './ShareExportService';
+import { ExportedFile, ShareExportService } from './ShareExportService';
 
 type JsonValue = Object | string | number | boolean | null | JsonArray;
 
@@ -63,7 +63,8 @@ export class UsersService {
   private context: common.UIAbilityContext;
   private git: GitService;
   private manager: resourceManager.ResourceManager;
-  private restoreProgress: DataRestoreProgressService = DataRestoreProgressService.getInstance();
+  private archiveProgress: DataArchiveProgressService = DataArchiveProgressService.getInstance();
+  private backupInFlight: boolean = false;
   private resetCodes: Map<string, string> = new Map<string, string>();
   private recoverCodes: Map<string, string> = new Map<string, string>();
 
@@ -278,34 +279,58 @@ export class UsersService {
     if (user === null) {
       return HttpResponse.json(this.error('User not found'), 404);
     }
+    if (this.backupInFlight) {
+      return HttpResponse.json(this.error('A data export is already in progress'), 409);
+    }
 
-    const fileName = `tavernnext-data-${this.timestamp()}.zip`;
-    const file = this.shareExports.exportFileReference('users', fileName,
-      ShareExportService.contentTypeForExtension('.zip'), ShareExportService.utdForExtension('.zip'));
-    const options: zlib.Options = {
-      level: zlib.CompressLevel.COMPRESS_LEVEL_DEFAULT_COMPRESSION,
-    };
-    await zlib.compressFile(this.dirs.dataRoot, file.path, options);
-    return await this.shareExports.shareHttpResponse(file, 'TavernNext data backup');
+    this.backupInFlight = true;
+    this.archiveProgress.begin('正在导出数据', '正在准备 data 压缩包...');
+    let file: ExportedFile | null = null;
+    let finishMessage = '导出失败';
+    try {
+      await this.allowArchiveProgressFrame();
+      const fileName = `tavernnext-data-${this.timestampWithMs()}.zip`;
+      file = this.shareExports.exportFileReference('users', fileName,
+        ShareExportService.contentTypeForExtension('.zip'), ShareExportService.utdForExtension('.zip'));
+      const options: zlib.Options = {
+        level: zlib.CompressLevel.COMPRESS_LEVEL_DEFAULT_COMPRESSION,
+      };
+      this.archiveProgress.update('正在压缩 data 目录...', '数据量较大时可能需要几分钟，请勿退出应用。');
+      await this.allowArchiveProgressFrame();
+      await zlib.compressFile(this.dirs.dataRoot, file.path, options);
+      this.archiveProgress.update('压缩完成，正在打开系统分享面板...', file.fileName);
+      await this.allowArchiveProgressFrame();
+      const response = await this.shareExports.shareHttpResponse(file, 'TavernNext data backup');
+      finishMessage = response.statusCode >= 400 ? '压缩完成，但分享面板打开失败' : '导出完成';
+      return response;
+    } catch (err) {
+      if (file !== null) {
+        this.shareExports.discard(file);
+      }
+      return HttpResponse.json(this.error(this.errorMessage(err)), 500);
+    } finally {
+      this.backupInFlight = false;
+      this.archiveProgress.finish(finishMessage);
+    }
   }
 
   async restoreData(request: HttpRequest): Promise<HttpResponse> {
-    this.restoreProgress.begin('正在接收备份文件...');
+    this.archiveProgress.begin('正在导入数据', '正在接收备份文件...');
     const file = request.file('archive') ?? request.file('file') ?? (request.files.length > 0 ? request.files[0] : null);
     if (file === null) {
-      this.restoreProgress.finish('导入已取消');
+      this.archiveProgress.finish('导入已取消');
       return HttpResponse.json(this.error('Missing backup file'), 400);
     }
     if (!file.fileName.toLowerCase().endsWith('.zip')) {
-      this.restoreProgress.finish('导入失败');
+      this.archiveProgress.finish('导入失败');
       return HttpResponse.json(this.error('Backup file must be a zip archive'), 400);
     }
 
     const paths = this.createRestorePaths();
     this.store.ensureDir(paths.restoreRoot);
     this.store.ensureDir(paths.unpackRoot);
-    this.restoreProgress.update('正在保存备份文件...');
-    await this.allowRestoreProgressFrame();
+    this.archiveProgress.update('正在保存备份文件...');
+    await this.allowArchiveProgressFrame();
     this.store.writeBytes(paths.uploadPath, file.bytes);
     const options = this.restoreOptions(request);
     return await this.restorePreparedZip(paths, options);
@@ -336,11 +361,11 @@ export class UsersService {
     const paths = this.createRestorePaths();
     this.store.ensureDir(paths.restoreRoot);
     this.store.ensureDir(paths.unpackRoot);
-    this.restoreProgress.begin('正在读取所选备份文件...');
-    await this.allowRestoreProgressFrame();
+    this.archiveProgress.begin('正在导入数据', '正在读取所选备份文件...');
+    await this.allowArchiveProgressFrame();
     if (!this.copySelectedFile(selectedFiles[0], paths.uploadPath)) {
       this.store.deleteDirectory(paths.restoreRoot);
-      this.restoreProgress.finish('导入失败');
+      this.archiveProgress.finish('导入失败');
       return HttpResponse.json(this.error('Failed to read selected backup file'), 400);
     }
 
@@ -348,14 +373,14 @@ export class UsersService {
   }
 
   async repairExtensionGitRepositories(): Promise<HttpResponse> {
-    this.restoreProgress.begin('正在检查插件 Git 信息...');
-    await this.allowRestoreProgressFrame();
+    this.archiveProgress.begin('正在检查插件数据', '正在检查插件 Git 信息...');
+    await this.allowArchiveProgressFrame();
     try {
       const result = await this.rehydrateImportedExtensionRepositories();
-      this.restoreProgress.finish('插件 Git 信息检查完成', this.gitRepairFailures(result));
+      this.archiveProgress.finish('插件 Git 信息检查完成', this.gitRepairFailures(result));
       return HttpResponse.json(result);
     } catch (err) {
-      this.restoreProgress.finish('插件 Git 信息检查失败');
+      this.archiveProgress.finish('插件 Git 信息检查失败');
       return HttpResponse.json(this.error(this.errorMessage(err)), 500);
     }
   }
@@ -367,43 +392,43 @@ export class UsersService {
     const mode = options.mode;
 
     try {
-      this.restoreProgress.update('正在解压备份压缩包...');
+      this.archiveProgress.update('正在解压备份压缩包...');
       await zlib.decompressFile(paths.uploadPath, unpackRoot);
     } catch (_err) {
       this.store.deleteDirectory(restoreRoot);
-      this.restoreProgress.finish('导入失败');
+      this.archiveProgress.finish('导入失败');
       return HttpResponse.json(this.error('Failed to decompress backup zip'), 400);
     }
 
     try {
-      this.restoreProgress.update('正在检查备份内容...');
+      this.archiveProgress.update('正在检查备份内容...');
       const candidate = this.restoreCandidatePath(unpackRoot, restoreRoot);
       if (candidate.length === 0) {
         this.store.deleteDirectory(restoreRoot);
-        this.restoreProgress.finish('导入失败');
+        this.archiveProgress.finish('导入失败');
         return HttpResponse.json(this.error('The zip archive does not look like a TavernNext data backup'), 400);
       }
 
-      this.restoreProgress.update(mode === 'clean' ? '正在重置 data 目录...' : '正在合并 data 目录...');
-      await this.allowRestoreProgressFrame();
+      this.archiveProgress.update(mode === 'clean' ? '正在重置 data 目录...' : '正在合并 data 目录...');
+      await this.allowArchiveProgressFrame();
       if (!this.mergeDataDirectory(candidate, previousDataRoot, mode)) {
         this.store.deleteDirectory(restoreRoot);
-        this.restoreProgress.finish('导入失败');
+        this.archiveProgress.finish('导入失败');
         return HttpResponse.json(this.error('Failed to restore data directory'), 500);
       }
 
-      this.restoreProgress.update('正在初始化数据目录...');
-      await this.allowRestoreProgressFrame();
+      this.archiveProgress.update('正在初始化数据目录...');
+      await this.allowArchiveProgressFrame();
       this.dirs.initialize();
       this.dirs.ensureDefaultUserFiles();
       this.ensureDefaultUser();
       let gitRepair = this.emptyGitRepairResult(options.repairExtensionGit ? 'pending' : 'disabled');
       if (options.repairExtensionGit) {
-        this.restoreProgress.update('正在检查缺失 Git 信息的插件...');
+        this.archiveProgress.update('正在检查缺失 Git 信息的插件...');
         gitRepair = await this.rehydrateImportedExtensionRepositories();
       }
-      this.restoreProgress.update('正在清理临时文件...');
-      await this.allowRestoreProgressFrame();
+      this.archiveProgress.update('正在清理临时文件...');
+      await this.allowArchiveProgressFrame();
       this.store.deleteDirectory(previousDataRoot);
       this.store.deleteDirectory(restoreRoot);
 
@@ -414,11 +439,11 @@ export class UsersService {
       response['repairExtensionGit'] = options.repairExtensionGit;
       response['message'] = 'Data directory restored.';
       response['extensionGitRepair'] = gitRepair;
-      this.restoreProgress.finish('导入完成', this.gitRepairFailures(gitRepair));
+      this.archiveProgress.finish('导入完成', this.gitRepairFailures(gitRepair));
       return HttpResponse.json(response);
     } catch (err) {
       this.store.deleteDirectory(restoreRoot);
-      this.restoreProgress.finish('导入失败');
+      this.archiveProgress.finish('导入失败');
       return HttpResponse.json(this.error(this.errorMessage(err)), 500);
     }
   }
@@ -677,7 +702,7 @@ export class UsersService {
     for (const candidate of candidates) {
       result['checked'] = Number(result['checked'] ?? 0) + 1;
       const extensionName = candidate.name;
-      this.restoreProgress.update('正在检查缺失 Git 信息的插件...', this.extensionGitRepairDetail(extensionName, result, total));
+      this.archiveProgress.update('正在检查缺失 Git 信息的插件...', this.extensionGitRepairDetail(extensionName, result, total));
       if (candidate.metadataPath.length === 0) {
         result['failed'] = Number(result['failed'] ?? 0) + 1;
         this.addGitRepairFailure(result, candidate.scope, extensionName,
@@ -698,7 +723,7 @@ export class UsersService {
         continue;
       }
       try {
-        this.restoreProgress.update('正在安全重建缺失 Git 信息的插件...', this.extensionGitRepairDetail(extensionName, result, total));
+        this.archiveProgress.update('正在安全重建缺失 Git 信息的插件...', this.extensionGitRepairDetail(extensionName, result, total));
         await this.repairExtensionRepository(candidate, remoteUrl, reference, installedCommit);
         result['rehydrated'] = Number(result['rehydrated'] ?? 0) + 1;
         result['installed'] = Number(result['installed'] ?? 0) + 1;
@@ -1200,7 +1225,7 @@ export class UsersService {
     return JSON.stringify(err);
   }
 
-  private async allowRestoreProgressFrame(): Promise<void> {
+  private async allowArchiveProgressFrame(): Promise<void> {
     await new Promise<void>((resolve: () => void) => {
       setTimeout(resolve, 24);
     });

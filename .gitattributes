@@ -1,1 +1,2 @@
 build-profile.json5 filter=ohos-build-profile
+AppScope/app.json5 filter=ohos-app-profile
