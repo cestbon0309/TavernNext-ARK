@@ -2018,7 +2018,15 @@ async function importDataArchive() {
         return;
     }
 
+    let keepPersistentStateSuspended = false;
     try {
+        if (typeof window.__tavernNextFlushPersistentState === 'function') {
+            await window.__tavernNextFlushPersistentState('data-import');
+        }
+        if (typeof window.__tavernNextSetPersistentStateSuspended === 'function') {
+            window.__tavernNextSetPersistentStateSuspended(true, 'data-import');
+        }
+
         const response = await fetch('/api/users/restore-data-picker', {
             method: 'POST',
             headers: getRequestHeaders(),
@@ -2034,11 +2042,16 @@ async function importDataArchive() {
             return;
         }
 
+        keepPersistentStateSuspended = true;
         toastr.success('data 目录已恢复，正在刷新页面');
         setTimeout(() => window.location.reload(), 1000);
     } catch (error) {
         console.error('Failed to import data archive', error);
         toastr.error('恢复 data 目录失败');
+    } finally {
+        if (!keepPersistentStateSuspended && typeof window.__tavernNextSetPersistentStateSuspended === 'function') {
+            window.__tavernNextSetPersistentStateSuspended(false, 'data-import-finished');
+        }
     }
 }
 
