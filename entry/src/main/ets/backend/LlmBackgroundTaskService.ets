@@ -4,7 +4,7 @@ import { notificationManager } from '@kit.NotificationKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { ApplicationStateService } from './ApplicationStateService';
 
-const DOMAIN = 0x544156;
+const DOMAIN = 0x5441;
 const TAG = 'LlmBackgroundTask';
 const RESPONSE_NOTIFICATION_ID = 17001;
 const WANT_AGENT_REQUEST_CODE = 17002;
@@ -151,6 +151,34 @@ export class LlmBackgroundTaskService {
     }
   }
 
+  async shouldRequestNotificationPermission(): Promise<boolean> {
+    if (this.notificationPermissionRequested) {
+      return false;
+    }
+    try {
+      const enabled = await notificationManager.isNotificationEnabled();
+      return !enabled;
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, 'Failed to check notification permission: %{public}s', JSON.stringify(err));
+      return false;
+    }
+  }
+
+  async requestNotificationPermission(showSystemDialog: boolean): Promise<void> {
+    this.notificationPermissionRequested = true;
+    if (!showSystemDialog) {
+      return;
+    }
+    try {
+      const enabled = await notificationManager.isNotificationEnabled();
+      if (!enabled) {
+        await notificationManager.requestEnableNotification(this.context);
+      }
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, 'Failed to request notification permission: %{public}s', JSON.stringify(err));
+    }
+  }
+
   private async ensureNotificationPermission(): Promise<void> {
     if (this.notificationPermissionRequested) {
       return;
@@ -171,8 +199,8 @@ export class LlmBackgroundTaskService {
       return this.responseNotificationWantAgent;
     }
     const entryWant: Want = {
-      bundleName: 'com.esoteric.ark.tavernnext',
-      abilityName: 'EntryAbility',
+      bundleName: this.context.abilityInfo.bundleName,
+      abilityName: this.context.abilityInfo.name,
     };
     const info: wantAgent.WantAgentInfo = {
       wants: [entryWant],

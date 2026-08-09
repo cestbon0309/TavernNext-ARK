@@ -4,7 +4,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { HttpRequest, HttpResponse, JsonRecord } from './HttpTypes';
 import { asBoolean, asRecord } from './JsonUtils';
 
-const DOMAIN = 0x544156;
+const DOMAIN = 0x5441;
 const TAG = 'AntiPeepService';
 
 export type AntiPeepStateListener = (peeping: boolean) => void;
