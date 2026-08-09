@@ -10,7 +10,7 @@ type ChatBrowserOpenListener = () => void;
 
 const CHAT_BROWSER_SETTINGS_FILE = 'chat-browser-settings.json';
 const CHAT_BROWSER_CACHE_FILE = 'chat-browser-cache.json';
-const DOMAIN = 0x544156;
+const DOMAIN = 0x5441;
 const TAG = 'TavernChatBrowser';
 
 class OkResponse {

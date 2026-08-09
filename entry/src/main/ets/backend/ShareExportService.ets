@@ -7,7 +7,7 @@ import { FileEntry, FileStore } from './FileStore';
 import { emptyJsonRecord, HttpResponse, JsonRecord } from './HttpTypes';
 import { extensionOf, joinPath, sanitizeFileName, withoutExtension } from './PathUtils';
 
-const DOMAIN = 0x544156;
+const DOMAIN = 0x5441;
 const TAG = 'TavernShareExport';
 
 export class ExportedFile {

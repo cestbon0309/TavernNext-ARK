@@ -23,7 +23,7 @@ import { TokenizerService } from './TokenizerService';
 import { UsersService } from './UsersService';
 import { VectorService } from './VectorService';
 
-const DOMAIN = 0x544156;
+const DOMAIN = 0x5441;
 const TAG = 'TavernBackendService';
 
 export class BackendStatus {
@@ -126,6 +126,10 @@ export class BackendService {
 
   getChatBrowser(): ChatBrowserService {
     return this.chatBrowser;
+  }
+
+  getLlmBackgroundTasks(): LlmBackgroundTaskService {
+    return this.llmBackgroundTasks;
   }
 
   prepareWebDownload(fileName: string, contentType: string): ExportedFile {

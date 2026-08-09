@@ -1,7 +1,7 @@
 import { ApplicationStateChangeCallback, common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 
-const DOMAIN = 0x544156;
+const DOMAIN = 0x5441;
 const TAG = 'ApplicationState';
 
 export type ApplicationStateListener = (foreground: boolean) => void;

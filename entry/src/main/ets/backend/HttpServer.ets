@@ -4,7 +4,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { HttpRequest, HttpResponse, JsonArray, JsonRecord, jsonMessage, RouteHandler } from './HttpTypes';
 import { MultipartParser } from './MultipartParser';
 
-const DOMAIN = 0x544156;
+const DOMAIN = 0x5441;
 const TAG = 'TavernHttpServer';
 
 class ClientState {

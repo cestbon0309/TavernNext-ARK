@@ -535,6 +535,7 @@ struct Index {
           .onPageEnd(() => {
             this.injectShellThemeProbe();
             this.revealWebAfterFirstPaint();
+            this.maybeRequestNotificationPermission();
           })
           .onAlert((event) => {
             this.webDialogService.handleAlert(event.message, () => {
@@ -1345,6 +1346,34 @@ struct Index {
       });
     } catch (_err) {
     }
+  }
+
+  private async maybeRequestNotificationPermission(): Promise<void> {
+    const service = this.backendService;
+    if (service === null) {
+      return;
+    }
+    const tasks = service.getLlmBackgroundTasks();
+    if (!await tasks.shouldRequestNotificationPermission()) {
+      return;
+    }
+    AlertDialog.show({
+      title: '申请通知权限',
+      message: 'TavernNext需要通知权限，在回复完成时通知您',
+      autoCancel: false,
+      primaryButton: {
+        value: '允许',
+        action: () => {
+          tasks.requestNotificationPermission(true);
+        }
+      },
+      secondaryButton: {
+        value: '取消',
+        action: () => {
+          tasks.requestNotificationPermission(false);
+        }
+      }
+    });
   }
 
   private revealWebAfterFirstPaint(): void {

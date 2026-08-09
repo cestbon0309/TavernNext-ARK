@@ -5,7 +5,7 @@ import { FileStore } from './FileStore';
 import { HttpRequest, HttpResponse, JsonRecord } from './HttpTypes';
 import { joinPath } from './PathUtils';
 
-const DOMAIN = 0x544156;
+const DOMAIN = 0x5441;
 const TAG = 'ShellTheme';
 const DEFAULT_BACKGROUND = '#171717';
 const TRANSPARENT = '#00000000';
