@@ -2,12 +2,18 @@ import { common, wantAgent, Want, WantAgent } from '@kit.AbilityKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { notificationManager } from '@kit.NotificationKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { ApplicationStateService } from './ApplicationStateService';
+import { FileStore } from './FileStore';
+import { JsonRecord } from './HttpTypes';
+import { asBoolean } from './JsonUtils';
+import { joinPath } from './PathUtils';
 
 const DOMAIN = 0x5441;
 const TAG = 'LlmBackgroundTask';
 const RESPONSE_NOTIFICATION_ID = 17001;
 const WANT_AGENT_REQUEST_CODE = 17002;
+const NOTIFICATION_REFUSED_CODE = 1600004;
 
 export class LlmBackgroundTaskHandle {
   readonly id: number;
@@ -35,10 +41,14 @@ export class LlmBackgroundTaskService {
   private startPromise: Promise<void> | null = null;
   private stopPromise: Promise<void> | null = null;
   private responseNotificationWantAgent: WantAgent | null = null;
-  private notificationPermissionRequested: boolean = false;
+  private notifyOnCompleted: boolean = false;
+  private preferencesPath: string = '';
+  private store: FileStore = new FileStore();
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
+    this.preferencesPath = joinPath(context.filesDir, 'data', '_storage', 'notification-preferences.json');
+    this.notifyOnCompleted = this.loadNotifyOnCompleted();
   }
 
   async beginResponse(): Promise<LlmBackgroundTaskHandle> {
@@ -63,8 +73,90 @@ export class LlmBackgroundTaskService {
     if (this.activeCount === 0) {
       await this.stopContinuousTask();
     }
-    if (notifyCompleted && ApplicationStateService.getInstance().isBackground()) {
+    if (notifyCompleted && this.notifyOnCompleted && ApplicationStateService.getInstance().isBackground()) {
       await this.publishResponseReadyNotification();
+    }
+  }
+
+  isNotifyOnCompleted(): boolean {
+    return this.notifyOnCompleted;
+  }
+
+  notificationPreferencesJson(): JsonRecord {
+    const value: JsonRecord = {};
+    value['notifyOnCompleted'] = this.notifyOnCompleted;
+    value['permissionGranted'] = this.isNotificationEnabledSync();
+    return value;
+  }
+
+  async updateNotifyOnCompleted(enabled: boolean): Promise<JsonRecord> {
+    this.notifyOnCompleted = enabled;
+    this.saveNotifyOnCompleted(enabled);
+    const value: JsonRecord = {};
+    value['notifyOnCompleted'] = enabled;
+    if (!enabled) {
+      value['permissionGranted'] = this.isNotificationEnabledSync();
+      value['message'] = '生成完成通知已关闭';
+      return value;
+    }
+    if (this.isNotificationEnabledSync()) {
+      value['permissionGranted'] = true;
+      value['message'] = '已开启，生成完成后将推送通知';
+      return value;
+    }
+    try {
+      await notificationManager.requestEnableNotification(this.context);
+      value['permissionGranted'] = true;
+      value['message'] = '已开启，生成完成后将推送通知';
+      return value;
+    } catch (err) {
+      const error = err as BusinessError;
+      if (error.code === NOTIFICATION_REFUSED_CODE) {
+        await this.guideToNotificationSettings(value);
+        return value;
+      }
+      value['permissionGranted'] = false;
+      value['message'] = '申请通知权限失败';
+      hilog.warn(DOMAIN, TAG, 'Failed to request notification permission: %{public}s', JSON.stringify(err));
+      return value;
+    }
+  }
+
+  private loadNotifyOnCompleted(): boolean {
+    const record = this.store.readJsonRecord(this.preferencesPath);
+    return asBoolean(record['notifyOnCompleted']);
+  }
+
+  private saveNotifyOnCompleted(enabled: boolean): void {
+    const record: JsonRecord = {};
+    record['notifyOnCompleted'] = enabled;
+    this.store.writeJson(this.preferencesPath, record);
+  }
+
+  private isNotificationEnabledSync(): boolean {
+    try {
+      return notificationManager.isNotificationEnabledSync();
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, 'Failed to check notification permission: %{public}s', JSON.stringify(err));
+      return false;
+    }
+  }
+
+  private async guideToNotificationSettings(value: JsonRecord): Promise<void> {
+    try {
+      await notificationManager.openNotificationSettings(this.context);
+      value['guided'] = true;
+      value['permissionGranted'] = this.isNotificationEnabledSync();
+      if (value['permissionGranted'] === true) {
+        value['message'] = '已开启，生成完成后将推送通知';
+      } else {
+        value['message'] = '请在通知设置中允许 TavernNext 的通知权限';
+      }
+    } catch (err) {
+      value['guided'] = false;
+      value['permissionGranted'] = false;
+      value['message'] = '请在系统设置中允许 TavernNext 的通知权限';
+      hilog.warn(DOMAIN, TAG, 'Failed to open notification settings: %{public}s', JSON.stringify(err));
     }
   }
 
@@ -85,7 +177,6 @@ export class LlmBackgroundTaskService {
       if (this.stopPromise !== null) {
         await this.stopPromise;
       }
-      await this.ensureNotificationPermission();
       const agent = await this.wantAgent();
       const notification = await backgroundTaskManager.startBackgroundRunning(this.context, ['dataTransfer'], agent);
       this.continuousTaskId = notification.continuousTaskId ?? -1;
@@ -131,8 +222,10 @@ export class LlmBackgroundTaskService {
   }
 
   private async publishResponseReadyNotification(): Promise<void> {
+    if (!this.isNotificationEnabledSync()) {
+      return;
+    }
     try {
-      await this.ensureNotificationPermission();
       await notificationManager.publish({
         id: RESPONSE_NOTIFICATION_ID,
         notificationSlotType: notificationManager.SlotType.SOCIAL_COMMUNICATION,
@@ -148,49 +241,6 @@ export class LlmBackgroundTaskService {
       });
     } catch (err) {
       hilog.warn(DOMAIN, TAG, 'Failed to publish response notification: %{public}s', JSON.stringify(err));
-    }
-  }
-
-  async shouldRequestNotificationPermission(): Promise<boolean> {
-    if (this.notificationPermissionRequested) {
-      return false;
-    }
-    try {
-      const enabled = await notificationManager.isNotificationEnabled();
-      return !enabled;
-    } catch (err) {
-      hilog.warn(DOMAIN, TAG, 'Failed to check notification permission: %{public}s', JSON.stringify(err));
-      return false;
-    }
-  }
-
-  async requestNotificationPermission(showSystemDialog: boolean): Promise<void> {
-    this.notificationPermissionRequested = true;
-    if (!showSystemDialog) {
-      return;
-    }
-    try {
-      const enabled = await notificationManager.isNotificationEnabled();
-      if (!enabled) {
-        await notificationManager.requestEnableNotification(this.context);
-      }
-    } catch (err) {
-      hilog.warn(DOMAIN, TAG, 'Failed to request notification permission: %{public}s', JSON.stringify(err));
-    }
-  }
-
-  private async ensureNotificationPermission(): Promise<void> {
-    if (this.notificationPermissionRequested) {
-      return;
-    }
-    this.notificationPermissionRequested = true;
-    try {
-      const enabled = await notificationManager.isNotificationEnabled();
-      if (!enabled) {
-        await notificationManager.requestEnableNotification(this.context);
-      }
-    } catch (err) {
-      hilog.warn(DOMAIN, TAG, 'Failed to request notification permission: %{public}s', JSON.stringify(err));
     }
   }
 
