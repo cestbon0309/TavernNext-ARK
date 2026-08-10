@@ -3,7 +3,7 @@ import { webview } from '@kit.ArkWeb';
 import { AntiPeepService, AntiPeepStateListener } from '../backend/AntiPeepService';
 import { ApplicationStateService } from '../backend/ApplicationStateService';
 import { BackendService, BackendStatus } from '../backend/BackendService';
-import { ChatBrowserItem } from '../backend/ChatBrowserService';
+import { ChatBrowserItem, ChatBrowserRefreshListener } from '../backend/ChatBrowserService';
 import { DataArchiveProgressService, DataArchiveProgressState } from '../backend/DataArchiveProgressService';
 import { ExportedFile } from '../backend/ShareExportService';
 import { ShellThemeService } from '../backend/ShellThemeService';
@@ -419,6 +419,12 @@ struct Index {
   private antiPeepStateListener: AntiPeepStateListener = (peeping: boolean): void => {
     this.applyAntiPeepRisk(peeping);
   };
+  private chatBrowserRefreshListener: ChatBrowserRefreshListener = (items: ChatBrowserItem[]): void => {
+    this.chatBrowserItems = items;
+    this.chatBrowserDeletingIds = [];
+    this.chatBrowserMessage = '';
+    this.chatBrowserRefreshing = false;
+  };
 
   aboutToAppear(): void {
     webview.WebviewController.setWebDebuggingAccess(true);
@@ -442,6 +448,7 @@ struct Index {
     service.getChatBrowser().subscribeOpen(() => {
       this.openChatBrowser();
     });
+    service.getChatBrowser().subscribeRefresh(this.chatBrowserRefreshListener);
     DataArchiveProgressService.getInstance().subscribe((state: DataArchiveProgressState) => {
       this.applyArchiveProgress(state);
     });
@@ -453,6 +460,9 @@ struct Index {
   aboutToDisappear(): void {
     this.flushWebPersistentState('page-disappear');
     this.antiPeepService?.unsubscribe(this.antiPeepStateListener);
+    if (this.backendService !== null) {
+      this.backendService.getChatBrowser().unsubscribeRefresh(this.chatBrowserRefreshListener);
+    }
     this.stopAntiPeepChatChecks();
     this.antiPeepMaskVisible = false;
   }
@@ -1043,19 +1053,22 @@ struct Index {
       this.chatBrowserMessage = '后端还没有准备好。';
       return;
     }
+    const browser = this.backendService.getChatBrowser();
     if (forceRefresh) {
       this.chatBrowserRefreshing = true;
       this.chatBrowserMessage = '正在刷新聊天缓存...';
+      browser.refreshCacheAsync().then((items: ChatBrowserItem[]) => {
+        this.chatBrowserItems = items;
+        this.chatBrowserMessage = '聊天缓存已刷新。';
+        this.chatBrowserDeletingIds = [];
+      }).finally(() => {
+        this.chatBrowserRefreshing = false;
+      });
+      return;
     }
-    try {
-      this.chatBrowserItems = forceRefresh
-        ? this.backendService.getChatBrowser().refreshCache()
-        : this.backendService.getChatBrowser().cachedList();
-      this.chatBrowserMessage = forceRefresh ? '聊天缓存已刷新。' : '';
-      this.chatBrowserDeletingIds = [];
-    } finally {
-      this.chatBrowserRefreshing = false;
-    }
+    this.chatBrowserItems = browser.cachedList();
+    this.chatBrowserMessage = '';
+    this.chatBrowserDeletingIds = [];
   }
 
   private manualRefreshChatBrowserItems(): void {
@@ -1068,13 +1081,13 @@ struct Index {
     this.chatBrowserRefreshing = true;
     this.chatBrowserMessage = '';
     setTimeout(() => {
-      try {
-        this.chatBrowserItems = this.backendService?.getChatBrowser().refreshCache() ?? [];
+      this.backendService?.getChatBrowser().refreshCacheAsync().then((items: ChatBrowserItem[]) => {
+        this.chatBrowserItems = items;
         this.chatBrowserMessage = '聊天缓存已刷新。';
         this.chatBrowserDeletingIds = [];
-      } finally {
+      }).finally(() => {
         this.chatBrowserRefreshing = false;
-      }
+      });
     }, 80);
   }
 
@@ -1084,7 +1097,7 @@ struct Index {
       return this.sortedChatBrowserItems(this.chatBrowserItems);
     }
     const filtered = this.chatBrowserItems.filter((item: ChatBrowserItem): boolean => {
-      const haystack = `${item.title} ${item.subtitle} ${item.chatName} ${item.preview} ${item.fileName}`.toLowerCase();
+      const haystack = `${item.title} ${item.subtitle} ${item.chatName} ${item.fileName}`.toLowerCase();
       return haystack.includes(query);
     });
     return this.sortedChatBrowserItems(filtered);

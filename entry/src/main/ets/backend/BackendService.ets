@@ -10,11 +10,11 @@ import { FileStore } from './FileStore';
 import { GitService } from './GitService';
 import { HttpRequest, HttpResponse, JsonRecord } from './HttpTypes';
 import { HttpServer } from './HttpServer';
-import { asArray, asBoolean, asNumber, asRecord, asString } from './JsonUtils';
+import { asArray, asBoolean, asNumber, asRecord, asString, bodyAsRecord, parseJsonRecord } from './JsonUtils';
 import { LlmBackgroundTaskService } from './LlmBackgroundTaskService';
 import { MediaService } from './MediaService';
 import { ModelProxyService } from './ModelProxyService';
-import { joinPath } from './PathUtils';
+import { ensurePngExtension, joinPath, sanitizeFileName, withoutExtension } from './PathUtils';
 import { SecretsService } from './SecretsService';
 import { ExportedFile, ShareExportService } from './ShareExportService';
 import { ShellThemeService } from './ShellThemeService';
@@ -26,6 +26,11 @@ import { VectorService } from './VectorService';
 
 const DOMAIN = 0x5441;
 const TAG = 'TavernBackendService';
+
+class ChatStats {
+  count: number = 0;
+  preview: string = '';
+}
 
 export class BackendStatus {
   running: boolean;
@@ -196,7 +201,16 @@ export class BackendService {
   private async createCharacter(request: HttpRequest): Promise<HttpResponse> {
     try {
       const avatarImage = await this.media.processCharacterAvatarUpload(request);
-      return this.core.createCharacter(request, avatarImage);
+      const response = this.core.createCharacter(request, avatarImage);
+      if (response.statusCode === 200) {
+        const internalPng = response.body.trim();
+        if (internalPng.endsWith('.png')) {
+          const body = bodyAsRecord(request);
+          const chName = asString(body['ch_name']);
+          this.chatBrowser.setCharacterName(internalPng, chName.length > 0 ? chName : withoutExtension(internalPng));
+        }
+      }
+      return response;
     } catch (_err) {
       return HttpResponse.text('Is not a valid image', 400);
     }
@@ -205,7 +219,14 @@ export class BackendService {
   private async editCharacter(request: HttpRequest): Promise<HttpResponse> {
     try {
       const avatarImage = await this.media.processCharacterAvatarUpload(request);
-      return this.core.editCharacter(request, avatarImage);
+      const response = this.core.editCharacter(request, avatarImage);
+      if (response.statusCode === 200) {
+        const body = bodyAsRecord(request);
+        const avatar = ensurePngExtension(sanitizeFileName(asString(body['avatar_url'])));
+        const chName = asString(body['ch_name']) || asString(body['name']);
+        this.chatBrowser.setCharacterName(avatar, chName.length > 0 ? chName : withoutExtension(avatar));
+      }
+      return response;
     } catch (_err) {
       return HttpResponse.text('Is not a valid image', 400);
     }
@@ -218,6 +239,198 @@ export class BackendService {
     } catch (_err) {
       return HttpResponse.text('Is not a valid image', 400);
     }
+  }
+
+  private hookSaveChat(request: HttpRequest): HttpResponse {
+    const response = this.core.saveChat(request);
+    if (response.statusCode === 200) {
+      const body = bodyAsRecord(request);
+      const stats = this.chatStatsFromBody(body);
+      this.chatBrowser.upsertCharacterChat(asString(body['avatar_url']), asString(body['file_name']), stats.count,
+        stats.preview);
+    }
+    return response;
+  }
+
+  private hookDeleteChat(request: HttpRequest): HttpResponse {
+    const response = this.core.deleteChat(request);
+    if (response.statusCode === 200) {
+      const body = bodyAsRecord(request);
+      this.chatBrowser.removeChatItemByFields('character', ensurePngExtension(sanitizeFileName(
+        asString(body['avatar_url']))), '', asString(body['chatfile']));
+    }
+    return response;
+  }
+
+  private hookRenameChat(request: HttpRequest): HttpResponse {
+    const response = this.core.renameChat(request);
+    if (response.statusCode === 200) {
+      const body = bodyAsRecord(request);
+      const isGroup = body['is_group'] === true;
+      this.chatBrowser.renameChatItem(isGroup ? 'group' : 'character',
+        ensurePngExtension(sanitizeFileName(asString(body['avatar_url']))), '',
+        asString(body['original_file']), asString(body['renamed_file']));
+    }
+    return response;
+  }
+
+  private hookImportChat(request: HttpRequest): HttpResponse {
+    const response = this.core.importChat(request);
+    if (response.statusCode === 200) {
+      const body = bodyAsRecord(request);
+      this.chatBrowser.rescanCharacterChats(asString(body['avatar_url']));
+    }
+    return response;
+  }
+
+  private hookSaveGroupChat(request: HttpRequest): HttpResponse {
+    const response = this.core.saveGroupChat(request);
+    if (response.statusCode === 200) {
+      const body = bodyAsRecord(request);
+      const stats = this.chatStatsFromBody(body);
+      this.chatBrowser.upsertGroupChat(asString(body['id']), stats.count, stats.preview);
+    }
+    return response;
+  }
+
+  private hookDeleteGroupChat(request: HttpRequest): HttpResponse {
+    const response = this.core.deleteGroupChat(request);
+    if (response.statusCode === 200) {
+      const body = bodyAsRecord(request);
+      const id = asString(body['id']);
+      this.chatBrowser.removeChatItemByFields('group', '', '', `${id}.jsonl`);
+    }
+    return response;
+  }
+
+  private hookImportGroupChat(request: HttpRequest): HttpResponse {
+    const response = this.core.importGroupChat(request);
+    if (response.statusCode === 200) {
+      const chatId = parseJsonRecord(response.body)['res'];
+      if (typeof chatId === 'string' && chatId.length > 0) {
+        this.chatBrowser.rescanChatItem('orphan_group', '', '', chatId);
+      }
+    }
+    return response;
+  }
+
+  private hookEditCharacterAttribute(request: HttpRequest): HttpResponse {
+    const response = this.core.editCharacterAttribute(request);
+    if (response.statusCode === 200) {
+      const body = bodyAsRecord(request);
+      const chName = asString(body['ch_name']);
+      if (chName.length > 0) {
+        this.chatBrowser.setCharacterName(ensurePngExtension(sanitizeFileName(asString(body['avatar_url']))), chName);
+      }
+    }
+    return response;
+  }
+
+  private hookMergeCharacterAttributes(request: HttpRequest): HttpResponse {
+    const response = this.core.mergeCharacterAttributes(request);
+    if (response.statusCode === 200) {
+      const body = bodyAsRecord(request);
+      const avatar = asString(body['avatar']) || asString(body['avatar_url']);
+      const data = asRecord(body['data']);
+      const name = asString(body['name']) || asString(data['name']);
+      if (avatar.length > 0 && name.length > 0) {
+        this.chatBrowser.setCharacterName(ensurePngExtension(sanitizeFileName(avatar)), name);
+      }
+    }
+    return response;
+  }
+
+  private hookDuplicateCharacter(request: HttpRequest): HttpResponse {
+    const response = this.core.duplicateCharacter(request);
+    if (response.statusCode === 200) {
+      const body = bodyAsRecord(request);
+      const target = asString(parseJsonRecord(response.body)['path']);
+      const source = ensurePngExtension(sanitizeFileName(asString(body['avatar_url'])));
+      if (target.length > 0 && source.length > 0) {
+        this.chatBrowser.duplicateCharacterName(source, target);
+      }
+    }
+    return response;
+  }
+
+  private hookRenameCharacter(request: HttpRequest): HttpResponse {
+    const response = this.core.renameCharacter(request);
+    if (response.statusCode === 200) {
+      const body = bodyAsRecord(request);
+      const newAvatar = asString(parseJsonRecord(response.body)['avatar']);
+      const oldAvatar = ensurePngExtension(sanitizeFileName(asString(body['avatar_url'])));
+      const newName = asString(body['new_name']);
+      if (newAvatar.length > 0 && oldAvatar.length > 0 && newName.length > 0) {
+        this.chatBrowser.renameCharacterChats(oldAvatar, newAvatar, newName);
+      }
+    }
+    return response;
+  }
+
+  private hookDeleteCharacter(request: HttpRequest): HttpResponse {
+    const response = this.core.deleteCharacter(request);
+    if (response.statusCode === 200) {
+      const body = bodyAsRecord(request);
+      const avatar = ensurePngExtension(sanitizeFileName(asString(body['avatar_url'])));
+      this.chatBrowser.removeCharacterName(avatar);
+      if (body['delete_chats'] === true) {
+        this.chatBrowser.removeCharacterChats(avatar);
+      } else {
+        this.chatBrowser.orphanizeCharacterChats(avatar, withoutExtension(avatar));
+      }
+    }
+    return response;
+  }
+
+  private hookImportCharacter(request: HttpRequest): HttpResponse {
+    const response = this.core.importCharacter(request);
+    if (response.statusCode === 200) {
+      const file_name = parseJsonRecord(response.body)['file_name'];
+      if (typeof file_name === 'string' && file_name.length > 0) {
+        this.chatBrowser.rescanCharacterName(`${file_name}.png`);
+      }
+    }
+    return response;
+  }
+
+  private hookCreateGroup(request: HttpRequest): HttpResponse {
+    const response = this.core.createGroup(request);
+    if (response.statusCode === 200) {
+      const group = parseJsonRecord(response.body);
+      this.chatBrowser.syncGroupChats(asString(group['id']), asString(group['name']), asArray(group['chats']));
+    }
+    return response;
+  }
+
+  private hookEditGroup(request: HttpRequest): HttpResponse {
+    const response = this.core.editGroup(request);
+    if (response.statusCode === 200) {
+      const body = bodyAsRecord(request);
+      this.chatBrowser.syncGroupChats(asString(body['id']), asString(body['name']), asArray(body['chats']));
+    }
+    return response;
+  }
+
+  private hookDeleteGroup(request: HttpRequest): HttpResponse {
+    const response = this.core.deleteGroup(request);
+    if (response.statusCode === 200) {
+      const body = bodyAsRecord(request);
+      this.chatBrowser.removeGroupChats(asString(body['id']));
+    }
+    return response;
+  }
+
+  private chatStatsFromBody(body: JsonRecord): ChatStats {
+    const stats = new ChatStats();
+    const chat = asArray(body['chat']);
+    stats.count = chat.length;
+    if (stats.count > 0) {
+      const last = chat[stats.count - 1];
+      if (last !== null && typeof last === 'object' && !Array.isArray(last)) {
+        stats.preview = asString((last as JsonRecord)['mes']);
+      }
+    }
+    return stats;
   }
 
   private registerRoutes(): void {
@@ -273,27 +486,27 @@ export class BackendService {
     this.server.route('POST', '/api/characters/edit', async (request) => await this.editCharacter(request));
     this.server.route('POST', '/api/characters/edit-avatar', async (request) => await this.editCharacterAvatar(request));
     this.server.route('POST', '/api/characters/edit-attribute',
-      async (request) => this.core.editCharacterAttribute(request));
+      async (request) => this.hookEditCharacterAttribute(request));
     this.server.route('POST', '/api/characters/merge-attributes',
-      async (request) => this.core.mergeCharacterAttributes(request));
-    this.server.route('POST', '/api/characters/duplicate', async (request) => this.core.duplicateCharacter(request));
-    this.server.route('POST', '/api/characters/rename', async (request) => this.core.renameCharacter(request));
-    this.server.route('POST', '/api/characters/delete', async (request) => this.core.deleteCharacter(request));
+      async (request) => this.hookMergeCharacterAttributes(request));
+    this.server.route('POST', '/api/characters/duplicate', async (request) => this.hookDuplicateCharacter(request));
+    this.server.route('POST', '/api/characters/rename', async (request) => this.hookRenameCharacter(request));
+    this.server.route('POST', '/api/characters/delete', async (request) => this.hookDeleteCharacter(request));
     this.server.route('POST', '/api/characters/chats', async (request) => this.core.listCharacterChats(request));
-    this.server.route('POST', '/api/characters/import', async (request) => this.core.importCharacter(request));
+    this.server.route('POST', '/api/characters/import', async (request) => this.hookImportCharacter(request));
     this.server.route('POST', '/api/characters/export', async (request) => await this.core.exportCharacter(request));
 
     this.server.route('POST', '/api/chats/get', async (request) => this.core.getChat(request));
-    this.server.route('POST', '/api/chats/save', async (request) => this.core.saveChat(request));
-    this.server.route('POST', '/api/chats/delete', async (request) => this.core.deleteChat(request));
-    this.server.route('POST', '/api/chats/rename', async (request) => this.core.renameChat(request));
-    this.server.route('POST', '/api/chats/import', async (request) => this.core.importChat(request));
+    this.server.route('POST', '/api/chats/save', async (request) => this.hookSaveChat(request));
+    this.server.route('POST', '/api/chats/delete', async (request) => this.hookDeleteChat(request));
+    this.server.route('POST', '/api/chats/rename', async (request) => this.hookRenameChat(request));
+    this.server.route('POST', '/api/chats/import', async (request) => this.hookImportChat(request));
     this.server.route('POST', '/api/chats/export', async (request) => await this.core.exportChat(request));
     this.server.route('POST', '/api/chats/search', async (request) => this.core.searchChats(request));
     this.server.route('POST', '/api/chats/group/get', async (request) => this.core.getGroupChat(request));
-    this.server.route('POST', '/api/chats/group/save', async (request) => this.core.saveGroupChat(request));
-    this.server.route('POST', '/api/chats/group/delete', async (request) => this.core.deleteGroupChat(request));
-    this.server.route('POST', '/api/chats/group/import', async (request) => this.core.importGroupChat(request));
+    this.server.route('POST', '/api/chats/group/save', async (request) => this.hookSaveGroupChat(request));
+    this.server.route('POST', '/api/chats/group/delete', async (request) => this.hookDeleteGroupChat(request));
+    this.server.route('POST', '/api/chats/group/import', async (request) => this.hookImportGroupChat(request));
     this.server.route('POST', '/api/chats/group/info', async (request) => this.core.groupChatInfo(request));
     this.server.route('POST', '/api/chats/recent', async (request) => this.core.recentChats(request));
     this.server.route('POST', '/api/backups/chat/get', async () => this.core.chatBackups());
@@ -309,9 +522,9 @@ export class BackendService {
     this.server.route('POST', '/importworldinfo', async (request) => this.core.importWorld(request));
 
     this.server.route('POST', '/api/groups/all', async () => this.core.listGroups());
-    this.server.route('POST', '/api/groups/create', async (request) => this.core.createGroup(request));
-    this.server.route('POST', '/api/groups/edit', async (request) => this.core.editGroup(request));
-    this.server.route('POST', '/api/groups/delete', async (request) => this.core.deleteGroup(request));
+    this.server.route('POST', '/api/groups/create', async (request) => this.hookCreateGroup(request));
+    this.server.route('POST', '/api/groups/edit', async (request) => this.hookEditGroup(request));
+    this.server.route('POST', '/api/groups/delete', async (request) => this.hookDeleteGroup(request));
 
     this.server.route('POST', '/api/backgrounds/all', async () => await this.media.listBackgrounds());
     this.server.route('POST', '/api/backgrounds/folders', async () => this.media.listBackgroundFolders());

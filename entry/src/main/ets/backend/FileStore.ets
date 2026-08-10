@@ -82,6 +82,61 @@ export class FileStore {
     }
   }
 
+  async readTextAsync(path: string, fallback: string = ''): Promise<string> {
+    try {
+      return await fileIo.readText(path, { encoding: 'utf-8' });
+    } catch (_err) {
+      return fallback;
+    }
+  }
+
+  async readBytesAsync(path: string): Promise<Uint8Array | null> {
+    try {
+      const stat = await fileIo.stat(path);
+      const size = Number(stat.size);
+      const file = await fileIo.open(path, fileIo.OpenMode.READ_ONLY);
+      try {
+        const buffer = new ArrayBuffer(size);
+        const readLength = await fileIo.read(file.fd, buffer, { offset: 0, length: size });
+        return new Uint8Array(buffer).slice(0, readLength);
+      } finally {
+        await fileIo.close(file);
+      }
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  async statAsync(path: string, name: string = ''): Promise<FileEntry | null> {
+    try {
+      const stat = await fileIo.stat(path);
+      const displayName = name.length > 0 ? name : this.baseName(path);
+      return new FileEntry(displayName, path, !stat.isDirectory(), stat.isDirectory(), Number(stat.size),
+        this.toMs(Number(stat.mtime)), this.toMs(Number(stat.ctime)));
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  async listAsync(path: string): Promise<FileEntry[]> {
+    let names: string[] = [];
+    try {
+      names = await fileIo.listFile(path);
+    } catch (_err) {
+      return [];
+    }
+
+    const entries: FileEntry[] = [];
+    for (const name of names) {
+      const entryPath = joinPath(path, name);
+      const entry = await this.statAsync(entryPath, name);
+      if (entry !== null) {
+        entries.push(entry);
+      }
+    }
+    return entries;
+  }
+
   writeText(path: string, content: string): void {
     this.ensureParentDir(path);
     try {
