@@ -10990,6 +10990,57 @@ function installTavernNextLifecycleFlush() {
     window.addEventListener('freeze', () => flush('freeze'), true);
 }
 
+let tavernNextNotificationPreferenceInstalled = false;
+
+async function syncTavernNextNotificationPreference() {
+    try {
+        const response = await fetch('/api/ohos/notifications/preferences', {
+            headers: getRequestHeaders(),
+        });
+        if (!response.ok) {
+            return;
+        }
+        const data = await response.json();
+        $('#ohos_notify_on_completed').prop('checked', !!data.notifyOnCompleted);
+    } catch (error) {
+        console.warn('Failed to sync TavernNext notification preference', error);
+    }
+}
+
+async function tavernNextNotifyOnCompletedInputHandler() {
+    const checkbox = $('#ohos_notify_on_completed');
+    const enabled = !!checkbox.prop('checked');
+    checkbox.prop('disabled', true);
+    try {
+        const response = await fetch('/api/ohos/notifications/preferences', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ enabled }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+            throw new Error(data.message || '完成通知设置失败');
+        }
+        checkbox.prop('checked', !!data.notifyOnCompleted);
+        toastr.success(data.message || (enabled ? '已开启' : '已关闭'), '完成通知');
+    } catch (error) {
+        console.error('Failed to update TavernNext notification preference', error);
+        checkbox.prop('checked', !enabled);
+        toastr.error(error instanceof Error ? error.message : '完成通知设置失败', '完成通知');
+    } finally {
+        checkbox.prop('disabled', false);
+    }
+}
+
+function installTavernNextNotificationPreference() {
+    if (tavernNextNotificationPreferenceInstalled) {
+        return;
+    }
+    tavernNextNotificationPreferenceInstalled = true;
+    $('#ohos_notify_on_completed').on('change', tavernNextNotifyOnCompletedInputHandler);
+    syncTavernNextNotificationPreference();
+}
+
 export async function saveChatConditional() {
     try {
         await waitUntilCondition(() => !isChatSaving, DEFAULT_SAVE_EDIT_TIMEOUT, 100);
@@ -14195,6 +14246,7 @@ jQuery(async function () {
     // Added here to prevent execution before script.js is loaded and get rid of quirky timeouts
     await firstLoadInit();
     installTavernNextLifecycleFlush();
+    installTavernNextNotificationPreference();
 
     window.addEventListener('beforeunload', (e) => {
         if (isChatSaving || this_edit_mes_id >= 0) {

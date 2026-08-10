@@ -9,7 +9,7 @@ import { FileStore } from './FileStore';
 import { GitService } from './GitService';
 import { HttpRequest, HttpResponse, JsonRecord } from './HttpTypes';
 import { HttpServer } from './HttpServer';
-import { asArray, asNumber, asRecord, asString } from './JsonUtils';
+import { asArray, asBoolean, asNumber, asRecord, asString } from './JsonUtils';
 import { LlmBackgroundTaskService } from './LlmBackgroundTaskService';
 import { MediaService } from './MediaService';
 import { ModelProxyService } from './ModelProxyService';
@@ -128,10 +128,6 @@ export class BackendService {
     return this.chatBrowser;
   }
 
-  getLlmBackgroundTasks(): LlmBackgroundTaskService {
-    return this.llmBackgroundTasks;
-  }
-
   prepareWebDownload(fileName: string, contentType: string): ExportedFile {
     return this.shareExports.webDownloadFileReference(fileName, contentType);
   }
@@ -233,6 +229,11 @@ export class BackendService {
     this.server.route('POST', '/api/ohos/chats/browser/refresh', async () => this.chatBrowser.refreshResponse());
     this.server.route('POST', '/api/ohos/chats/browser/delete',
       async (request) => this.chatBrowser.deleteResponse(request));
+    this.server.route('GET', '/api/ohos/notifications/preferences',
+      async () => HttpResponse.json(this.llmBackgroundTasks.notificationPreferencesJson()));
+    this.server.route('POST', '/api/ohos/notifications/preferences',
+      async (request) => HttpResponse.json(await this.llmBackgroundTasks.updateNotifyOnCompleted(
+        asBoolean(asRecord(request.body as Object | undefined)['enabled']))));
 
     this.server.route('POST', '/api/ping', async () => this.core.ping());
 
