@@ -346,6 +346,18 @@ input[type='checkbox']:focus-visible {
     margin-bottom: 0;
 }
 
+body.ai-indicator-enabled .mes[is_user="false"][is_system="false"] .mes_text p::after {
+    content: 'AI';
+    display: inline-block;
+    margin-left: 0.18em;
+    color: #808080;
+    font-size: 0.55em;
+    font-weight: 600;
+    line-height: 0;
+    opacity: 0.55;
+    vertical-align: super;
+}
+
 .mes_text li tt,
 .mes_reasoning li tt {
     display: inline-block;

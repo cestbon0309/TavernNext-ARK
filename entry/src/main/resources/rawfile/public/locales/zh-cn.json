@@ -838,6 +838,8 @@
     "Chat Timestamps": "聊天时间戳",
     "Show an icon for the API that generated the message": "显示此消息所用 API 的图标",
     "Model Icon": "模型图标",
+    "Show a gray AI indicator after every paragraph in AI replies.": "在 AI 回复的每一段末尾显示灰色 AI 角标。",
+    "Enable AI Indicator": "启用 AI 提示",
     "Show sequential message numbers in the chat log": "在聊天记录中显示消息楼层",
     "Message IDs": "显示消息楼层",
     "Hide avatars, only in chat messages.": "在聊天记录中隐藏头像。",

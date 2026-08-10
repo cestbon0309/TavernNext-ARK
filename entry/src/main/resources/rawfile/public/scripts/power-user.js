@@ -202,6 +202,7 @@ export const power_user = {
     timer_enabled: true,
     timestamps_enabled: true,
     timestamp_model_icon: false,
+    ai_indicator_enabled: true,
     mesIDDisplay_enabled: false,
     hideChatAvatars_enabled: false,
     max_context_unlocked: false,
@@ -494,6 +495,11 @@ function switchTimestamps() {
 function switchIcons() {
     $('body').toggleClass('no-modelIcons', !power_user.timestamp_model_icon);
     $('#messageModelIconEnabled').prop('checked', power_user.timestamp_model_icon);
+}
+
+function switchAiIndicator() {
+    $('body').toggleClass('ai-indicator-enabled', power_user.ai_indicator_enabled);
+    $('#aiIndicatorEnabled').prop('checked', power_user.ai_indicator_enabled);
 }
 
 function switchTokenCount() {
@@ -1518,6 +1524,7 @@ export function applyPowerUserSettings() {
     switchTimer();
     switchTimestamps();
     switchIcons();
+    switchAiIndicator();
     switchMesIDDisplay();
     switchHideChatAvatars();
     switchTokenCount();
@@ -1746,6 +1753,7 @@ export async function loadPowerUserSettings(settings, data) {
     $('#messageTimerEnabled').prop('checked', power_user.timer_enabled);
     $('#messageTimestampsEnabled').prop('checked', power_user.timestamps_enabled);
     $('#messageModelIconEnabled').prop('checked', power_user.timestamp_model_icon);
+    $('#aiIndicatorEnabled').prop('checked', power_user.ai_indicator_enabled);
     $('#mesIDDisplayEnabled').prop('checked', power_user.mesIDDisplay_enabled);
     $('#hideChatAvatarsEnabled').prop('checked', power_user.hideChatAvatars_enabled);
     $('#prefer_character_prompt').prop('checked', power_user.prefer_character_prompt);
@@ -3724,6 +3732,12 @@ jQuery(() => {
         const value = !!$(this).prop('checked');
         power_user.timestamp_model_icon = value;
         switchIcons();
+        saveSettingsDebounced();
+    });
+
+    $('#aiIndicatorEnabled').on('input', function () {
+        power_user.ai_indicator_enabled = !!$(this).prop('checked');
+        switchAiIndicator();
         saveSettingsDebounced();
     });
 
