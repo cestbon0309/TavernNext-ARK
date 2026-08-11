@@ -48,6 +48,19 @@ if(NOT CARGO_EXECUTABLE)
     message(FATAL_ERROR "cargo is required to build tavern_tokenizer native module")
 endif()
 
+find_program(RUSTUP_EXECUTABLE rustup)
+if(RUSTUP_EXECUTABLE)
+    execute_process(
+        COMMAND ${RUSTUP_EXECUTABLE} which rustc
+        OUTPUT_VARIABLE RUSTC_EXECUTABLE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE RUSTC_RESOLVE_RESULT
+    )
+    if(NOT RUSTC_RESOLVE_RESULT EQUAL 0)
+        unset(RUSTC_EXECUTABLE)
+    endif()
+endif()
+
 if(OHOS_ARCH STREQUAL "x86_64")
     set(RUST_OHOS_TARGET "x86_64-unknown-linux-ohos")
     set(RUST_ENV_TARGET "x86_64_unknown_linux_ohos")
@@ -74,6 +87,7 @@ add_custom_command(
         "CFLAGS_${RUST_ENV_TARGET}=${RUST_CFLAGS}"
         "CXXFLAGS_${RUST_ENV_TARGET}=${RUST_CXXFLAGS}"
         "CC_SHELL_ESCAPED_FLAGS=1"
+        $<$<BOOL:${RUSTC_EXECUTABLE}>:RUSTC=${RUSTC_EXECUTABLE}>
         ${CARGO_EXECUTABLE} build --manifest-path "${TAVERN_TOKENIZER_FFI_DIR}/Cargo.toml"
         --target ${RUST_OHOS_TARGET} --release
     WORKING_DIRECTORY "${REPO_ROOT}"
