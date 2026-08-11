@@ -375,10 +375,13 @@ struct ChatBrowserListCard {
     if (diffMs < 7 * dayMs) {
       return `${Math.floor(diffMs / dayMs)}天前`;
     }
-    if (diffMs < 30 * dayMs) {
-      return `${Math.floor(diffMs / (7 * dayMs))}周前`;
+    const date = new Date(timestamp);
+    const month = `${date.getMonth() + 1}`.padStart(2, '0');
+    const day = `${date.getDate()}`.padStart(2, '0');
+    if (diffMs < 365 * dayMs) {
+      return `${month}/${day}`;
     }
-    return new Date(timestamp).toLocaleDateString();
+    return `${date.getFullYear()}/${month}/${day}`;
   }
 }
 
