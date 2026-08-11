@@ -12,6 +12,14 @@ const DEFAULT_SHELL_BACKGROUND = '#171717';
 const BACK_EXIT_INTERVAL_MS = 2000;
 const CHAT_BROWSER_DELETE_ANIMATION_MS = 220;
 const CHAT_BROWSER_THEME_ANIMATION_MS = 220;
+const CHAT_BROWSER_SEARCH_ANIMATION_MS = 360;
+const CHAT_BROWSER_SEARCH_COLLAPSE_OFFSET = 72;
+const CHAT_BROWSER_SEARCH_RESTORE_DISTANCE = 48;
+const CHAT_BROWSER_SEARCH_INPUT_KEY = 'chat-browser-search-input';
+const CHAT_BROWSER_HEADER_EXPANDED_HEIGHT = 128;
+const CHAT_BROWSER_HEADER_COLLAPSED_HEIGHT = 64;
+const CHAT_BROWSER_HEADER_BACKGROUND_EXPANDED_HEIGHT = CHAT_BROWSER_HEADER_EXPANDED_HEIGHT + 5;
+const CHAT_BROWSER_SEARCH_SIZE = 46;
 const CHAT_BROWSER_ROW_HEIGHT = 90;
 const CHAT_BROWSER_DELETE_ACTION_WIDTH = 80;
 const CHAT_BROWSER_DELETE_ACTION_GAP = 12;
@@ -391,6 +399,8 @@ struct Index {
   @State chatBrowserDarkMode: boolean = false;
   @State chatBrowserRefreshing: boolean = false;
   @State chatBrowserDeletingIds: string[] = [];
+  @State chatBrowserSearchCollapsed: boolean = false;
+  @State chatBrowserWidth: number = 360;
   @State archiveProgressActive: boolean = false;
   @State archiveProgressTitle: string = '';
   @State archiveProgressMessage: string = '';
@@ -403,6 +413,10 @@ struct Index {
   private webDialogService: WebDialogService = new WebDialogService();
   private webRevealToken: number = 0;
   private chatBrowserAnimationToken: number = 0;
+  private chatBrowserSearchFocusToken: number = 0;
+  private chatBrowserSearchRestoreDistance: number = 0;
+  private chatBrowserScroller: Scroller = new Scroller();
+  private chatBrowserSearchController: TextInputController = new TextInputController();
   private lastBackPressTime: number = 0;
   private handlingBackPress: boolean = false;
   private backendService: BackendService | null = null;
@@ -675,7 +689,16 @@ struct Index {
   private chatBrowserView() {
     Stack({ alignContent: Alignment.TopStart }) {
       Column() {
-        Column({ space: 12 }) {
+        Stack({ alignContent: Alignment.TopStart }) {
+          Row()
+            .width('100%')
+            .height(this.chatBrowserSearchCollapsed ? CHAT_BROWSER_HEADER_COLLAPSED_HEIGHT :
+              CHAT_BROWSER_HEADER_BACKGROUND_EXPANDED_HEIGHT)
+            .position({ x: 0, y: 0 })
+            .backgroundColor(this.chatBrowserHeaderColor())
+            .border({ width: { bottom: 1 }, color: this.chatBrowserHeaderBorderColor() })
+            .animation({ duration: CHAT_BROWSER_SEARCH_ANIMATION_MS, curve: Curve.FastOutSlowIn })
+
           Row() {
             Text('全部聊天')
               .fontSize(28)
@@ -732,65 +755,89 @@ struct Index {
             })
           }
           .width('100%')
+          .height(42)
+          .padding({ left: 20, right: 20 })
           .alignItems(VerticalAlign.Center)
+          .position({ x: 0, y: 16 })
 
-          Row({ space: 8 }) {
-            Stack({ alignContent: Alignment.TopStart }) {
-              TextInput({ placeholder: '搜索聊天记录', text: this.chatBrowserQuery })
-                .width('100%')
-                .height(46)
-                .fontSize(15)
-                .placeholderColor(this.chatBrowserPlaceholderColor())
-                .fontColor(this.chatBrowserPrimaryTextColor())
-                .backgroundColor(this.chatBrowserInputColor())
-                .borderRadius(14)
-                .padding({ left: 44, right: 16 })
-                .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
-                .onChange((value: string) => {
-                  this.chatBrowserQuery = value;
-                })
-
-              Image($r('app.media.figma_chat_search'))
-                .width(18)
-                .height(18)
-                .fillColor(this.chatBrowserIconColor())
-                .position({ x: 16, y: 14 })
-                .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
-            }
-            .layoutWeight(1)
-            .height(46)
-
-            Button({ stateEffect: true }) {
-              Stack() {
-                Image($r('app.media.ic_public_refresh'))
-                  .width(20)
-                  .height(20)
-                  .fillColor(this.chatBrowserIconColor())
-                  .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
-              }
-              .width('100%')
-              .height('100%')
-            }
-            .width(46)
-            .height(46)
-            .padding(0)
-            .borderRadius(14)
-            .backgroundColor(this.chatBrowserInputColor())
-            .opacity(this.chatBrowserRefreshing ? 0.5 : 1)
-            .enabled(!this.chatBrowserRefreshing)
-            .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
-            .onClick(() => {
-              this.manualRefreshChatBrowserItems();
+          Stack({ alignContent: Alignment.TopStart }) {
+            TextInput({
+              placeholder: '搜索聊天记录',
+              text: this.chatBrowserQuery,
+              controller: this.chatBrowserSearchController
             })
+              .width('100%')
+              .height(CHAT_BROWSER_SEARCH_SIZE)
+              .fontSize(15)
+              .placeholderColor(this.chatBrowserPlaceholderColor())
+              .fontColor(this.chatBrowserPrimaryTextColor())
+              .backgroundColor(Color.Transparent)
+              .padding({ left: 44, right: 16 })
+              .opacity(this.chatBrowserSearchCollapsed ? 0 : 1)
+              .enabled(!this.chatBrowserSearchCollapsed)
+              .id(CHAT_BROWSER_SEARCH_INPUT_KEY)
+              .animation({ duration: CHAT_BROWSER_SEARCH_ANIMATION_MS, curve: Curve.FastOutSlowIn })
+              .onChange((value: string) => {
+                this.chatBrowserQuery = value;
+              })
+
+            Image($r('app.media.figma_chat_search'))
+              .width(18)
+              .height(18)
+              .fillColor(this.chatBrowserIconColor())
+              .position({ x: this.chatBrowserSearchCollapsed ? 14 : 16, y: 14 })
+              .animation({ duration: CHAT_BROWSER_SEARCH_ANIMATION_MS, curve: Curve.FastOutSlowIn })
           }
-          .width('100%')
-          .alignItems(VerticalAlign.Center)
+          .width(this.chatBrowserSearchWidth())
+          .height(CHAT_BROWSER_SEARCH_SIZE)
+          .position({ x: this.chatBrowserSearchX(), y: this.chatBrowserSearchCollapsed ? 11 : 70 })
+          .backgroundColor(this.chatBrowserInputColor())
+          .borderRadius(CHAT_BROWSER_SEARCH_SIZE / 2)
+          .clip(true)
+          .accessibilityText(this.chatBrowserSearchCollapsed ? '展开搜索' : '搜索聊天记录')
+          .animation({ duration: CHAT_BROWSER_SEARCH_ANIMATION_MS, curve: Curve.FastOutSlowIn })
+          .onClick(() => {
+            if (this.chatBrowserSearchCollapsed) {
+              this.expandChatBrowserSearch();
+            }
+          })
+
+          Button({ stateEffect: true }) {
+            Stack() {
+              Image($r('app.media.ic_public_refresh'))
+                .width(20)
+                .height(20)
+                .fillColor(this.chatBrowserIconColor())
+                .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
+            }
+            .width('100%')
+            .height('100%')
+          }
+          .width(CHAT_BROWSER_SEARCH_SIZE)
+          .height(CHAT_BROWSER_SEARCH_SIZE)
+          .padding(0)
+          .borderRadius(14)
+          .backgroundColor(this.chatBrowserInputColor())
+          .position({ x: this.chatBrowserRefreshX(), y: 70 })
+          .opacity(this.chatBrowserSearchCollapsed ? 0 : (this.chatBrowserRefreshing ? 0.5 : 1))
+          .scale({
+            x: this.chatBrowserSearchCollapsed ? 0.72 : 1,
+            y: this.chatBrowserSearchCollapsed ? 0.72 : 1
+          })
+          .enabled(!this.chatBrowserSearchCollapsed && !this.chatBrowserRefreshing)
+          .animation({ duration: CHAT_BROWSER_SEARCH_ANIMATION_MS, curve: Curve.FastOutSlowIn })
+          .onClick(() => {
+            this.manualRefreshChatBrowserItems();
+          })
         }
         .width('100%')
-        .padding({ left: 20, right: 20, top: 16, bottom: 12 })
-        .backgroundColor(this.chatBrowserHeaderColor())
-        .border({ width: { bottom: 1 }, color: this.chatBrowserHeaderBorderColor() })
-        .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
+        .height(CHAT_BROWSER_HEADER_COLLAPSED_HEIGHT)
+        .clip(false)
+        .zIndex(1)
+        .animation({ duration: CHAT_BROWSER_SEARCH_ANIMATION_MS, curve: Curve.FastOutSlowIn })
+        .onAreaChange((_oldValue: Area, newValue: Area) => {
+          this.updateChatBrowserWidth(newValue.width);
+        })
 
         Column({ space: 12 }) {
 
@@ -839,7 +886,13 @@ struct Index {
             .justifyContent(FlexAlign.Center)
             .padding({ left: 20, right: 20 })
           } else {
-            List({ space: 12 }) {
+            List({ space: 12, scroller: this.chatBrowserScroller }) {
+              ListItem() {
+                Row()
+                  .width('100%')
+              }
+              .height(CHAT_BROWSER_HEADER_EXPANDED_HEIGHT - CHAT_BROWSER_HEADER_COLLAPSED_HEIGHT - 12)
+
               ForEach(this.filteredChatBrowserItems(), (item: ChatBrowserItem) => {
                 ChatBrowserListCard({
                   item,
@@ -857,11 +910,21 @@ struct Index {
             .width('100%')
             .layoutWeight(1)
             .edgeEffect(EdgeEffect.Spring)
+            .onScrollStart(() => {
+              this.chatBrowserSearchRestoreDistance = 0;
+            })
+            .onWillScroll((scrollOffset: number, _scrollState: ScrollState, scrollSource: ScrollSource) => {
+              this.handleChatBrowserScroll(scrollOffset, scrollSource);
+            })
+            .onReachStart(() => {
+              this.expandChatBrowserSearch(false);
+            })
           }
         }
         .width('100%')
         .layoutWeight(1)
         .padding({ top: 16, bottom: 16 })
+        .zIndex(0)
       }
       .width('100%')
       .height('100%')
@@ -927,13 +990,16 @@ struct Index {
 
   private openChatBrowser(): void {
     const token = ++this.chatBrowserAnimationToken;
+    ++this.chatBrowserSearchFocusToken;
     this.loadChatBrowserDarkMode();
+    this.chatBrowserQuery = '';
+    this.chatBrowserMessage = '';
+    this.chatBrowserSearchCollapsed = false;
+    this.chatBrowserSearchRestoreDistance = 0;
     if (!this.chatBrowserOpen) {
       this.chatBrowserOpacity = 0;
       this.chatBrowserOpen = true;
     }
-    this.chatBrowserQuery = '';
-    this.chatBrowserMessage = '';
     this.refreshChatBrowserItems(false);
     setTimeout(() => {
       if (this.chatBrowserAnimationToken === token && this.chatBrowserOpen) {
@@ -947,6 +1013,9 @@ struct Index {
       return;
     }
     const token = ++this.chatBrowserAnimationToken;
+    ++this.chatBrowserSearchFocusToken;
+    this.chatBrowserSearchController.stopEditing();
+    this.chatBrowserSearchRestoreDistance = 0;
     this.chatBrowserOpacity = 0;
     this.chatBrowserMessage = '';
     this.chatBrowserDeletingIds = [];
@@ -955,6 +1024,85 @@ struct Index {
         this.chatBrowserOpen = false;
       }
     }, CHAT_BROWSER_THEME_ANIMATION_MS);
+  }
+
+  private chatBrowserSearchWidth(): number {
+    if (this.chatBrowserSearchCollapsed) {
+      return CHAT_BROWSER_SEARCH_SIZE;
+    }
+    return Math.max(160, this.chatBrowserWidth - 94);
+  }
+
+  private chatBrowserSearchX(): number {
+    if (!this.chatBrowserSearchCollapsed) {
+      return 20;
+    }
+    return Math.max(20, this.chatBrowserWidth - 154);
+  }
+
+  private chatBrowserRefreshX(): number {
+    return Math.max(20, this.chatBrowserWidth - 66);
+  }
+
+  private updateChatBrowserWidth(width: Length): void {
+    if (typeof width === 'number' && width > 0 && width !== this.chatBrowserWidth) {
+      this.chatBrowserWidth = width;
+    }
+  }
+
+  private handleChatBrowserScroll(scrollOffset: number, scrollSource: ScrollSource): void {
+    if (scrollSource === ScrollSource.EDGE_EFFECT) {
+      return;
+    }
+    const offset = this.chatBrowserScroller.currentOffset();
+    if (offset.yOffset <= 0) {
+      this.chatBrowserSearchRestoreDistance = 0;
+      this.expandChatBrowserSearch(false);
+      return;
+    }
+
+    if (this.chatBrowserSearchCollapsed) {
+      if (scrollOffset < 0) {
+        this.chatBrowserSearchRestoreDistance += -scrollOffset;
+        if (this.chatBrowserSearchRestoreDistance >= CHAT_BROWSER_SEARCH_RESTORE_DISTANCE) {
+          this.expandChatBrowserSearch(false);
+        }
+      } else if (scrollOffset > 0) {
+        this.chatBrowserSearchRestoreDistance = 0;
+      }
+      return;
+    }
+
+    this.chatBrowserSearchRestoreDistance = 0;
+    if (scrollOffset <= 0) {
+      return;
+    }
+    if (offset.yOffset < CHAT_BROWSER_SEARCH_COLLAPSE_OFFSET) {
+      return;
+    }
+    ++this.chatBrowserSearchFocusToken;
+    this.chatBrowserSearchController.stopEditing();
+    this.chatBrowserSearchCollapsed = true;
+  }
+
+  private expandChatBrowserSearch(focusInput: boolean = true): void {
+    if (!this.chatBrowserSearchCollapsed) {
+      return;
+    }
+    const token = ++this.chatBrowserSearchFocusToken;
+    this.chatBrowserSearchRestoreDistance = 0;
+    this.chatBrowserSearchCollapsed = false;
+    if (!focusInput) {
+      return;
+    }
+    setTimeout(() => {
+      if (token !== this.chatBrowserSearchFocusToken || !this.chatBrowserOpen || this.chatBrowserSearchCollapsed) {
+        return;
+      }
+      if (focusControl.requestFocus(CHAT_BROWSER_SEARCH_INPUT_KEY)) {
+        this.chatBrowserSearchController.caretPosition(this.chatBrowserQuery.length);
+      }
+    }, CHAT_BROWSER_SEARCH_ANIMATION_MS);
   }
 
   private refreshChatBrowserItems(forceRefresh: boolean = false): void {
@@ -1061,7 +1209,7 @@ struct Index {
   }
 
   private chatBrowserHeaderColor(): string {
-    return this.chatBrowserDarkMode ? 'rgba(20,20,28,0.48)' : 'rgba(255,255,255,0.20)';
+    return this.chatBrowserDarkMode ? '#15151C' : '#F5F7FA';
   }
 
   private chatBrowserHeaderBorderColor(): string {
