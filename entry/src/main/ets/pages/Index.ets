@@ -29,7 +29,8 @@ const CHAT_BROWSER_REFRESH_SPACER_HEIGHT = CHAT_BROWSER_HEADER_EXPANDED_HEIGHT -
   CHAT_BROWSER_HEADER_COLLAPSED_HEIGHT - 12;
 const CHAT_BROWSER_REFRESH_INDICATOR_TOP = CHAT_BROWSER_REFRESH_SPACER_HEIGHT + 12 -
   CHAT_BROWSER_REFRESH_INDICATOR_SIZE - CHAT_BROWSER_REFRESH_INDICATOR_GAP;
-const CHAT_BROWSER_SEARCH_SIZE = 46;
+const CHAT_BROWSER_SEARCH_SIZE = 42;
+const CHAT_BROWSER_HEADER_ICON_GLYPH_SIZE = 22;
 const CHAT_BROWSER_ROW_HEIGHT = 90;
 const CHAT_BROWSER_DELETE_ACTION_WIDTH = 80;
 const CHAT_BROWSER_DELETE_ACTION_GAP = 12;
@@ -710,14 +711,19 @@ struct Index {
     Stack({ alignContent: Alignment.TopStart }) {
       Column() {
         Stack({ alignContent: Alignment.TopStart }) {
-          Row()
-            .width('100%')
-            .height(this.chatBrowserSearchCollapsed ? CHAT_BROWSER_HEADER_COLLAPSED_HEIGHT :
-              CHAT_BROWSER_HEADER_BACKGROUND_EXPANDED_HEIGHT)
-            .position({ x: 0, y: 0 })
-            .backgroundColor(this.chatBrowserHeaderColor())
-            .border({ width: { bottom: 1 }, color: this.chatBrowserHeaderBorderColor() })
-            .animation({ duration: CHAT_BROWSER_SEARCH_ANIMATION_MS, curve: Curve.FastOutSlowIn })
+          Row() {
+            Row()
+              .width('100%')
+              .height('100%')
+              .backgroundColor(this.chatBrowserHeaderColor())
+              .border({ width: { bottom: 1 }, color: this.chatBrowserHeaderBorderColor() })
+              .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
+          }
+          .width('100%')
+          .height(this.chatBrowserSearchCollapsed ? CHAT_BROWSER_HEADER_COLLAPSED_HEIGHT :
+            CHAT_BROWSER_HEADER_BACKGROUND_EXPANDED_HEIGHT)
+          .position({ x: 0, y: 0 })
+          .animation({ duration: CHAT_BROWSER_SEARCH_ANIMATION_MS, curve: Curve.FastOutSlowIn })
 
           Row() {
             Text('全部聊天')
@@ -733,8 +739,8 @@ struct Index {
             Button({ type: ButtonType.Circle, stateEffect: true }) {
               Stack() {
                 Image($r('app.media.ic_controlcenter_dark_filled'))
-                  .width(24)
-                  .height(24)
+                  .width(CHAT_BROWSER_HEADER_ICON_GLYPH_SIZE)
+                  .height(CHAT_BROWSER_HEADER_ICON_GLYPH_SIZE)
                   .fillColor(this.chatBrowserPrimaryTextColor())
                   .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
               }
@@ -756,8 +762,8 @@ struct Index {
             Button({ type: ButtonType.Circle, stateEffect: true }) {
               Stack() {
                 Image($r('app.media.ic_public_close'))
-                  .width(24)
-                  .height(24)
+                  .width(CHAT_BROWSER_HEADER_ICON_GLYPH_SIZE)
+                  .height(CHAT_BROWSER_HEADER_ICON_GLYPH_SIZE)
                   .fillColor(this.chatBrowserPrimaryTextColor())
                   .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
               }
@@ -782,6 +788,15 @@ struct Index {
           .position({ x: 0, y: 11 })
 
           Stack({ alignContent: Alignment.TopStart }) {
+            Row()
+              .width('100%')
+              .height('100%')
+              .backgroundColor(this.chatBrowserChromeColor())
+              .borderRadius(CHAT_BROWSER_SEARCH_SIZE / 2)
+              .border({ width: 1, color: this.chatBrowserChromeBorderColor() })
+              .clip(true)
+              .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
+
             TextInput({
               placeholder: '搜索聊天记录',
               text: this.chatBrowserQuery,
@@ -803,19 +818,16 @@ struct Index {
               })
 
             Image($r('app.media.ic_public_search'))
-              .width(this.chatBrowserSearchCollapsed ? 24 : 20)
-              .height(this.chatBrowserSearchCollapsed ? 24 : 20)
+              .width(this.chatBrowserSearchCollapsed ? CHAT_BROWSER_HEADER_ICON_GLYPH_SIZE : 20)
+              .height(this.chatBrowserSearchCollapsed ? CHAT_BROWSER_HEADER_ICON_GLYPH_SIZE : 20)
               .fillColor(this.chatBrowserIconColor())
-              .position({ x: this.chatBrowserSearchCollapsed ? 11 : 16,
-                y: this.chatBrowserSearchCollapsed ? 11 : 13 })
+              .position({ x: this.chatBrowserSearchCollapsed ? 10 : 16,
+                y: this.chatBrowserSearchCollapsed ? 10 : 11 })
               .animation({ duration: CHAT_BROWSER_SEARCH_ANIMATION_MS, curve: Curve.FastOutSlowIn })
           }
           .width(this.chatBrowserSearchWidth())
           .height(CHAT_BROWSER_SEARCH_SIZE)
           .position({ x: this.chatBrowserSearchX(), y: this.chatBrowserSearchCollapsed ? 11 : 70 })
-          .backgroundColor(this.chatBrowserChromeColor())
-          .borderRadius(CHAT_BROWSER_SEARCH_SIZE / 2)
-          .border({ width: 1, color: this.chatBrowserChromeBorderColor() })
           .clip(true)
           .accessibilityText(this.chatBrowserSearchCollapsed ? '展开搜索' : '搜索聊天记录')
           .animation({ duration: CHAT_BROWSER_SEARCH_ANIMATION_MS, curve: Curve.FastOutSlowIn })
@@ -1044,7 +1056,7 @@ struct Index {
     if (!this.chatBrowserSearchCollapsed) {
       return 20;
     }
-    return Math.max(20, this.chatBrowserWidth - 174);
+    return Math.max(20, this.chatBrowserWidth - 170);
   }
 
   private updateChatBrowserWidth(width: Length): void {
