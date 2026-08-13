@@ -2305,21 +2305,12 @@ export class SillyTavernCore {
   }
 
   private compactChatRowForClient(row: Object): Object {
-    if (row === null || Array.isArray(row) || typeof row !== 'object') {
-      return row;
-    }
-    const record = row as JsonRecord;
-    if (record['chat_metadata'] !== undefined) {
-      return row;
-    }
-    const output: JsonRecord = {};
-    for (const key of Object.keys(record)) {
-      if (this.shouldPreserveChatFieldOnDisk(key)) {
-        continue;
-      }
-      output[key] = record[key];
-    }
-    return output;
+    // 扩展字段（数据库插件表数据、剧情推进数据等）必须随聊天一起返回给前端，
+    // 否则依赖这些字段的第三方扩展（如 JS-Slash-Runner 数据库脚本）在重进对话/重启后
+    // 会读不到自己的数据，表现为"表数据丢失"。因此这里不再过滤任何字段，
+    // 仅保留 chat_metadata 行的原样透传；字段的防覆盖由 saveChat 里的
+    // mergePreservedChatFields 从磁盘旧文件恢复来兜底。
+    return row;
   }
 
   private mergePreservedChatFields(path: string, rows: JsonArray): JsonArray {
@@ -2407,6 +2398,12 @@ export class SillyTavernCore {
       case 'TavernDB_ACU_IndependentData':
       case 'TavernDB_ACU_SummaryData':
       case 'TavernDB_ACU_Data':
+      case 'TavernDB_ACU_ScopedConfig':
+      case 'TavernDB_ACU_InternalSheetGuide':
+      case 'TavernDB_ACU_TableHeaderGuide':
+      case 'TavernDB_ACU_ModifiedKeys':
+      case 'TavernDB_ACU_UpdateGroupKeys':
+      case 'TavernDB_ACU_Identity':
       case '__bl_original_mes':
       case '__bl_diff_source_signature':
       case '__bl_diff_last_cleaned_mes':
