@@ -1,6 +1,8 @@
 import { common, Context } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AntiPeepService } from './AntiPeepService';
+import { AppSettingsService, APP_SETTING_FORCE_HTTP1_1 } from './AppSettingsService';
+import { BackgroundPrivacyService } from './BackgroundPrivacyService';
 import { ChatBrowserService } from './ChatBrowserService';
 import { DataDirectories } from './DataDirectories';
 import { CryptoUtils } from './CryptoUtils';
@@ -71,6 +73,8 @@ export class BackendService {
   private vectors: VectorService;
   private shareExports: ShareExportService;
   private shellTheme: ShellThemeService;
+  private appSettings: AppSettingsService;
+  private backgroundPrivacy: BackgroundPrivacyService;
   private chatBrowser: ChatBrowserService;
   private antiPeep: AntiPeepService;
   private staticFiles: StaticFileServer;
@@ -94,6 +98,7 @@ export class BackendService {
     this.logStartupStep('DefaultContentSeeder.seedDefaultUser', stepStartedAt);
     stepStartedAt = Date.now();
     this.directories.ensureDefaultUserFiles();
+    this.appSettings = AppSettingsService.getInstance(context.filesDir);
     this.logStartupStep('DataDirectories.ensureDefaultUserFiles', stepStartedAt);
     this.shellTheme = ShellThemeService.getInstance(context);
     stepStartedAt = Date.now();
@@ -110,6 +115,7 @@ export class BackendService {
     this.users = new UsersService(this.store, this.directories, this.crypto, this.shareExports,
       context as common.UIAbilityContext, this.git, context.resourceManager);
     this.extensions = new ExtensionsService(this.store, this.directories, context.resourceManager, this.git);
+    this.backgroundPrivacy = new BackgroundPrivacyService(context.filesDir);
     this.llmBackgroundTasks = new LlmBackgroundTaskService(context as common.UIAbilityContext);
     this.modelProxy = new ModelProxyService(this.directories, this.secrets, this.llmBackgroundTasks);
     this.tokenizers = new TokenizerService();
@@ -135,6 +141,10 @@ export class BackendService {
   getChatBrowser(): ChatBrowserService {
     return this.chatBrowser;
   }
+  getBackgroundPrivacy(): BackgroundPrivacyService {
+    return this.backgroundPrivacy;
+  }
+
 
   getAntiPeep(): AntiPeepService {
     return this.antiPeep;
@@ -457,6 +467,21 @@ export class BackendService {
     this.server.route('POST', '/api/ohos/notifications/preferences',
       async (request) => HttpResponse.json(await this.llmBackgroundTasks.updateNotifyOnCompleted(
         asBoolean(asRecord(request.body as Object | undefined)['enabled']))));
+    this.server.route('GET', '/api/ohos/background-privacy/settings',
+      async () => HttpResponse.json(this.backgroundPrivacy.settingsJson()));
+    this.server.route('POST', '/api/ohos/background-privacy/settings',
+      async (request) => HttpResponse.json(this.backgroundPrivacy.updateEnabled(
+        asBoolean(bodyAsRecord(request)['enabled'], this.backgroundPrivacy.isEnabled()))));
+    this.server.route('GET', '/api/ohos/settings', async () => HttpResponse.json(this.appSettings.settingsJson()));
+    this.server.route('POST', '/api/ohos/settings', async (request) => {
+      const body = bodyAsRecord(request);
+      const forceHttp1_1 = body['forceHttp1_1'];
+      if (typeof forceHttp1_1 === 'boolean') {
+        this.appSettings.setBoolean(APP_SETTING_FORCE_HTTP1_1, forceHttp1_1);
+      }
+      return HttpResponse.json(this.appSettings.settingsJson());
+    });
+
 
     this.server.route('POST', '/api/ping', async () => this.core.ping());
 

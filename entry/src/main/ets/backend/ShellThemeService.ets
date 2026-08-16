@@ -1,15 +1,13 @@
 import { Context } from '@kit.AbilityKit';
 import { ColorMetrics, window } from '@kit.ArkUI';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { FileStore } from './FileStore';
+import { AppSettingsService, APP_SETTING_SHELL_BACKGROUND_COLOR } from './AppSettingsService';
 import { HttpRequest, HttpResponse, JsonRecord } from './HttpTypes';
-import { joinPath } from './PathUtils';
 
 const DOMAIN = 0x5441;
 const TAG = 'ShellTheme';
 const DEFAULT_BACKGROUND = '#171717';
 const TRANSPARENT = '#00000000';
-const SETTINGS_FILE = 'shell-theme.json';
 
 type BackgroundListener = (color: string) => void;
 
@@ -27,16 +25,14 @@ class RgbaColor {
 
 export class ShellThemeService {
   private static instance: ShellThemeService | null = null;
-  private store: FileStore = new FileStore();
-  private settingsPath: string;
+  private settings: AppSettingsService;
   private backgroundColor: string = DEFAULT_BACKGROUND;
   private mainWindow: window.Window | null = null;
   private listeners: BackgroundListener[] = [];
 
   private constructor(context: Context) {
-    this.settingsPath = joinPath(context.filesDir, '_shell', SETTINGS_FILE);
-    const saved = this.store.readJsonRecord(this.settingsPath);
-    this.backgroundColor = this.normalizeColor(this.asString(saved['backgroundColor'])) ?? DEFAULT_BACKGROUND;
+    this.settings = AppSettingsService.getInstance(context.filesDir);
+    this.backgroundColor = this.normalizeColor(this.settings.getString(APP_SETTING_SHELL_BACKGROUND_COLOR, DEFAULT_BACKGROUND)) ?? DEFAULT_BACKGROUND;
     this.applyToStartWindow();
   }
 
@@ -96,9 +92,7 @@ export class ShellThemeService {
       return;
     }
     this.backgroundColor = color;
-    const settings: JsonRecord = {};
-    settings['backgroundColor'] = color;
-    this.store.writeJson(this.settingsPath, settings);
+    this.settings.setString(APP_SETTING_SHELL_BACKGROUND_COLOR, color);
     this.applyShellTheme();
     for (const listener of this.listeners) {
       listener(color);

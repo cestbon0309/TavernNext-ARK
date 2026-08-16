@@ -30,6 +30,7 @@ export default class EntryAbility extends UIAbility {
     // Main window is created, set main page for this ability
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
     this.applyShellTheme(windowStage);
+    this.attachBackgroundPrivacy(windowStage);
 
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
@@ -49,6 +50,16 @@ export default class EntryAbility extends UIAbility {
       hilog.warn(DOMAIN, 'testTag', 'Failed to apply shell theme. Cause: %{public}s', JSON.stringify(err));
     }
   }
+
+  private attachBackgroundPrivacy(windowStage: window.WindowStage): void {
+    try {
+      const mainWindow = windowStage.getMainWindowSync();
+      BackendService.getInstance(this.context).getBackgroundPrivacy().attachWindow(mainWindow);
+    } catch (err) {
+      hilog.warn(DOMAIN, 'testTag', 'Failed to attach background privacy. Cause: %{public}s', JSON.stringify(err));
+    }
+  }
+
 
   onWindowStageDestroy(): void {
     // Main window is destroyed, release UI related resources
