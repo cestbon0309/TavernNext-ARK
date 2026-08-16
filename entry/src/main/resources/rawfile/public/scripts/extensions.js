@@ -11,6 +11,7 @@ import { debounce_timeout } from './constants.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { SimpleMutex } from './util/SimpleMutex.js';
 import { initOhosLlmApiLogs } from './ohos-llm-api-logs.js';
+import { initOhosBackgroundPrivacy } from './ohos-background-privacy.js';
 
 export {
     getContext,
@@ -683,20 +684,60 @@ function notifyUpdatesInputHandler() {
     }
 }
 
+async function loadOhosAppSettings() {
+    try {
+        const response = await fetch('/api/ohos/settings', {
+            headers: getRequestHeaders(),
+        });
+        if (!response.ok) {
+            return;
+        }
+        const data = await response.json();
+        extension_settings.ohosForceHttp1_1 = data.forceHttp1_1 === true;
+        $('#ohos_force_http1_1').prop('checked', extension_settings.ohosForceHttp1_1);
+    } catch (error) {
+        console.warn('Failed to load TavernNext app settings', error);
+    }
+}
+
+async function saveOhosForceHttp1_1(enabled) {
+    const response = await fetch('/api/ohos/settings', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ forceHttp1_1: enabled }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`);
+    }
+    extension_settings.ohosForceHttp1_1 = data.forceHttp1_1 === true;
+    return data;
+}
+
 async function ohosForceHttp1_1InputHandler() {
-    const enabled = !!$('#ohos_force_http1_1').prop('checked');
+    const checkbox = $('#ohos_force_http1_1');
+    const enabled = !!checkbox.prop('checked');
     if (!enabled) {
         const confirmed = await Popup.show.confirm(
             t`Disable forced HTTP/1.1?`,
             t`OpenHarmony's network stack may occasionally fail when HTTP/2 is used. Disable this only if you want to test higher LLM streaming concurrency.`
         );
         if (!confirmed) {
-            $('#ohos_force_http1_1').prop('checked', true);
+            checkbox.prop('checked', true);
             return;
         }
     }
-    extension_settings.ohosForceHttp1_1 = enabled;
-    saveSettingsDebounced();
+    checkbox.prop('disabled', true);
+    try {
+        await saveOhosForceHttp1_1(enabled);
+        checkbox.prop('checked', extension_settings.ohosForceHttp1_1);
+    } catch (error) {
+        console.warn('Failed to save Force HTTP/1.1 setting', error);
+        checkbox.prop('checked', extension_settings.ohosForceHttp1_1);
+        toastr.error('Force HTTP/1.1 设置保存失败');
+    } finally {
+        checkbox.prop('disabled', false);
+    }
 }
 
 /**
@@ -2119,4 +2160,6 @@ export async function initExtensions() {
     $('#data_restore_button').on('click', () => importDataArchive());
     $('#extension_git_repair_button').on('click', repairExtensionGitRepositories);
     initOhosLlmApiLogs();
+    initOhosBackgroundPrivacy();
+    void loadOhosAppSettings();
 }

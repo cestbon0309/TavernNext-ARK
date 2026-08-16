@@ -72,6 +72,7 @@ export class UserDirectories {
 
 export class DataDirectories {
   dataRoot: string;
+  filesDir: string;
   uploadRoot: string;
   storageRoot: string;
   cacheRoot: string;
@@ -85,6 +86,7 @@ export class DataDirectories {
   private store: FileStore;
 
   constructor(filesDir: string, store: FileStore) {
+    this.filesDir = filesDir;
     this.dataRoot = joinPath(filesDir, 'data');
     this.uploadRoot = joinPath(this.dataRoot, '_uploads');
     this.storageRoot = joinPath(this.dataRoot, '_storage');

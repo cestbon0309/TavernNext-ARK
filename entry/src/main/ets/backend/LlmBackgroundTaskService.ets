@@ -4,10 +4,10 @@ import { notificationManager } from '@kit.NotificationKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { ApplicationStateService } from './ApplicationStateService';
-import { FileStore } from './FileStore';
+import { AppSettingsService, APP_SETTING_NOTIFY_ON_COMPLETED } from './AppSettingsService';
 import { JsonRecord } from './HttpTypes';
-import { asBoolean } from './JsonUtils';
-import { joinPath } from './PathUtils';
+
+
 
 const DOMAIN = 0x5441;
 const TAG = 'LlmBackgroundTask';
@@ -42,13 +42,12 @@ export class LlmBackgroundTaskService {
   private stopPromise: Promise<void> | null = null;
   private responseNotificationWantAgent: WantAgent | null = null;
   private notifyOnCompleted: boolean = false;
-  private preferencesPath: string = '';
-  private store: FileStore = new FileStore();
+  private settings: AppSettingsService;
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
-    this.preferencesPath = joinPath(context.filesDir, 'data', '_storage', 'notification-preferences.json');
-    this.notifyOnCompleted = this.loadNotifyOnCompleted();
+    this.settings = AppSettingsService.getInstance(context.filesDir);
+    this.notifyOnCompleted = this.settings.getBoolean(APP_SETTING_NOTIFY_ON_COMPLETED, false);
   }
 
   async beginResponse(): Promise<LlmBackgroundTaskHandle> {
@@ -91,7 +90,7 @@ export class LlmBackgroundTaskService {
 
   async updateNotifyOnCompleted(enabled: boolean): Promise<JsonRecord> {
     this.notifyOnCompleted = enabled;
-    this.saveNotifyOnCompleted(enabled);
+    this.settings.setBoolean(APP_SETTING_NOTIFY_ON_COMPLETED, enabled);
     const value: JsonRecord = {};
     value['notifyOnCompleted'] = enabled;
     if (!enabled) {
@@ -122,16 +121,6 @@ export class LlmBackgroundTaskService {
     }
   }
 
-  private loadNotifyOnCompleted(): boolean {
-    const record = this.store.readJsonRecord(this.preferencesPath);
-    return asBoolean(record['notifyOnCompleted']);
-  }
-
-  private saveNotifyOnCompleted(enabled: boolean): void {
-    const record: JsonRecord = {};
-    record['notifyOnCompleted'] = enabled;
-    this.store.writeJson(this.preferencesPath, record);
-  }
 
   private isNotificationEnabledSync(): boolean {
     try {

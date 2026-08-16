@@ -1,4 +1,5 @@
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { AppSettingsService, APP_SETTING_CHAT_BROWSER_DARK_MODE } from './AppSettingsService';
 import { DataDirectories, UserDirectories } from './DataDirectories';
 import { FileEntry, FileStore } from './FileStore';
 import { asArray, asBoolean, asNumber, asRecord, asString, bodyAsRecord } from './JsonUtils';
@@ -9,7 +10,7 @@ import { PngCardStore } from './PngCardStore';
 type ChatBrowserOpenListener = () => void;
 export type ChatBrowserRefreshListener = (items: ChatBrowserItem[]) => void;
 
-const CHAT_BROWSER_SETTINGS_FILE = 'chat-browser-settings.json';
+
 const CHAT_BROWSER_CACHE_FILE = 'chat-browser-cache.json';
 const CHAT_BROWSER_NAMES_FILE = 'character-names.json';
 const CHAT_BROWSER_REBUILD_BATCH_SIZE = 20;
@@ -59,7 +60,7 @@ export class ChatBrowserService {
   private dirs: DataDirectories;
   private userDirs: UserDirectories;
   private cardStore: PngCardStore;
-  private settingsPath: string;
+  private settings: AppSettingsService;
   private cachePath: string;
   private characterNamesPath: string;
   private cachedItems: ChatBrowserItem[] = [];
@@ -78,7 +79,7 @@ export class ChatBrowserService {
     this.dirs = dirs;
     this.userDirs = dirs.defaultUser;
     this.cardStore = new PngCardStore(store);
-    this.settingsPath = joinPath(dirs.storageRoot, CHAT_BROWSER_SETTINGS_FILE);
+    this.settings = AppSettingsService.getInstance(dirs.filesDir);
     this.cachePath = joinPath(dirs.storageRoot, CHAT_BROWSER_CACHE_FILE);
     this.characterNamesPath = joinPath(dirs.storageRoot, CHAT_BROWSER_NAMES_FILE);
   }
@@ -106,14 +107,11 @@ export class ChatBrowserService {
   }
 
   isDarkMode(): boolean {
-    const settings = this.store.readJsonRecord(this.settingsPath);
-    return settings['darkMode'] === true;
+    return this.settings.getBoolean(APP_SETTING_CHAT_BROWSER_DARK_MODE, false);
   }
 
   setDarkMode(darkMode: boolean): void {
-    const settings = emptyJsonRecord();
-    settings['darkMode'] = darkMode;
-    this.store.writeJson(this.settingsPath, settings);
+    this.settings.setBoolean(APP_SETTING_CHAT_BROWSER_DARK_MODE, darkMode);
   }
 
   listResponse(request: HttpRequest): HttpResponse {

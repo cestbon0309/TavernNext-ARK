@@ -1,5 +1,6 @@
 import { util } from '@kit.ArkTS';
 import { DataDirectories } from '../DataDirectories';
+import { AppSettingsService, APP_SETTING_LLM_API_LOG_KEEP, APP_SETTING_LLM_API_LOG_STREAM_ENABLED } from '../AppSettingsService';
 import { FileEntry, FileStore } from '../FileStore';
 import { HttpRequest, HttpResponse, HttpStreamSend, JsonArray, JsonRecord, emptyJsonRecord } from '../HttpTypes';
 import { asNumber, parseJsonRecord } from '../JsonUtils';
@@ -129,6 +130,7 @@ export class LlmApiStreamLogSink {
 export class LlmApiLogger {
   private store: FileStore;
   private dirs: DataDirectories;
+  private appSettings: AppSettingsService;
   private nextId: number = 1;
   private keep: number = DEFAULT_KEEP;
   private streamEnabled: boolean = false;
@@ -138,6 +140,7 @@ export class LlmApiLogger {
   constructor(store: FileStore, dirs: DataDirectories) {
     this.store = store;
     this.dirs = dirs;
+    this.appSettings = AppSettingsService.getInstance(dirs.filesDir);
     this.loadSettings();
     this.ensureNextId();
   }
@@ -381,14 +384,14 @@ export class LlmApiLogger {
   }
 
   private loadSettings(): void {
-    const settings = this.store.readJsonRecord(this.settingsPath());
-    const keep = asNumber(settings['keep'], DEFAULT_KEEP);
-    this.keep = Number.isFinite(keep) && keep > 0 ? Math.min(100, Math.floor(keep)) : DEFAULT_KEEP;
-    this.streamEnabled = settings['streamEnabled'] === true;
+    this.keep = this.appSettings.getNumber(APP_SETTING_LLM_API_LOG_KEEP, DEFAULT_KEEP);
+    this.streamEnabled = this.appSettings.getBoolean(APP_SETTING_LLM_API_LOG_STREAM_ENABLED, false);
   }
 
+
   private saveSettings(): void {
-    this.store.writeJson(this.settingsPath(), this.settingsRecord());
+    this.appSettings.setNumber(APP_SETTING_LLM_API_LOG_KEEP, this.keep);
+    this.appSettings.setBoolean(APP_SETTING_LLM_API_LOG_STREAM_ENABLED, this.streamEnabled);
   }
 
   private async delay(ms: number): Promise<void> {
@@ -637,9 +640,6 @@ export class LlmApiLogger {
     return joinPath(this.dirs.llmApiLogRoot, `llm-api-${id}.response.sse`);
   }
 
-  private settingsPath(): string {
-    return joinPath(this.dirs.llmApiLogRoot, 'llm-api-settings.json');
-  }
 }
 
 class StreamReadableCollector {
