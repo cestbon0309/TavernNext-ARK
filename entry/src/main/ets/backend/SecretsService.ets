@@ -83,7 +83,7 @@ export class SecretsService {
   private store: FileStore;
   private dirs: UserDirectories;
   private crypto: CryptoUtils;
-  private allowKeysExposure: boolean = false;
+  private allowKeysExposure: boolean = true;
 
   constructor(store: FileStore, dirs: UserDirectories, crypto: CryptoUtils) {
     this.store = store;
