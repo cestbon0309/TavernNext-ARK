@@ -1,6 +1,7 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { window } from '@kit.ArkUI';
+import { window, display } from '@kit.ArkUI';
+import { deviceInfo } from '@kit.BasicServicesKit';
 import { ApplicationStateService } from '../backend/ApplicationStateService';
 import { BackendService } from '../backend/BackendService';
 import { ShellThemeService } from '../backend/ShellThemeService';
@@ -8,6 +9,8 @@ import { ShellThemeService } from '../backend/ShellThemeService';
 const DOMAIN = 0x0000;
 
 export default class EntryAbility extends UIAbility {
+  private foldStatusCallback: ((status: display.FoldStatus) => void) | null = null;
+
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
@@ -31,6 +34,7 @@ export default class EntryAbility extends UIAbility {
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
     this.applyShellTheme(windowStage);
     this.attachBackgroundPrivacy(windowStage);
+    this.applyPreferredOrientation(windowStage);
 
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
@@ -60,10 +64,54 @@ export default class EntryAbility extends UIAbility {
     }
   }
 
+  private applyPreferredOrientation(windowStage: window.WindowStage): void {
+    try {
+      const mainWindow = windowStage.getMainWindowSync();
+      const deviceType = deviceInfo.deviceType;
+      const foldable = deviceType === 'phone' && display.isFoldable();
+      if (deviceType === 'tablet' || deviceType === '2in1') {
+        mainWindow.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED)
+          .catch((err: Error) => {
+            hilog.warn(DOMAIN, 'testTag', 'Failed to set orientation. Cause: %{public}s', JSON.stringify(err));
+          });
+        return;
+      }
+      if (!foldable) {
+        mainWindow.setPreferredOrientation(window.Orientation.PORTRAIT)
+          .catch((err: Error) => {
+            hilog.warn(DOMAIN, 'testTag', 'Failed to set orientation. Cause: %{public}s', JSON.stringify(err));
+          });
+        return;
+      }
+      const applyFoldOrientation = (status: display.FoldStatus): void => {
+        const orientation = status === display.FoldStatus.FOLD_STATUS_FOLDED
+          ? window.Orientation.PORTRAIT
+          : window.Orientation.AUTO_ROTATION_RESTRICTED;
+        mainWindow.setPreferredOrientation(orientation).catch((err: Error) => {
+          hilog.warn(DOMAIN, 'testTag', 'Failed to set orientation. Cause: %{public}s', JSON.stringify(err));
+        });
+      };
+      applyFoldOrientation(display.getFoldStatus());
+      this.foldStatusCallback = applyFoldOrientation;
+      display.on('foldStatusChange', this.foldStatusCallback);
+    } catch (err) {
+      hilog.warn(DOMAIN, 'testTag', 'Failed to apply preferred orientation. Cause: %{public}s', JSON.stringify(err));
+    }
+  }
+
 
   onWindowStageDestroy(): void {
     // Main window is destroyed, release UI related resources
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageDestroy');
+    const callback = this.foldStatusCallback;
+    if (callback !== null) {
+      try {
+        display.off('foldStatusChange', callback);
+      } catch (err) {
+        hilog.warn(DOMAIN, 'testTag', 'Failed to unregister fold status listener. Cause: %{public}s', JSON.stringify(err));
+      }
+      this.foldStatusCallback = null;
+    }
   }
 
   onForeground(): void {
