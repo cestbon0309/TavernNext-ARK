@@ -647,6 +647,72 @@ let abortController = new AbortController();
 let parallelGenerationSession = null;
 const parallelGenerationSessionsByMessageId = new Map();
 const PARALLEL_CANDIDATE_TERMINAL_STATUSES = new Set(['done', 'error', 'stopped']);
+let tavernNextGenerationBackgroundLeaseId = 0;
+let tavernNextGenerationBackgroundUsers = 0;
+let tavernNextGenerationBackgroundStart = null;
+
+async function retainTavernNextGenerationBackgroundTask() {
+    tavernNextGenerationBackgroundUsers++;
+    if (tavernNextGenerationBackgroundLeaseId > 0) {
+        return;
+    }
+
+    const start = tavernNextGenerationBackgroundStart ?? (async () => {
+        const response = await fetch('/api/ohos/generation/prepare', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: '{}',
+        });
+        if (!response.ok) {
+            throw new Error(`Generation background task registration failed: ${response.status}`);
+        }
+        const result = await response.json();
+        const leaseId = Number(result?.leaseId);
+        if (!Number.isSafeInteger(leaseId) || leaseId <= 0) {
+            throw new Error('Generation background task registration returned an invalid lease');
+        }
+        tavernNextGenerationBackgroundLeaseId = leaseId;
+    })();
+    tavernNextGenerationBackgroundStart = start;
+    try {
+        await start;
+    } catch (error) {
+        console.warn('[TavernNext] Failed to register generation background task', error);
+    } finally {
+        if (tavernNextGenerationBackgroundStart === start) {
+            tavernNextGenerationBackgroundStart = null;
+        }
+    }
+}
+
+async function releaseTavernNextGenerationBackgroundTask() {
+    tavernNextGenerationBackgroundUsers = Math.max(0, tavernNextGenerationBackgroundUsers - 1);
+    if (tavernNextGenerationBackgroundUsers > 0) {
+        return;
+    }
+    if (tavernNextGenerationBackgroundStart) {
+        try {
+            await tavernNextGenerationBackgroundStart;
+        } catch (_) {
+        }
+    }
+
+    const leaseId = tavernNextGenerationBackgroundLeaseId;
+    tavernNextGenerationBackgroundLeaseId = 0;
+    if (leaseId <= 0) {
+        return;
+    }
+    try {
+        await fetch('/api/ohos/generation/prepare/finish', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ leaseId }),
+            keepalive: true,
+        });
+    } catch (error) {
+        console.warn('[TavernNext] Failed to release generation background task', error);
+    }
+}
 
 //css
 var css_send_form_display = $('<div id=send_form></div>').css('display');
@@ -5669,7 +5735,19 @@ function removeLastMessage() {
  * @param {boolean} dryRun Whether to actually generate a message or just assemble the prompt
  * @returns {Promise<any>} Returns a promise that resolves when the text is done generating.
  */
-export async function Generate(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0 } = {}, dryRun = false) {
+export async function Generate(type, options = {}, dryRun = false) {
+    if (dryRun) {
+        return generateInternal(type, options, dryRun);
+    }
+    await retainTavernNextGenerationBackgroundTask();
+    try {
+        return await generateInternal(type, options, dryRun);
+    } finally {
+        await releaseTavernNextGenerationBackgroundTask();
+    }
+}
+
+async function generateInternal(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0 } = {}, dryRun = false) {
     console.log('Generate entered');
     setGenerationProgress(0);
     generation_started = new Date();
