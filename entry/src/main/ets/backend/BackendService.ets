@@ -457,6 +457,11 @@ export class BackendService {
     this.server.route('POST', '/api/ohos/notifications/preferences',
       async (request) => HttpResponse.json(await this.llmBackgroundTasks.updateNotifyOnCompleted(
         asBoolean(asRecord(request.body as Object | undefined)['enabled']))));
+    this.server.route('POST', '/api/ohos/generation/prepare',
+      async () => HttpResponse.json(await this.llmBackgroundTasks.beginGenerationPreparation()));
+    this.server.route('POST', '/api/ohos/generation/prepare/finish',
+      async (request) => HttpResponse.json(await this.llmBackgroundTasks.finishGenerationPreparation(
+        asNumber(bodyAsRecord(request)['leaseId']))));
     this.server.route('GET', '/api/ohos/background-privacy/settings',
       async () => HttpResponse.json(this.backgroundPrivacy.settingsJson()));
     this.server.route('POST', '/api/ohos/background-privacy/settings',

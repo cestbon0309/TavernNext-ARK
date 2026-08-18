@@ -14,6 +14,7 @@ const TAG = 'LlmBackgroundTask';
 const RESPONSE_NOTIFICATION_ID = 17001;
 const WANT_AGENT_REQUEST_CODE = 17002;
 const NOTIFICATION_REFUSED_CODE = 1600004;
+const GENERATION_PREPARATION_TIMEOUT_MS = 5 * 60 * 1000;
 
 export class LlmBackgroundTaskHandle {
   readonly id: number;
@@ -43,6 +44,7 @@ export class LlmBackgroundTaskService {
   private responseNotificationWantAgent: WantAgent | null = null;
   private notifyOnCompleted: boolean = false;
   private settings: AppSettingsService;
+  private generationPreparations: Map<number, LlmBackgroundTaskHandle> = new Map();
 
   constructor(context: common.UIAbilityContext) {
     this.context = context;
@@ -54,12 +56,36 @@ export class LlmBackgroundTaskService {
     const handle = new LlmBackgroundTaskHandle(this.nextHandleId);
     this.nextHandleId += 1;
     this.activeCount += 1;
-    if (this.activeCount === 1) {
+    if (this.activeCount === 1 || !this.continuousTaskRunning) {
       await this.startContinuousTask();
     } else if (this.startPromise !== null) {
       await this.startPromise;
     }
     return handle;
+  }
+
+  async beginGenerationPreparation(): Promise<JsonRecord> {
+    const handle = await this.beginResponse();
+    this.generationPreparations.set(handle.id, handle);
+    setTimeout(() => {
+      this.expireGenerationPreparation(handle.id);
+    }, GENERATION_PREPARATION_TIMEOUT_MS);
+    const value: JsonRecord = {};
+    value['leaseId'] = handle.id;
+    return value;
+  }
+
+  async finishGenerationPreparation(leaseId: number): Promise<JsonRecord> {
+    const value: JsonRecord = {};
+    const handle = this.generationPreparations.get(leaseId);
+    if (handle === undefined) {
+      value['released'] = false;
+      return value;
+    }
+    this.generationPreparations.delete(leaseId);
+    await this.finishResponse(handle, false);
+    value['released'] = true;
+    return value;
   }
 
   async finishResponse(handle: LlmBackgroundTaskHandle, notifyCompleted: boolean): Promise<void> {
@@ -79,6 +105,16 @@ export class LlmBackgroundTaskService {
 
   isNotifyOnCompleted(): boolean {
     return this.notifyOnCompleted;
+  }
+
+  private expireGenerationPreparation(leaseId: number): void {
+    if (!this.generationPreparations.has(leaseId)) {
+      return;
+    }
+    hilog.warn(DOMAIN, TAG, 'Generation preparation lease timed out: %{public}d', leaseId);
+    this.finishGenerationPreparation(leaseId).catch((err: Error) => {
+      hilog.warn(DOMAIN, TAG, 'Failed to expire generation preparation lease: %{public}s', JSON.stringify(err));
+    });
   }
 
   notificationPreferencesJson(): JsonRecord {
