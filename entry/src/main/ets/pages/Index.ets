@@ -120,6 +120,7 @@ struct ChatBrowserListCard {
   @Prop item: ChatBrowserItem = new ChatBrowserItem();
   @Prop deleting: boolean = false;
   @Prop darkMode: boolean = false;
+  @Prop backendUrl: string = 'http://127.0.0.1:8000';
   @State swipeProgress: number = 0;
   onOpen: ChatBrowserItemAction = (_item: ChatBrowserItem): void => {
   };
@@ -269,7 +270,7 @@ struct ChatBrowserListCard {
   }
 
   private chatBrowserCoverUrl(): string {
-    return `http://127.0.0.1:8000/characters/${encodeURIComponent(this.item.avatar)}`;
+    return `${this.backendUrl}/characters/${encodeURIComponent(this.item.avatar)}`;
   }
 
   private updateSwipeProgress(offset: number): void {
@@ -904,6 +905,7 @@ struct Index {
                     item,
                     deleting: this.isChatBrowserItemDeleting(item),
                     darkMode: this.chatBrowserDarkMode,
+                    backendUrl: this.url,
                     onOpen: (selected: ChatBrowserItem): void => {
                       this.openChatBrowserItem(selected);
                     },
@@ -978,13 +980,15 @@ struct Index {
 
   private isLocalTavernUrl(targetUrl: string): boolean {
     const match = targetUrl.match(/^https?:\/\/([^/?#:]+)(?::(\d+))?(?:[/?#]|$)/i);
-    if (match === null) {
+    const backendMatch = this.url.match(/^https?:\/\/([^/?#:]+)(?::(\d+))?(?:[/?#]|$)/i);
+    if (match === null || backendMatch === null) {
       return false;
     }
 
     const host = match[1].toLowerCase();
     const port = match[2] ?? (targetUrl.startsWith('https://') ? '443' : '80');
-    return (host === '127.0.0.1' || host === 'localhost') && port === '8000';
+    const backendPort = backendMatch[2] ?? (this.url.startsWith('https://') ? '443' : '80');
+    return (host === '127.0.0.1' || host === 'localhost') && port === backendPort;
   }
 
   private openExternalUrl(targetUrl: string): void {
@@ -1833,8 +1837,7 @@ struct Index {
         const isLocalUrl = (url) => {
           try {
             const parsed = new URL(url, location.href);
-            const localHost = parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost';
-            return localHost && parsed.port === '8000';
+            return parsed.origin === location.origin;
           } catch (_) {
             return false;
           }

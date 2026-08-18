@@ -1,11 +1,13 @@
 import { socket } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { BusinessError } from '@kit.BasicServicesKit';
 import { HttpRequest, HttpResponse, JsonArray, JsonRecord, jsonMessage, RouteHandler } from './HttpTypes';
 import { MultipartParser } from './MultipartParser';
 
 const DOMAIN = 0x5441;
 const TAG = 'TavernHttpServer';
+const ADDRESS_IN_USE_CODE = 2303198;
 
 class ClientState {
   buffer: Uint8Array = new Uint8Array();
@@ -23,11 +25,13 @@ export class HttpServer {
   private requestTimingEntries: JsonRecord[] = [];
   private listenTimingEntries: JsonRecord[] = [];
   private listening: boolean = false;
+  private preferredPort: number;
   readonly host: string;
-  readonly port: number;
+  port: number;
 
   constructor(host: string = '127.0.0.1', port: number = 8000) {
     this.host = host;
+    this.preferredPort = port;
     this.port = port;
   }
 
@@ -79,31 +83,66 @@ export class HttpServer {
     this.listenTimingEntries = [];
     const listenStartedAt = Date.now();
     let stepStartedAt = Date.now();
-    const server = socket.constructTCPSocketServerInstance();
+    let server = socket.constructTCPSocketServerInstance();
     this.recordListenTiming('constructTCPSocketServerInstance', stepStartedAt, listenStartedAt);
     this.server = server;
     stepStartedAt = Date.now();
+    this.configureServer(server);
+    this.recordListenTiming('register socket callbacks', stepStartedAt, listenStartedAt);
+
+    this.port = this.preferredPort;
+    try {
+      stepStartedAt = Date.now();
+      await server.listen({ address: this.host, port: this.port });
+      this.recordListenTiming('server.listen', stepStartedAt, listenStartedAt);
+    } catch (err) {
+      if ((err as BusinessError).code !== ADDRESS_IN_USE_CODE) {
+        this.server = null;
+        hilog.error(DOMAIN, TAG, 'Listen failed: %{public}s', JSON.stringify(err));
+        throw new Error(`Listen failed: ${JSON.stringify(err)}`);
+      }
+
+      hilog.warn(DOMAIN, TAG, 'Port %{public}d is in use, falling back to a system-assigned port', this.port);
+      try {
+        await server.close();
+      } catch (_closeErr) {
+      }
+      stepStartedAt = Date.now();
+      server = socket.constructTCPSocketServerInstance();
+      this.server = server;
+      this.configureServer(server);
+      try {
+        await server.listen({ address: this.host, port: 0 });
+        const localAddress = await server.getLocalAddress();
+        const fallbackPort = localAddress.port ?? 0;
+        if (fallbackPort <= 0) {
+          throw new Error('System did not assign a valid fallback port');
+        }
+        this.port = fallbackPort;
+        this.recordListenTiming('server.listen fallback', stepStartedAt, listenStartedAt);
+      } catch (fallbackErr) {
+        try {
+          await server.close();
+        } catch (_closeErr) {
+        }
+        this.server = null;
+        hilog.error(DOMAIN, TAG, 'Fallback listen failed: %{public}s', JSON.stringify(fallbackErr));
+        throw new Error(`Fallback listen failed: ${JSON.stringify(fallbackErr)}`);
+      }
+    }
+    stepStartedAt = Date.now();
+    this.listening = true;
+    this.recordListenTiming('mark listening', stepStartedAt, listenStartedAt);
+    hilog.info(DOMAIN, TAG, 'Listening on http://%{public}s:%{public}d', this.host, this.port);
+  }
+
+  private configureServer(server: socket.TCPSocketServer): void {
     server.on('connect', (connection: socket.TCPSocketConnection) => {
       this.handleConnection(connection);
     });
     server.on('error', (err: Error) => {
       hilog.error(DOMAIN, TAG, 'Server error: %{public}s', JSON.stringify(err));
     });
-    this.recordListenTiming('register socket callbacks', stepStartedAt, listenStartedAt);
-
-    try {
-      stepStartedAt = Date.now();
-      await server.listen({ address: this.host, port: this.port });
-      this.recordListenTiming('server.listen', stepStartedAt, listenStartedAt);
-    } catch (err) {
-      this.server = null;
-      hilog.error(DOMAIN, TAG, 'Listen failed: %{public}s', JSON.stringify(err));
-      throw new Error(`Listen failed: ${JSON.stringify(err)}`);
-    }
-    stepStartedAt = Date.now();
-    this.listening = true;
-    this.recordListenTiming('mark listening', stepStartedAt, listenStartedAt);
-    hilog.info(DOMAIN, TAG, 'Listening on http://%{public}s:%{public}d', this.host, this.port);
   }
 
   private recordListenTiming(label: string, startedAt: number, listenStartedAt: number): void {
