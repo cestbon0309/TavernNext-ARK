@@ -26,9 +26,6 @@ export class DefaultContentSeeder {
   seedDefaultUser(): void {
     const logPath = joinPath(this.dirs.defaultUser.root, 'content.log');
     const contentLog = this.readContentLog(logPath);
-    if (contentLog.length > 0) {
-      return;
-    }
 
     try {
       const contentIndex = this.readContentIndex();
@@ -53,15 +50,17 @@ export class DefaultContentSeeder {
         }
 
         const targetPath = joinPath(targetRoot, this.baseName(item.filename));
-        contentLog.push(item.filename);
-        modified = true;
         if (this.store.exists(targetPath)) {
+          contentLog.push(item.filename);
+          modified = true;
           continue;
         }
 
-        if (!this.copyRawContent(item.filename, targetPath)) {
+        if (!this.copyRawContent(item.filename, targetPath) || !this.store.exists(targetPath)) {
           continue;
         }
+        contentLog.push(item.filename);
+        modified = true;
       }
 
       if (modified) {
@@ -102,26 +101,38 @@ export class DefaultContentSeeder {
     const rawPath = `${DefaultContentSeeder.rawContentRoot}/${relativePath.replace(/\\/g, '/')}`;
     try {
       this.manager.getRawFileListSync(rawPath);
-      this.copyRawDirectory(rawPath, targetPath);
-      return true;
+      const copied = this.copyRawDirectory(rawPath, targetPath);
+      if (!copied) {
+        this.store.deleteDirectory(targetPath);
+      }
+      return copied;
     } catch (_dirErr) {
       try {
         const bytes = this.manager.getRawFileContentSync(rawPath);
         this.store.writeBytes(targetPath, bytes);
-        return true;
+        const written = this.store.readBytes(targetPath);
+        const copied = written !== null && written.byteLength === bytes.byteLength;
+        if (!copied) {
+          this.store.deleteFile(targetPath);
+        }
+        return copied;
       } catch (_fileErr) {
+        this.store.deleteFile(targetPath);
         return false;
       }
     }
   }
 
-  private copyRawDirectory(rawPath: string, targetPath: string): void {
+  private copyRawDirectory(rawPath: string, targetPath: string): boolean {
     this.store.ensureDir(targetPath);
+    if (!this.store.exists(targetPath)) {
+      return false;
+    }
     let names: string[] = [];
     try {
       names = this.manager.getRawFileListSync(rawPath);
     } catch (_err) {
-      return;
+      return false;
     }
     for (const name of names) {
       const safeName = sanitizeFileName(name);
@@ -132,14 +143,23 @@ export class DefaultContentSeeder {
       const childTarget = joinPath(targetPath, safeName);
       try {
         this.manager.getRawFileListSync(childRaw);
-        this.copyRawDirectory(childRaw, childTarget);
+        if (!this.copyRawDirectory(childRaw, childTarget)) {
+          return false;
+        }
       } catch (_dirErr) {
         try {
-          this.store.writeBytes(childTarget, this.manager.getRawFileContentSync(childRaw));
+          const bytes = this.manager.getRawFileContentSync(childRaw);
+          this.store.writeBytes(childTarget, bytes);
+          const written = this.store.readBytes(childTarget);
+          if (written === null || written.byteLength !== bytes.byteLength) {
+            return false;
+          }
         } catch (_fileErr) {
+          return false;
         }
       }
     }
+    return true;
   }
 
   private targetByType(type: string, dirs: UserDirectories): string {
