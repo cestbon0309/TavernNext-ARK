@@ -1,0 +1,1422 @@
+/* Shared component layer for the TavernNext Atelier light and dark themes. */
+
+@import url('/webfonts/NotoSC/stylesheet.css');
+
+:root {
+    --mainFontFamily: "Noto Sans SC", "Noto Sans CJK SC", sans-serif;
+    --monoFontFamily: "Noto Sans Mono", "SFMono-Regular", Consolas, monospace;
+    --tn-message-font: "Noto Serif SC", "Noto Serif CJK SC", serif;
+    --tn-radius-sm: 8px;
+    --tn-radius-md: 12px;
+    --tn-radius-lg: 18px;
+    --tn-radius-xl: 22px;
+    --tn-control-height: 36px;
+    --tn-motion-duration: var(--animation-duration, 125ms);
+}
+
+html,
+body,
+#bg1 {
+    background-color: rgb(from var(--SmartThemeBlurTintColor) r g b / 1) !important;
+}
+
+#bg1 {
+    background-image: none !important;
+}
+
+body {
+    font-feature-settings: "kern" 1, "liga" 1;
+    letter-spacing: -0.2px;
+}
+
+::selection {
+    color: var(--tn-accent-contrast);
+    background: var(--tn-accent);
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--tn-scrollbar) transparent;
+}
+
+*::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+    min-height: 32px;
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background: var(--tn-scrollbar);
+    background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background: var(--SmartThemeEmColor);
+    background-clip: padding-box;
+}
+
+a,
+.link {
+    color: var(--tn-accent);
+    text-underline-offset: 0.18em;
+}
+
+hr {
+    background-image: linear-gradient(90deg, transparent, var(--tn-hairline), transparent);
+    opacity: 1;
+}
+
+.interactable,
+button,
+input,
+select,
+textarea,
+.menu_button {
+    -webkit-tap-highlight-color: transparent;
+}
+
+.interactable:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: 2px solid var(--tn-accent) !important;
+    outline-offset: 2px;
+}
+
+/* App shell */
+
+#top-bar {
+    border-right: 1px solid var(--tn-hairline);
+    border-bottom: 1px solid var(--tn-hairline);
+    border-left: 1px solid var(--tn-hairline);
+    border-radius: 0 0 var(--tn-radius-lg) var(--tn-radius-lg);
+    background: var(--tn-surface-0);
+    box-shadow: var(--tn-shadow-sm);
+}
+
+#top-settings-holder {
+    gap: 2px;
+    padding: 4px 8px;
+}
+
+.drawer-icon {
+    display: flex;
+    min-width: 34px;
+    height: 34px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 11px;
+    transition: color var(--tn-motion-duration) ease, background-color var(--tn-motion-duration) ease, opacity var(--tn-motion-duration) ease, transform var(--tn-motion-duration) ease;
+}
+
+.drawer-icon.closedIcon {
+    opacity: 0.62;
+}
+
+.drawer-icon.openIcon,
+.drawer-icon:hover {
+    color: var(--tn-accent);
+    background: var(--tn-hover);
+    opacity: 1;
+}
+
+.drawer-icon:active {
+    transform: scale(0.94);
+}
+
+#chat {
+    min-height: 0;
+    max-height: none;
+    border: 1px solid var(--tn-hairline);
+    border-radius: var(--tn-radius-lg);
+    background: var(--SmartThemeChatTintColor);
+    box-shadow: var(--tn-shadow-sm);
+    scroll-behavior: smooth;
+}
+
+#form_sheld {
+    box-sizing: border-box;
+    position: relative;
+    z-index: 40;
+    flex: 0 0 auto;
+    overflow: visible;
+    padding: 8px 6px 6px;
+}
+
+#send_form {
+    position: relative;
+    overflow: visible;
+    min-height: 56px;
+    padding: 7px;
+    border: 1px solid var(--tn-hairline);
+    border-radius: var(--tn-radius-lg);
+    background: var(--tn-surface-1);
+    box-shadow: var(--tn-shadow-lg);
+    transition: border-color var(--tn-motion-duration) ease, box-shadow var(--tn-motion-duration) ease, background-color var(--tn-motion-duration) ease;
+}
+
+#send_form:has(#send_textarea:focus-visible) {
+    border-color: var(--tn-accent);
+    outline: 0;
+    box-shadow: 0 0 0 3px var(--tn-accent-soft), var(--tn-shadow-lg);
+}
+
+#nonQRFormItems {
+    min-height: 40px;
+    align-items: flex-end;
+    column-gap: 6px;
+}
+
+#leftSendForm,
+#rightSendForm {
+    width: auto;
+    flex-wrap: nowrap;
+    align-items: flex-end;
+}
+
+#send_textarea {
+    min-width: 0;
+    min-height: 40px;
+    height: auto;
+    padding: 8px 12px;
+    color: var(--SmartThemeBodyColor);
+    line-height: 1.45;
+    caret-color: var(--tn-accent);
+    border: 1px solid var(--tn-hairline);
+    border-radius: 14px;
+    background: var(--tn-field);
+    box-shadow: inset 0 1px 0 var(--tn-field-highlight);
+    clip-path: none;
+    resize: none;
+    scrollbar-width: none;
+    transition: border-color var(--tn-motion-duration) ease, background-color var(--tn-motion-duration) ease, box-shadow var(--tn-motion-duration) ease;
+}
+
+#send_textarea::-webkit-scrollbar {
+    display: none;
+}
+
+#send_textarea:hover {
+    border-color: var(--SmartThemeBorderColor);
+    background: var(--tn-field-hover);
+}
+
+#send_textarea:focus,
+#send_textarea:focus-visible {
+    border-color: var(--tn-accent);
+    background: var(--tn-field-hover);
+    outline: none !important;
+    box-shadow: 0 0 0 3px var(--tn-accent-soft), inset 0 1px 0 var(--tn-field-highlight);
+}
+
+#send_textarea::placeholder,
+textarea::placeholder,
+input::placeholder {
+    color: var(--SmartThemeEmColor);
+    opacity: 1;
+}
+
+#rightSendForm > div:not(.mes_stop),
+#leftSendForm > div,
+#options_button {
+    width: 40px;
+    height: 40px;
+    align-self: flex-end;
+    color: var(--SmartThemeEmColor);
+    border: 1px solid transparent;
+    border-radius: 12px;
+    opacity: 0.82;
+}
+
+#rightSendForm > div:hover,
+#leftSendForm > div:hover,
+#options_button:hover {
+    color: var(--tn-accent);
+    border-color: var(--tn-hairline);
+    background: var(--tn-hover);
+    filter: none;
+    opacity: 1;
+}
+
+#rightSendForm > #send_but {
+    width: 52px;
+    height: 40px;
+    flex: 0 0 52px;
+    margin: 0;
+    color: var(--tn-accent-contrast);
+    border: 1px solid var(--tn-accent-border);
+    border-radius: 13px;
+    background: var(--tn-accent-fill);
+    opacity: 1;
+    box-shadow: 0 5px 14px var(--tn-accent-shadow), inset 0 1px 0 var(--tn-accent-highlight);
+    transform: none;
+    transition: color var(--tn-motion-duration) ease, border-color var(--tn-motion-duration) ease, background-color var(--tn-motion-duration) ease, box-shadow var(--tn-motion-duration) ease, transform var(--tn-motion-duration) ease;
+}
+
+#rightSendForm > #send_but::before {
+    display: block;
+    font-size: 16px;
+    line-height: 1;
+    transform: translate(-1px, 1px);
+}
+
+#rightSendForm > #send_but:hover {
+    color: var(--tn-accent-contrast);
+    border-color: var(--tn-accent-hover);
+    background: var(--tn-accent-fill-hover);
+    box-shadow: 0 7px 18px var(--tn-accent-shadow), inset 0 1px 0 var(--tn-accent-highlight);
+    transform: translateY(-1px);
+}
+
+#rightSendForm > #send_but:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 8px var(--tn-accent-shadow), inset 0 1px 2px var(--tn-accent-shadow);
+}
+
+#rightSendForm > #mes_stop {
+    color: var(--tn-danger);
+}
+
+/* Messages */
+
+body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) {
+    width: calc(100% - 20px);
+    margin: 5px 10px;
+    padding: 14px;
+    border: 1px solid var(--tn-hairline);
+    border-radius: var(--tn-radius-lg);
+    background: var(--SmartThemeBotMesBlurTintColor);
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+}
+
+body:not(.bubblechat):not(.documentstyle) #chat .mes[is_user="true"] {
+    border-color: color-mix(in srgb, var(--tn-accent) 18%, var(--tn-hairline));
+    background: var(--SmartThemeUserMesBlurTintColor);
+}
+
+body:not(.bubblechat):not(.documentstyle) #chat .mes[is_system="true"]:not(:has(.drawer-opener)) {
+    border-style: dashed;
+    background: var(--tn-surface-2);
+}
+
+#chat .mes.smallSysMes:has(.drawer-opener) .drawer-opener,
+#chat .mes.smallSysMes:has(.drawer-opener) .drawer-opener:hover,
+#chat .mes.smallSysMes:has(.drawer-opener) .drawer-opener:active {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+}
+
+#chat .mes.smallSysMes:has(.drawer-opener) {
+    border: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+body.bubblechat #chat .mes {
+    width: calc(100% - 54px);
+    margin: 5px 44px 5px 10px;
+    padding: 14px;
+    border-color: var(--tn-hairline);
+    border-radius: var(--tn-radius-lg);
+    box-shadow: var(--tn-shadow-sm);
+}
+
+body.bubblechat #chat .mes[is_user="true"] {
+    margin-right: 10px;
+    margin-left: 44px;
+    border-color: color-mix(in srgb, var(--tn-accent) 22%, var(--tn-hairline));
+}
+
+body.documentstyle #chat .mes {
+    border-bottom: 1px solid var(--tn-hairline);
+}
+
+body.documentstyle #chat .mes:last-child {
+    border-bottom: 0;
+}
+
+#chat .mes.selected {
+    background: var(--tn-selected);
+    box-shadow: inset 3px 0 0 var(--tn-accent);
+}
+
+.mes .avatar img,
+.avatar.avatar_collage img {
+    border: 1px solid var(--tn-hairline);
+    box-shadow: 0 4px 14px var(--SmartThemeShadowColor);
+}
+
+.mes,
+.mes_text,
+.mes_reasoning,
+.mes .name_text {
+    font-family: var(--tn-message-font);
+}
+
+.mes_block {
+    padding-left: 12px;
+}
+
+.mes .ch_name {
+    color: var(--SmartThemeBodyColor);
+    letter-spacing: 0.01em;
+}
+
+.mes .name_text {
+    font-weight: 700;
+}
+
+.timestamp,
+.mes_timer,
+.mesIDDisplay,
+.tokenCounterDisplay,
+.swipes-counter {
+    color: var(--SmartThemeEmColor);
+    opacity: 1;
+}
+
+.mes_text,
+.mes_reasoning {
+    font-weight: 500;
+    line-height: 1.65;
+}
+
+.mes_reasoning_header {
+    border: 1px solid var(--tn-hairline);
+    border-radius: var(--tn-radius-md);
+    background: var(--tn-surface-2);
+}
+
+.mes_reasoning {
+    border-left-color: var(--tn-accent);
+    border-radius: 0 var(--tn-radius-sm) var(--tn-radius-sm) 0;
+    background: var(--tn-field);
+}
+
+.mes_text blockquote,
+.mes_reasoning blockquote {
+    margin: 8px 0;
+    padding: 8px 12px;
+    border-left-color: var(--tn-accent);
+    border-radius: 0 var(--tn-radius-sm) var(--tn-radius-sm) 0;
+    background: var(--tn-accent-soft);
+}
+
+code {
+    color: var(--tn-code-text);
+    border-color: var(--tn-hairline);
+    border-radius: 6px;
+    background: var(--tn-code-bg);
+}
+
+.mes_text pre code,
+.mes_reasoning pre code {
+    border-radius: var(--tn-radius-md);
+    box-shadow: inset 0 0 0 1px var(--tn-hairline);
+}
+
+.mes_text table,
+.mes_reasoning table {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--tn-hairline);
+    border-radius: var(--tn-radius-md);
+    background: var(--tn-field);
+}
+
+.mes_text td,
+.mes_text th,
+.mes_reasoning td,
+.mes_reasoning th {
+    padding: 7px 10px;
+    border-color: var(--tn-hairline);
+}
+
+.mes_text th,
+.mes_reasoning th {
+    background: var(--tn-surface-2);
+}
+
+.mes_buttons,
+.extraMesButtons {
+    gap: 2px;
+}
+
+.mes_button {
+    border-radius: 8px;
+    transition: color var(--tn-motion-duration) ease, background-color var(--tn-motion-duration) ease, opacity var(--tn-motion-duration) ease;
+}
+
+.mes_button:hover {
+    color: var(--tn-accent);
+    background: var(--tn-hover);
+    opacity: 1;
+}
+
+.swipe_left,
+.swipe_right {
+    border-radius: 50%;
+    transition: color var(--tn-motion-duration) ease, background-color var(--tn-motion-duration) ease, opacity var(--tn-motion-duration) ease;
+}
+
+.swipe_left:hover,
+.swipe_right:hover {
+    color: var(--tn-accent);
+    background: var(--tn-hover);
+    opacity: 1;
+}
+
+/* Panels and menus */
+
+.drawer-content,
+#character_popup,
+#world_popup,
+#floatingPrompt,
+#cfgConfig,
+#logprobsViewer,
+#movingDivs > div {
+    padding: 10px;
+    border: 1px solid var(--tn-hairline);
+    border-radius: var(--tn-radius-xl);
+    background: var(--tn-surface-0);
+    box-shadow: var(--tn-shadow-lg);
+}
+
+.drawer-content.openDrawer {
+    animation: tn-panel-in var(--tn-motion-duration) ease-out;
+}
+
+@keyframes tn-panel-in {
+    from {
+        opacity: 0;
+        transform: translateY(-6px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+#options,
+#extensionsMenu,
+.popup .popper-modal,
+.list-group {
+    padding: 6px;
+    border: 1px solid var(--tn-hairline);
+    border-radius: var(--tn-radius-md);
+    background: var(--tn-surface-solid);
+    box-shadow: var(--tn-shadow-lg);
+}
+
+.options-content,
+.list-group {
+    border-color: var(--tn-hairline);
+}
+
+#extensionsMenu > .extension_container > div,
+#extensionsMenu > div:not(.extension_container),
+.options-content a,
+.list-group-item {
+    margin: 1px 0;
+    border-radius: var(--tn-radius-sm);
+    opacity: 0.72;
+}
+
+#extensionsMenu > .extension_container > div:hover,
+#extensionsMenu > div:not(.extension_container):hover,
+.options-content a:hover,
+.list-group-item:hover {
+    color: var(--tn-accent);
+    background: var(--tn-hover);
+    opacity: 1;
+}
+
+.inline-drawer-header {
+    min-height: 38px;
+    padding: 7px 9px;
+    border-radius: var(--tn-radius-sm);
+    transition: color var(--tn-motion-duration) ease, background-color var(--tn-motion-duration) ease;
+}
+
+.inline-drawer-header:hover {
+    color: var(--tn-accent);
+    background: var(--tn-hover);
+}
+
+#extensions_settings .inline-drawer-toggle.inline-drawer-header,
+#extensions_settings2 .inline-drawer-toggle.inline-drawer-header,
+#user-settings-block h4,
+.standoutHeader {
+    margin-bottom: 6px;
+    padding: 7px 10px;
+    border: 1px solid var(--tn-hairline);
+    border-radius: var(--tn-radius-md);
+    background: var(--tn-surface-2);
+    background-image: none;
+}
+
+.standoutHeader ~ .inline-drawer-content,
+.settingsSectionWrap {
+    padding: 10px;
+    border: 1px solid var(--tn-hairline);
+    border-radius: var(--tn-radius-md);
+    background: var(--tn-field);
+}
+
+/* Controls */
+
+.text_pole,
+textarea,
+select,
+input:is(:not([type]), [type="text"], [type="number"], [type="password"], [type="search"], [type="url"], [type="email"], [type="tel"]),
+.select2-container .select2-selection--multiple,
+.select2-container .select2-selection--single,
+.select2-search__field {
+    min-height: var(--tn-control-height);
+    color: var(--SmartThemeBodyColor);
+    border: 1px solid var(--tn-hairline);
+    border-radius: var(--tn-radius-sm);
+    background-color: var(--tn-field);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    transition: border-color var(--tn-motion-duration) ease, box-shadow var(--tn-motion-duration) ease, background-color var(--tn-motion-duration) ease;
+}
+
+.text_pole:hover,
+textarea:hover,
+select:hover,
+input:is(:not([type]), [type="text"], [type="number"], [type="password"], [type="search"], [type="url"], [type="email"], [type="tel"]):hover {
+    border-color: var(--SmartThemeBorderColor);
+}
+
+.text_pole:focus,
+textarea:focus,
+select:focus,
+input:is(:not([type]), [type="text"], [type="number"], [type="password"], [type="search"], [type="url"], [type="email"], [type="tel"]):focus {
+    border-color: var(--tn-accent);
+    box-shadow: 0 0 0 3px var(--tn-accent-soft);
+}
+
+select option,
+select option:not(:checked) {
+    color: var(--SmartThemeBodyColor);
+    background: var(--tn-surface-solid);
+}
+
+.menu_button {
+    min-height: 34px;
+    padding: 6px 10px;
+    color: var(--SmartThemeBodyColor);
+    border: 1px solid var(--tn-hairline);
+    border-radius: var(--tn-radius-sm);
+    background: var(--tn-surface-1);
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.03);
+    filter: none;
+    transition: color var(--tn-motion-duration) ease, border-color var(--tn-motion-duration) ease, background-color var(--tn-motion-duration) ease, transform var(--tn-motion-duration) ease;
+}
+
+.menu_button:not(.disabled):not([disabled]):hover,
+.menu_button:not(.disabled):not([disabled]).active {
+    color: var(--tn-accent);
+    border-color: color-mix(in srgb, var(--tn-accent) 36%, var(--tn-hairline));
+    background: var(--tn-hover);
+    filter: none;
+}
+
+.menu_button:not(.disabled):not([disabled]):active {
+    transform: translateY(1px);
+}
+
+.menu_button.toggleable.toggled {
+    color: var(--tn-accent);
+    border-color: var(--tn-accent);
+    background: var(--tn-accent-soft);
+}
+
+input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 6px;
+    outline: 0;
+    background: var(--tn-field);
+    box-shadow: none;
+    filter: none;
+    transition: border-color var(--tn-motion-duration) ease, background-color var(--tn-motion-duration) ease, box-shadow var(--tn-motion-duration) ease;
+}
+
+input[type="checkbox"]:checked {
+    border-color: var(--tn-accent);
+    background: var(--tn-accent);
+    box-shadow: 0 0 0 3px var(--tn-accent-soft);
+}
+
+input[type="checkbox"]::before {
+    box-shadow: inset 1em 1em var(--tn-accent-contrast);
+}
+
+input[type="range"] {
+    accent-color: var(--tn-accent);
+}
+
+.ui-slider,
+.neo-range-slider {
+    border-color: var(--tn-hairline) !important;
+    background: var(--tn-field) !important;
+}
+
+.ui-slider-handle,
+.neo-range-slider::-webkit-slider-thumb,
+.neo-range-input::-webkit-slider-thumb {
+    border-color: var(--tn-accent) !important;
+    background: var(--tn-accent) !important;
+    box-shadow: 0 0 0 3px var(--tn-accent-soft);
+}
+
+/* Cards and collections */
+
+.character_select,
+.group_select,
+.bogus_folder_select,
+.avatar-container,
+.attachmentListItem,
+.world_entry,
+.prompt_order > div {
+    border: 1px solid transparent;
+    border-radius: var(--tn-radius-md);
+    transition: border-color var(--tn-motion-duration) ease, background-color var(--tn-motion-duration) ease, transform var(--tn-motion-duration) ease;
+}
+
+.character_select:hover,
+.group_select:hover,
+.bogus_folder_select:hover,
+.avatar-container:hover,
+.attachmentListItem:hover {
+    border-color: var(--tn-hairline);
+    background: var(--tn-hover);
+}
+
+.character_select:active,
+.group_select:active,
+.bogus_folder_select:active {
+    transform: scale(0.995);
+}
+
+.ch_description,
+.character_version,
+.character_name_block_sub_line {
+    color: var(--SmartThemeEmColor);
+    opacity: 1;
+}
+
+.tag,
+.select2-container .select2-selection--multiple .select2-selection__choice,
+.select2-container .select2-selection--single .select2-selection__choice {
+    padding: 3px 7px;
+    border-color: var(--tn-hairline);
+    border-radius: 999px;
+    background: var(--tn-surface-2);
+}
+
+.tag.selected {
+    color: var(--tn-accent);
+    border-color: var(--tn-accent);
+    background: var(--tn-accent-soft);
+}
+
+.paginationjs-pages ul li a {
+    min-width: 30px;
+    min-height: 30px;
+    padding: 5px;
+    text-align: center;
+    border-color: var(--tn-hairline);
+    border-radius: 9px;
+    background: var(--tn-surface-1);
+}
+
+.paginationjs-pages ul li a:hover,
+.paginationjs-pages ul li.active a {
+    color: var(--tn-accent);
+    border-color: var(--tn-accent);
+    background: var(--tn-accent-soft);
+}
+
+.model-card {
+    color: var(--SmartThemeBodyColor);
+    border: 1px solid var(--tn-hairline);
+    border-radius: var(--tn-radius-md);
+    background: var(--tn-surface-1);
+    box-shadow: var(--tn-shadow-sm);
+}
+
+.model-card:hover,
+.model-card.selected {
+    color: var(--SmartThemeBodyColor);
+    border-color: var(--tn-accent);
+    background: var(--tn-accent-soft);
+}
+
+.model-card .details-container {
+    color: var(--SmartThemeEmColor);
+    background: var(--tn-surface-2);
+}
+
+/* Select2 */
+
+.select2-dropdown {
+    padding: 6px;
+    border-color: var(--tn-hairline) !important;
+    border-radius: var(--tn-radius-md);
+    background: var(--tn-surface-solid);
+    box-shadow: var(--tn-shadow-lg);
+}
+
+.select2-results .select2-results__option--selectable {
+    margin: 1px 0;
+    border-radius: var(--tn-radius-sm);
+    opacity: 0.72;
+}
+
+.select2-results .select2-results__option--highlighted.select2-results__option--selectable {
+    color: var(--tn-accent);
+    background: var(--tn-hover);
+    opacity: 1;
+}
+
+.select2-results__option::before {
+    border-color: var(--tn-hairline);
+    border-radius: 5px;
+    background: var(--tn-field);
+}
+
+.select2-results__option--selected.select2-results__option::before {
+    color: var(--tn-accent-contrast);
+    border-color: var(--tn-accent);
+    background: var(--tn-accent);
+}
+
+/* Dialogs and notifications */
+
+.popup,
+#dialogue_popup,
+#bulk_tag_popup,
+#character_popup {
+    border: 1px solid var(--tn-hairline);
+    border-radius: var(--tn-radius-xl);
+    background: var(--tn-surface-solid);
+    box-shadow: var(--tn-shadow-lg);
+}
+
+.popup .popup-content {
+    padding: 4px 10px;
+}
+
+.popup[open]::backdrop,
+#shadow_popup,
+#shadow_character_popup {
+    background: rgba(5, 8, 14, 0.48);
+}
+
+.popup-controls {
+    gap: 10px;
+    padding: 4px 0 8px;
+}
+
+.menu_button.popup-button-ok,
+#dialogue_popup_ok {
+    color: var(--tn-accent-contrast);
+    border-color: var(--tn-accent);
+    background: var(--tn-accent);
+}
+
+.menu_button.popup-button-ok:hover,
+#dialogue_popup_ok:hover {
+    color: var(--tn-accent-contrast);
+    border-color: var(--tn-accent-hover);
+    background: var(--tn-accent-hover);
+}
+
+#dialogue_del_mes_ok,
+.red_button {
+    color: var(--tn-status-contrast) !important;
+    border-color: var(--tn-danger) !important;
+    background: var(--tn-danger) !important;
+}
+
+#dialogue_del_mes_ok:hover,
+.red_button:hover {
+    color: var(--tn-status-contrast) !important;
+    border-color: var(--tn-danger) !important;
+    background: var(--tn-danger) !important;
+    filter: brightness(1.08);
+}
+
+.popup .popup-button-close {
+    top: 8px;
+    right: 8px;
+    border-radius: 9px;
+    background: var(--tn-surface-2);
+}
+
+body #toast-container > div {
+    color: var(--tn-status-contrast) !important;
+    padding-left: 16px;
+    border: 1px solid var(--tn-hairline);
+    border-radius: var(--tn-radius-md);
+    background-image: none !important;
+    box-shadow: var(--tn-shadow-lg);
+}
+
+body #toast-container .toast-message a,
+body #toast-container .toast-message label,
+body #toast-container .toast-close-button {
+    color: inherit;
+    text-shadow: none;
+}
+
+body #toast-container .toast-message a:hover,
+body #toast-container .toast-close-button:hover {
+    color: inherit;
+    opacity: 0.78;
+}
+
+body #toast-container .toast-success {
+    background-color: var(--tn-success);
+}
+
+body #toast-container .toast-error {
+    background-color: var(--tn-danger);
+}
+
+body #toast-container .toast-info {
+    background-color: var(--tn-accent);
+}
+
+body #toast-container .toast-warning {
+    background-color: var(--tn-warning);
+}
+
+#show_more_messages {
+    color: var(--tn-accent);
+    border-radius: 999px;
+    outline: 1px solid var(--tn-hairline);
+    background: var(--tn-surface-1);
+    box-shadow: var(--tn-shadow-sm);
+}
+
+@media screen and (max-width: 1000px) {
+    :root {
+        --mes-right-spacing: 8px;
+    }
+
+    #top-bar {
+        border-right: 0;
+        border-left: 0;
+        border-radius: 0;
+    }
+
+    #top-settings-holder {
+        padding-right: max(8px, env(safe-area-inset-right));
+        padding-left: max(8px, env(safe-area-inset-left));
+    }
+
+    #chat {
+        border-right: 0;
+        border-left: 0;
+        border-radius: 0 0 var(--tn-radius-md) var(--tn-radius-md);
+    }
+
+    #form_sheld {
+        padding: 8px max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    }
+
+    #send_form {
+        padding: 7px;
+        border-radius: var(--tn-radius-lg);
+    }
+
+    .drawer-content,
+    #character_popup,
+    #world_popup,
+    #floatingPrompt,
+    #cfgConfig,
+    #logprobsViewer,
+    #movingDivs > div {
+        border-right: 0;
+        border-left: 0;
+        border-radius: 0 0 var(--tn-radius-xl) var(--tn-radius-xl);
+        box-shadow: var(--tn-shadow-lg);
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) {
+        width: calc(100% - 12px);
+        margin: 4px 6px;
+        padding: 10px 20px;
+        border-radius: var(--tn-radius-md);
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mesAvatarWrapper {
+        position: absolute;
+        top: 10px;
+        left: 20px;
+        display: grid;
+        width: calc(100% - 40px);
+        height: 64px;
+        grid-template-columns: 42px repeat(3, max-content);
+        grid-template-rows: 42px 18px;
+        gap: 4px 6px;
+        padding-bottom: 0;
+        pointer-events: none;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .avatar,
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .avatar img {
+        width: 42px;
+        height: 42px;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .avatar {
+        grid-row: 1;
+        grid-column: 1;
+        pointer-events: auto;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mesIDDisplay,
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_timer,
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .tokenCounterDisplay {
+        align-self: center;
+        padding: 1px 6px;
+        font-size: calc(var(--mainFontSize) * 0.62);
+        font-weight: 600;
+        line-height: 15px;
+        border: 1px solid var(--tn-hairline);
+        border-radius: 999px;
+        background: var(--tn-surface-2);
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mesIDDisplay {
+        grid-row: 2;
+        grid-column: 2;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_timer {
+        grid-row: 2;
+        grid-column: 3;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .tokenCounterDisplay {
+        grid-row: 2;
+        grid-column: 4;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_block {
+        padding-left: 0;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .ch_name {
+        min-height: 64px;
+        padding-left: 50px;
+        padding-bottom: 22px;
+        box-sizing: border-box;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .ch_name > .flex1 {
+        min-width: 0;
+        height: 42px;
+        align-items: center;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .ch_name .alignItemsBaseline {
+        display: grid;
+        grid-template-columns: auto auto;
+        grid-template-rows: auto auto;
+        column-gap: 4px;
+        align-items: center !important;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .name_text {
+        grid-row: 1;
+        grid-column: 1;
+        line-height: 1.15;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_ghost {
+        grid-row: 1;
+        grid-column: 2;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .timestamp {
+        grid-row: 2;
+        grid-column: 1;
+        margin-top: 2px;
+        line-height: 1.15;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .timestamp-icon {
+        grid-row: 2;
+        grid-column: 2;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_text,
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_reasoning {
+        line-height: 1.72;
+    }
+
+    body.bubblechat #chat .mes {
+        width: calc(100% - 28px);
+        margin-right: 22px;
+        margin-left: 6px;
+    }
+
+    body.bubblechat #chat .mes[is_user="true"] {
+        margin-right: 6px;
+        margin-left: 22px;
+    }
+}
+
+html.tavernnext-arkweb {
+    --mes-right-spacing: 8px;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) {
+    width: calc(100% - 12px);
+    margin: 4px 6px;
+    padding: 10px 20px;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mesAvatarWrapper {
+    position: absolute;
+    top: 10px;
+    left: 20px;
+    display: grid;
+    width: calc(100% - 40px);
+    height: 64px;
+    grid-template-columns: 42px repeat(3, max-content);
+    grid-template-rows: 42px 18px;
+    gap: 4px 6px;
+    padding-bottom: 0;
+    pointer-events: none;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .avatar,
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .avatar img {
+    width: 42px;
+    height: 42px;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .avatar {
+    grid-row: 1;
+    grid-column: 1;
+    pointer-events: auto;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mesIDDisplay,
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_timer,
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .tokenCounterDisplay {
+    align-self: center;
+    padding: 1px 6px;
+    font-size: calc(var(--mainFontSize) * 0.62);
+    font-weight: 600;
+    line-height: 15px;
+    border: 1px solid var(--tn-hairline);
+    border-radius: 999px;
+    background: var(--tn-surface-2);
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mesIDDisplay {
+    grid-row: 2;
+    grid-column: 2;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_timer {
+    grid-row: 2;
+    grid-column: 3;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .tokenCounterDisplay {
+    grid-row: 2;
+    grid-column: 4;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_block {
+    padding-left: 0;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .ch_name {
+    min-height: 64px;
+    padding-left: 50px;
+    padding-bottom: 22px;
+    box-sizing: border-box;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .ch_name > .flex1 {
+    min-width: 0;
+    height: 42px;
+    align-items: center;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .ch_name .alignItemsBaseline {
+    display: grid;
+    grid-template-columns: auto auto;
+    grid-template-rows: auto auto;
+    column-gap: 4px;
+    align-items: center !important;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .name_text {
+    grid-row: 1;
+    grid-column: 1;
+    line-height: 1.15;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_ghost {
+    grid-row: 1;
+    grid-column: 2;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .timestamp {
+    grid-row: 2;
+    grid-column: 1;
+    margin-top: 2px;
+    line-height: 1.15;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .timestamp-icon {
+    grid-row: 2;
+    grid-column: 2;
+}
+
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_text,
+html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_reasoning {
+    line-height: 1.72;
+}
+
+@media screen and (max-width: 1000px) {
+    :root,
+    html.tavernnext-arkweb {
+        --mes-right-spacing: 0px;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes),
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) {
+        width: 100%;
+        margin: 0;
+        padding: 10px 10px 0;
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mesAvatarWrapper,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mesAvatarWrapper {
+        position: static;
+        display: flex;
+        width: 100%;
+        height: auto;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        justify-content: flex-start;
+        gap: 8px;
+        margin-bottom: 8px;
+        padding: 8px 12px;
+        pointer-events: auto;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .avatar,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .avatar {
+        display: flex;
+        width: calc(var(--avatar-base-width) * var(--big-avatar-width-factor));
+        height: calc(var(--avatar-base-height) * var(--big-avatar-height-factor));
+        flex: 0 0 auto;
+        justify-content: flex-start;
+        pointer-events: auto;
+    }
+
+    body:not(.big-avatars):not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .avatar,
+    html.tavernnext-arkweb body:not(.big-avatars):not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .avatar {
+        width: var(--avatar-base-width);
+        height: var(--avatar-base-height);
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .avatar img,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .avatar img {
+        display: block;
+        width: calc(var(--avatar-base-width) * var(--big-avatar-width-factor));
+        height: calc(var(--avatar-base-height) * var(--big-avatar-height-factor));
+        margin: 0;
+    }
+
+    body:not(.big-avatars):not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .avatar img,
+    html.tavernnext-arkweb body:not(.big-avatars):not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .avatar img {
+        width: var(--avatar-base-width);
+        height: var(--avatar-base-height);
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mesIDDisplay,
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_timer,
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .tokenCounterDisplay,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mesIDDisplay,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_timer,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .tokenCounterDisplay {
+        align-self: auto;
+        padding: 0;
+        font-size: calc(var(--mainFontSize) * 0.9);
+        font-weight: 600;
+        line-height: normal;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        grid-row: auto;
+        grid-column: auto;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_block,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_block {
+        width: 100%;
+        padding-right: 10px;
+        padding-left: 10px;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .ch_name,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .ch_name {
+        min-height: 22px;
+        padding: 0;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .ch_name > .flex1,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .ch_name > .flex1 {
+        min-width: 0;
+        height: auto;
+        align-items: center;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .ch_name .alignItemsBaseline,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .ch_name .alignItemsBaseline {
+        display: flex;
+        align-items: baseline !important;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) :is(.name_text, .mes_ghost, .timestamp, .timestamp-icon),
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) :is(.name_text, .mes_ghost, .timestamp, .timestamp-icon) {
+        margin-top: 0;
+        line-height: normal;
+        grid-row: auto;
+        grid-column: auto;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_text,
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_reasoning,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_text,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_reasoning {
+        line-height: 1.65;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_text,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .mes_text {
+        padding-right: 0;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .swipeRightBlock,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes:not(.smallSysMes) .swipeRightBlock {
+        position: static !important;
+        margin-left: auto;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes.smallSysMes:has(.drawer-opener),
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes.smallSysMes:has(.drawer-opener) {
+        width: 100%;
+        margin: 0;
+        padding: 5px !important;
+        border: 0 !important;
+        border-radius: 0;
+        background: transparent !important;
+        box-shadow: none !important;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes.smallSysMes:has(.drawer-opener) .mes_block,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes.smallSysMes:has(.drawer-opener) .mes_block,
+    body:not(.bubblechat):not(.documentstyle) #chat .mes.smallSysMes:has(.drawer-opener) .mes_text,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes.smallSysMes:has(.drawer-opener) .mes_text {
+        padding: 0 !important;
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
+    }
+
+    body:not(.bubblechat):not(.documentstyle) #chat .mes.smallSysMes:has(.drawer-opener) .drawer-opener,
+    html.tavernnext-arkweb body:not(.bubblechat):not(.documentstyle) #chat .mes.smallSysMes:has(.drawer-opener) .drawer-opener {
+        background: transparent !important;
+        border: 0 !important;
+        box-shadow: none !important;
+    }
+}
+
+@media screen and (max-width: 450px) {
+    :root {
+        --tn-control-height: 40px;
+    }
+
+    #top-settings-holder {
+        gap: 0;
+        padding-top: 3px;
+        padding-bottom: 3px;
+    }
+
+    .drawer-icon {
+        min-width: 32px;
+        height: 32px;
+        border-radius: 10px;
+    }
+
+    #nonQRFormItems {
+        column-gap: 4px;
+    }
+
+    #send_textarea {
+        padding-right: 10px;
+        padding-left: 10px;
+        border-radius: 13px;
+    }
+
+    #rightSendForm > div:not(.mes_stop),
+    #leftSendForm > div,
+    #options_button {
+        width: 38px;
+        height: 40px;
+    }
+
+    #rightSendForm > #send_but {
+        width: 48px;
+        flex-basis: 48px;
+    }
+
+    .mes_text,
+    .mes_reasoning {
+        line-height: 1.65;
+    }
+
+    .popup {
+        max-width: calc(100dvw - 16px);
+        border-radius: var(--tn-radius-lg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
