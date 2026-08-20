@@ -35,7 +35,7 @@
         "backgroundModes": [
           "dataTransfer"
         ],
-        "orientation": "auto_rotation",
+        "orientation": "auto_rotation_restricted",
         "exported": true,
         "skills": [
           {
