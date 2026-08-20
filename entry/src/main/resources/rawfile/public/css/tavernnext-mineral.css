@@ -1,0 +1,139 @@
+/* TavernNext Mineral 在 Atelier 基础层上的独立增强。 */
+
+body {
+    letter-spacing: 0;
+}
+
+#top-settings-holder {
+    position: relative;
+    gap: 4px;
+    padding: 4px 8px;
+    border-right: 1px solid var(--tn-hairline);
+    border-bottom: 1px solid var(--tn-hairline);
+    border-left: 1px solid var(--tn-hairline);
+    border-radius: 0 0 var(--tn-radius-lg) var(--tn-radius-lg);
+    background: var(--tn-surface-0);
+    box-shadow: var(--tn-shadow-sm);
+}
+
+#top-settings-holder::after {
+    position: absolute;
+    right: 16px;
+    bottom: -1px;
+    left: 16px;
+    height: 1px;
+    content: "";
+    background: linear-gradient(90deg, transparent, var(--tn-accent), transparent);
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+#top-settings-holder .drawer-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#top-settings-holder .drawer-icon {
+    display: flex;
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    font-size: 0;
+    line-height: 1;
+}
+
+#top-settings-holder .drawer-icon::before {
+    display: block;
+    width: 18px;
+    height: 18px;
+    content: "" !important;
+    background: currentColor;
+    -webkit-mask: var(--tn-toolbar-icon) center / contain no-repeat;
+    mask: var(--tn-toolbar-icon) center / contain no-repeat;
+}
+
+#top-settings-holder #leftNavDrawerIcon {
+    --tn-toolbar-icon: url('/img/mineral-sliders.svg');
+}
+
+#top-settings-holder #API-status-top {
+    --tn-toolbar-icon: url('/img/mineral-plug.svg');
+}
+
+#top-settings-holder #API-status-top.redOverlayGlow,
+#top-settings-holder #API-status-top.fa-plug-circle-exclamation {
+    --tn-toolbar-icon: url('/img/mineral-plug-error.svg');
+}
+
+#top-settings-holder #advanced-formatting-button .drawer-icon {
+    --tn-toolbar-icon: url('/img/mineral-font.svg');
+}
+
+#top-settings-holder #WIDrawerIcon {
+    --tn-toolbar-icon: url('/img/mineral-book.svg');
+}
+
+#top-settings-holder #user-settings-button .drawer-icon {
+    --tn-toolbar-icon: url('/img/mineral-user-cog.svg');
+}
+
+#top-settings-holder #backgrounds-button .drawer-icon {
+    --tn-toolbar-icon: url('/img/mineral-panorama.svg');
+}
+
+#top-settings-holder #extensions-settings-button .drawer-icon {
+    --tn-toolbar-icon: url('/img/mineral-cubes.svg');
+}
+
+#top-settings-holder #persona-management-button .drawer-icon {
+    --tn-toolbar-icon: url('/img/mineral-smile.svg');
+}
+
+#top-settings-holder #rightNavDrawerIcon {
+    --tn-toolbar-icon: url('/img/mineral-address-card.svg');
+}
+
+#top-settings-holder .drawer-icon.openIcon,
+#top-settings-holder .drawer-icon:hover {
+    color: var(--tn-accent);
+}
+
+#top-settings-holder .drawer-icon.closedIcon {
+    opacity: 0.56;
+}
+
+#top-settings-holder .drawer-icon.openIcon,
+#top-settings-holder .drawer-icon.closedIcon:hover {
+    opacity: 1;
+}
+
+.mes_text,
+.mes_reasoning {
+    letter-spacing: 0;
+}
+
+#chat .mes:not(.smallSysMes) {
+    transition: border-color var(--tn-motion-duration) ease, background-color var(--tn-motion-duration) ease, box-shadow var(--tn-motion-duration) ease;
+}
+
+#chat .mes:not(.smallSysMes):hover {
+    border-color: color-mix(in srgb, var(--tn-accent) 30%, var(--tn-hairline));
+}
+
+#chat .mes[is_user="true"] .name_text {
+    color: var(--tn-warm);
+}
+
+#chat .mes[is_user="false"] .name_text {
+    color: var(--tn-accent);
+}
+
+.mes .avatar img,
+.avatar.avatar_collage img {
+    border-color: color-mix(in srgb, var(--tn-accent) 34%, var(--tn-hairline));
+    background: var(--tn-surface-2);
+}
