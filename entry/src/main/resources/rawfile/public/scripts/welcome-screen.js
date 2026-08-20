@@ -2,9 +2,11 @@ import {
     addOneMessage,
     characters,
     chat,
+    deleteCharacter,
     deleteCharacterChatByName,
     displayVersion,
     doNewChat,
+    duplicateCharacter,
     event_types,
     eventSource,
     getCharacters,
@@ -17,6 +19,7 @@ import {
     newAssistantChat,
     openCharacterChat,
     printCharactersDebounced,
+    renameCharacter,
     renameGroupOrCharacterChat,
     saveSettingsDebounced,
     selectCharacterById,
@@ -451,7 +454,7 @@ async function openRecentCharacterChat(avatarId, fileName) {
     const characterId = characters.findIndex(x => x.avatar === avatarId);
     if (characterId === -1) {
         console.error(`Character not found for avatar ID: ${avatarId}`);
-        return;
+        return false;
     }
 
     try {
@@ -461,12 +464,14 @@ async function openRecentCharacterChat(avatarId, fileName) {
         const currentChatId = getCurrentChatId();
         if (currentChatId === fileName) {
             console.debug(`Chat ${fileName} is already open.`);
-            return;
+            return true;
         }
         await openCharacterChat(fileName);
+        return true;
     } catch (error) {
         console.error('Error opening recent chat:', error);
         toastr.error(t`Failed to open recent chat. See console for details.`);
+        return false;
     }
 }
 
@@ -498,17 +503,87 @@ async function openRecentGroupChat(groupId, fileName) {
     }
 }
 
+async function openNativeCharacterChat(avatarId) {
+    let characterId = characters.findIndex(x => x.avatar === avatarId);
+    if (characterId === -1) {
+        await getCharacters();
+        characterId = characters.findIndex(x => x.avatar === avatarId);
+    }
+    if (characterId === -1) {
+        return false;
+    }
+
+    try {
+        await selectCharacterById(characterId);
+        setActiveCharacter(avatarId);
+        saveSettingsDebounced();
+        await doNewChat({ deleteCurrentChat: false });
+        return true;
+    } catch (error) {
+        console.error('Error creating a new character chat:', error);
+        toastr.error(t`Failed to create a new chat. See console for details.`);
+        return false;
+    }
+}
+
+async function refreshCharactersForNative() {
+    try {
+        await getCharacters();
+        return true;
+    } catch (error) {
+        console.error('Failed to refresh characters for native browser:', error);
+        return false;
+    }
+}
+
 globalThis.__tavernNextOpenChat = async ({ avatar = '', group = '', file = '', fileName = '' } = {}) => {
     const targetFile = file || fileName;
-    if (avatar && targetFile) {
-        await openRecentCharacterChat(avatar, targetFile);
-        return true;
+    if (avatar) {
+        return targetFile
+            ? await openRecentCharacterChat(avatar, targetFile)
+            : await openNativeCharacterChat(avatar);
     }
     if (group && targetFile) {
         await openRecentGroupChat(group, targetFile);
         return true;
     }
     return false;
+};
+
+globalThis.__tavernNextCharacterMutation = async ({ action = '', avatar = '', name = '', deleteChats = true } = {}) => {
+    try {
+        if (action === 'refresh') {
+            return (await refreshCharactersForNative()) ? 'ok' : 'failed';
+        }
+        if (action === 'rename') {
+            let characterId = characters.findIndex(x => x.avatar === avatar);
+            if (characterId === -1) {
+                await getCharacters();
+                characterId = characters.findIndex(x => x.avatar === avatar);
+            }
+            if (characterId === -1 || !name) {
+                return 'failed';
+            }
+            await selectCharacterById(characterId);
+            const renamed = await renameCharacter(name, { silent: true, renameChats: false });
+            if (!renamed || this_chid === undefined || !characters[this_chid]) {
+                return 'failed';
+            }
+            return `ok:${characters[this_chid].avatar}`;
+        }
+        if (action === 'duplicate') {
+            const duplicated = await duplicateCharacter({ avatar, silent: true });
+            return duplicated ? `ok:${duplicated}` : 'failed';
+        }
+        if (action === 'delete') {
+            const deleted = await deleteCharacter(avatar, { deleteChats: deleteChats !== false });
+            return deleted ? 'ok' : 'cancelled';
+        }
+        return 'failed';
+    } catch (error) {
+        console.error(`Native character mutation failed: ${action}`, error);
+        return 'failed';
+    }
 };
 
 globalThis.__tavernNextRefreshWelcome = async () => {

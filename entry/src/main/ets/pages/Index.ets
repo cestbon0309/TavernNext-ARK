@@ -3,6 +3,8 @@ import { webview } from '@kit.ArkWeb';
 import { ApplicationStateService } from '../backend/ApplicationStateService';
 import { BackendService, BackendStatus } from '../backend/BackendService';
 import { ChatBrowserItem, ChatBrowserRefreshListener } from '../backend/ChatBrowserService';
+import { CharacterBrowserItem } from '../backend/CharacterBrowserService';
+import { CharacterBrowserPanel } from './CharacterBrowser';
 import { DataArchiveProgressService, DataArchiveProgressState } from '../backend/DataArchiveProgressService';
 import { ExportedFile } from '../backend/ShareExportService';
 import { ShellThemeService } from '../backend/ShellThemeService';
@@ -411,6 +413,9 @@ struct Index {
   @State chatBrowserQuery: string = '';
   @State chatBrowserMessage: string = '';
   @State chatBrowserDarkMode: boolean = false;
+  @State chatBrowserTab: string = 'chats';
+  @State characterBrowserDetailOpen: boolean = false;
+  @State characterBrowserDetailDirty: boolean = false;
   @State chatBrowserRefreshing: boolean = false;
   @State chatBrowserRefreshOffset: number = 0;
   @State chatBrowserDeletingIds: string[] = [];
@@ -719,8 +724,34 @@ struct Index {
 
   @Builder
   private chatBrowserView() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      Column() {
+    Stack({ alignContent: Alignment.Bottom }) {
+      if (this.chatBrowserTab === 'characters') {
+        CharacterBrowserPanel({
+          backendUrl: this.url,
+          darkMode: this.chatBrowserDarkMode,
+          detailOpen: this.characterBrowserDetailOpen,
+          onClose: (): void => this.closeChatBrowser(),
+          onToggleTheme: (): void => this.toggleChatBrowserDarkMode(),
+          onOpenChat: (item: CharacterBrowserItem, fileName?: string): void => {
+            this.openCharacterBrowserItem(item, fileName);
+          },
+          onWebMutation: (action: string, avatar: string, value?: string): Promise<string> => {
+            return this.runCharacterBrowserMutation(action, avatar, value);
+          },
+          onDetailChange: (open: boolean): void => {
+            this.characterBrowserDetailOpen = open;
+            if (!open) {
+              this.characterBrowserDetailDirty = false;
+            }
+          },
+          onBackRequest: (): boolean => this.requestCharacterBrowserBack(),
+          onDirtyChange: (dirty: boolean): void => {
+            this.characterBrowserDetailDirty = dirty;
+          },
+          onToast: (message: string): void => this.showToast(message)
+        })
+      } else {
+        Column() {
         Stack({ alignContent: Alignment.TopStart }) {
           Row() {
             Row()
@@ -961,6 +992,10 @@ struct Index {
       .height('100%')
       .backgroundColor(this.chatBrowserBackgroundColor())
       .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
+      }
+      if (!this.characterBrowserDetailOpen) {
+        this.chatBrowserTabBar()
+      }
     }
     .width('100%')
     .height('100%')
@@ -968,6 +1003,111 @@ struct Index {
     .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     .opacity(this.chatBrowserOpacity)
     .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
+  }
+
+  @Builder
+  private chatBrowserTabBar() {
+    Row() {
+      Button({ stateEffect: true }) {
+        Column({ space: 2 }) {
+          Image($r('app.media.figma_chat_metric'))
+            .width(22)
+            .height(22)
+            .fillColor(this.chatBrowserTab === 'chats' ? '#4A90E2' : this.chatBrowserSecondaryTextColor())
+          Text('聊天')
+            .fontSize(10)
+            .fontColor(this.chatBrowserTab === 'chats' ? '#4A90E2' : this.chatBrowserSecondaryTextColor())
+        }
+      }
+      .layoutWeight(1)
+      .height(58)
+      .padding(0)
+      .backgroundColor(Color.Transparent)
+      .onClick(() => this.chatBrowserTab = 'chats')
+
+      Button({ stateEffect: true }) {
+        Column({ space: 2 }) {
+          Image($r('app.media.ic_controlcenter_dark_filled'))
+            .width(22)
+            .height(22)
+            .fillColor(this.chatBrowserTab === 'characters' ? '#4A90E2' : this.chatBrowserSecondaryTextColor())
+          Text('角色')
+            .fontSize(10)
+            .fontColor(this.chatBrowserTab === 'characters' ? '#4A90E2' : this.chatBrowserSecondaryTextColor())
+        }
+      }
+      .layoutWeight(1)
+      .height(58)
+      .padding(0)
+      .backgroundColor(Color.Transparent)
+      .onClick(() => this.chatBrowserTab = 'characters')
+    }
+    .width('100%')
+    .height(64)
+    .padding({ left: 54, right: 54, bottom: 4 })
+    .backgroundColor(this.chatBrowserHeaderColor())
+    .border({ width: { top: 1 }, color: this.chatBrowserHeaderBorderColor() })
+    .zIndex(3)
+    .animation({ duration: CHAT_BROWSER_THEME_ANIMATION_MS, curve: Curve.EaseInOut })
+  }
+
+  private openCharacterBrowserItem(item: CharacterBrowserItem, fileName?: string): void {
+    const payload = JSON.stringify({
+      avatar: item.avatar,
+      group: '',
+      file: fileName ?? ''
+    });
+    this.chatBrowserTab = 'chats';
+    this.closeChatBrowser();
+    this.controller.runJavaScript(`(async () => {
+      if (typeof window.__tavernNextOpenChat !== 'function') {
+        return 'missing';
+      }
+      return await window.__tavernNextOpenChat(${payload}) ? 'opened' : 'failed';
+    })();`).then((result: string) => {
+      const normalized = (result ?? '').replace(/"/g, '');
+      if (normalized === 'missing' || normalized === 'failed' || normalized === 'false') {
+        this.showToast('打开聊天失败。');
+        this.openCharacterBrowser();
+      }
+    }).catch((_err: Error) => {
+      this.showToast('打开聊天失败。');
+      this.openCharacterBrowser();
+    });
+  }
+
+  private runCharacterBrowserMutation(action: string, avatar: string, value?: string): Promise<string> {
+    const payload = JSON.stringify({
+      action: action,
+      avatar: avatar,
+      name: value ?? '',
+      deleteChats: true
+    });
+    if (action === 'delete') {
+      this.closeChatBrowser();
+    }
+    return this.controller.runJavaScript(`(async () => {
+      if (typeof window.__tavernNextCharacterMutation !== 'function') {
+        return 'missing';
+      }
+      return await window.__tavernNextCharacterMutation(${payload});
+    })();`).then((result: string) => {
+      const normalized = (result ?? '').replace(/^"|"$/g, '');
+      if (action === 'delete') {
+        this.openCharacterBrowser();
+      }
+      return normalized;
+    }).catch((_err: Error) => {
+      if (action === 'delete') {
+        this.openCharacterBrowser();
+      }
+      return 'failed';
+    });
+  }
+
+  private openCharacterBrowser(): void {
+    this.openChatBrowser();
+    this.chatBrowserTab = 'characters';
   }
 
   private handleWebNavigation(request: WebResourceRequest): boolean {
@@ -1012,8 +1152,38 @@ struct Index {
     });
   }
 
+  private requestCharacterBrowserBack(): boolean {
+    if (!this.characterBrowserDetailDirty) {
+      return true;
+    }
+    AlertDialog.show({
+      title: '未保存更改',
+      message: '当前角色有未保存的更改，确定放弃吗？',
+      autoCancel: true,
+      primaryButton: {
+        value: '放弃更改',
+        action: () => {
+          this.characterBrowserDetailDirty = false;
+          this.characterBrowserDetailOpen = false;
+        }
+      },
+      secondaryButton: {
+        value: '继续编辑',
+        action: () => {
+        }
+      }
+    });
+    return false;
+  }
+
   onBackPress(): boolean {
     if (this.chatBrowserOpen) {
+      if (this.chatBrowserTab === 'characters' && this.characterBrowserDetailOpen) {
+        if (this.requestCharacterBrowserBack()) {
+          this.characterBrowserDetailOpen = false;
+        }
+        return true;
+      }
       this.closeChatBrowser();
       return true;
     }
@@ -1025,6 +1195,9 @@ struct Index {
     const token = ++this.chatBrowserAnimationToken;
     ++this.chatBrowserSearchFocusToken;
     this.loadChatBrowserDarkMode();
+    this.chatBrowserTab = 'chats';
+    this.characterBrowserDetailOpen = false;
+    this.characterBrowserDetailDirty = false;
     this.chatBrowserQuery = '';
     this.chatBrowserMessage = '';
     this.chatBrowserSearchCollapsed = false;
@@ -1049,6 +1222,8 @@ struct Index {
     ++this.chatBrowserSearchFocusToken;
     this.chatBrowserSearchController.stopEditing();
     this.chatBrowserSearchRestoreDistance = 0;
+    this.characterBrowserDetailOpen = false;
+    this.characterBrowserDetailDirty = false;
     this.chatBrowserOpacity = 0;
     this.chatBrowserMessage = '';
     this.chatBrowserDeletingIds = [];
