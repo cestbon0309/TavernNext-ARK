@@ -1,4 +1,4 @@
-import { common } from '@kit.AbilityKit';
+import { bundleManager, common } from '@kit.AbilityKit';
 import { webview } from '@kit.ArkWeb';
 import { ApplicationStateService } from '../backend/ApplicationStateService';
 import { BackendService, BackendStatus } from '../backend/BackendService';
@@ -443,7 +443,7 @@ struct Index {
   };
 
   aboutToAppear(): void {
-    webview.WebviewController.setWebDebuggingAccess(true);
+    this.configureWebDebuggingAccess();
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     const theme = ShellThemeService.getInstance(context);
     this.applyShellBackground(theme.getBackgroundColor());
@@ -473,6 +473,16 @@ struct Index {
     this.flushWebPersistentState('page-disappear');
     if (this.backendService !== null) {
       this.backendService.getChatBrowser().unsubscribeRefresh(this.chatBrowserRefreshListener);
+    }
+  }
+
+  private configureWebDebuggingAccess(): void {
+    try {
+      const bundleInfo = bundleManager.getBundleInfoForSelfSync(
+        bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION);
+      webview.WebviewController.setWebDebuggingAccess(bundleInfo.appInfo.debug);
+    } catch (_err) {
+      webview.WebviewController.setWebDebuggingAccess(false);
     }
   }
 
