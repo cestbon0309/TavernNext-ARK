@@ -870,10 +870,9 @@ input[type="range"] {
 
 body #toast-container > div {
     color: var(--tn-status-contrast) !important;
-    padding-left: 16px;
+    padding-left: 50px;
     border: 1px solid var(--tn-hairline);
     border-radius: var(--tn-radius-md);
-    background-image: none !important;
     box-shadow: var(--tn-shadow-lg);
 }
 
