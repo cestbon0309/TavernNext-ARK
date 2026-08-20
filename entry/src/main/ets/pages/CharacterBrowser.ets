@@ -78,13 +78,26 @@ export struct CharacterBrowserCard {
   @Builder
   private listCard() {
     Row({ space: 13 }) {
-      Image(this.avatarUrl())
-        .width(64)
-        .height(64)
-        .objectFit(ImageFit.Cover)
-        .borderRadius(14)
-        .backgroundColor(this.darkMode ? '#30313B' : '#E1E7ED')
-        .border({ width: 1, color: this.cardBorderColor() })
+      Stack() {
+        Text(this.avatarBadgeText())
+          .width(64)
+          .height(64)
+          .textAlign(TextAlign.Center)
+          .fontSize(22)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+          .backgroundColor(this.avatarBadgeColor())
+          .borderRadius(14)
+        Image(this.avatarUrl())
+          .width(64)
+          .height(64)
+          .objectFit(ImageFit.Cover)
+          .borderRadius(14)
+          .backgroundColor(Color.Transparent)
+      }
+      .width(64)
+      .height(64)
+      .border({ width: 1, color: this.cardBorderColor() })
 
       Column({ space: 6 }) {
         Row() {
@@ -154,12 +167,21 @@ export struct CharacterBrowserCard {
   private gridCard() {
     Column({ space: 7 }) {
       Stack({ alignContent: Alignment.TopEnd }) {
+        Text(this.avatarBadgeText())
+          .width('100%')
+          .aspectRatio(1)
+          .textAlign(TextAlign.Center)
+          .fontSize(28)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+          .backgroundColor(this.avatarBadgeColor())
+          .borderRadius(14)
         Image(this.avatarUrl())
           .width('100%')
           .aspectRatio(1)
           .objectFit(ImageFit.Cover)
           .borderRadius(14)
-          .backgroundColor(this.darkMode ? '#30313B' : '#E1E7ED')
+          .backgroundColor(Color.Transparent)
         Button({ type: ButtonType.Circle, stateEffect: true }) {
           Text(this.item.favorite ? '★' : '☆')
             .fontSize(19)
@@ -206,6 +228,16 @@ export struct CharacterBrowserCard {
     .borderRadius(14)
     .shadow({ radius: 7, color: this.shadowColor(), offsetX: 0, offsetY: 2 })
     .margin({ bottom: 10 })
+  }
+
+  private avatarBadgeText(): string {
+    const trimmed = this.item.name.trim();
+    const badgeSource = trimmed.startsWith('UI Audit ') ? trimmed.slice(9) : trimmed;
+    return badgeSource.length > 0 ? badgeSource.slice(0, 1).toUpperCase() : '角';
+  }
+
+  private avatarBadgeColor(): string {
+    return this.darkMode ? '#3B82F6' : '#4A90E2';
   }
 
   private avatarUrl(): string {
@@ -323,12 +355,12 @@ export struct CharacterBrowserDetail {
           this.tagsSection()
           this.textAreaSection('角色描述', this.description, (value: string): void => {
             this.description = value;
-             this.markDirty();
-          }, '描述角色的外貌、性格、背景与能力……支持 Markdown', 5)
+            this.markDirty();
+          }, '描述角色的外貌、性格、背景与能力……支持 Markdown', 4)
           this.textAreaSection('首条消息', this.firstMessage, (value: string): void => {
             this.firstMessage = value;
-             this.markDirty();
-          }, '角色在新对话开始时发送的第一条消息……', 4)
+            this.markDirty();
+          }, '角色在新对话开始时发送的第一条消息……', 3)
           this.collapsibleCreator()
           this.collapsibleAdvanced()
           this.collapsibleGreetings()
@@ -414,12 +446,25 @@ export struct CharacterBrowserDetail {
   @Builder
   private summaryCard() {
     Row({ space: 13 }) {
-      Image(this.avatarUrl())
-        .width(64)
-        .height(64)
-        .objectFit(ImageFit.Cover)
-        .borderRadius(14)
-        .backgroundColor(this.darkMode ? '#30313B' : '#E1E7ED')
+      Stack() {
+        Text(this.avatarBadgeText())
+          .width(64)
+          .height(64)
+          .textAlign(TextAlign.Center)
+          .fontSize(22)
+          .fontWeight(FontWeight.Medium)
+          .fontColor('#FFFFFF')
+          .backgroundColor(this.avatarBadgeColor())
+          .borderRadius(14)
+        Image(this.avatarUrl())
+          .width(64)
+          .height(64)
+          .objectFit(ImageFit.Cover)
+          .borderRadius(14)
+          .backgroundColor(Color.Transparent)
+      }
+      .width(64)
+      .height(64)
       Column({ space: 5 }) {
         TextInput({ text: this.name, placeholder: '角色名称' })
           .fontSize(18)
@@ -571,6 +616,7 @@ export struct CharacterBrowserDetail {
           .height(30)
           .fontSize(12)
           .fontColor(this.primaryTextColor())
+          .placeholderColor(this.secondaryTextColor())
           .backgroundColor(Color.Transparent)
           .padding({ left: 6, right: 6 })
           .onChange((value: string) => this.tagInput = value)
@@ -596,7 +642,7 @@ export struct CharacterBrowserDetail {
         .width('100%')
       TextArea({ text: value, placeholder })
         .width('100%')
-        .height(rows * 34 + 30)
+        .height(rows * 26 + 24)
         .fontSize(14)
         .fontColor(this.primaryTextColor())
         .placeholderColor(this.secondaryTextColor())
@@ -622,6 +668,7 @@ export struct CharacterBrowserDetail {
           .height(140)
           .fontSize(14)
           .fontColor(this.primaryTextColor())
+          .placeholderColor(this.secondaryTextColor())
           .backgroundColor(this.inputColor())
           .borderRadius(10)
           .padding(10)
@@ -649,6 +696,7 @@ export struct CharacterBrowserDetail {
             .width('100%')
             .fontSize(14)
             .fontColor(this.primaryTextColor())
+            .placeholderColor(this.secondaryTextColor())
             .backgroundColor(this.inputColor())
             .borderRadius(10)
             .padding(10)
@@ -661,6 +709,7 @@ export struct CharacterBrowserDetail {
             .width('100%')
             .fontSize(14)
             .fontColor(this.primaryTextColor())
+            .placeholderColor(this.secondaryTextColor())
             .backgroundColor(this.inputColor())
             .borderRadius(10)
             .padding(10)
@@ -683,6 +732,7 @@ export struct CharacterBrowserDetail {
             .height(42)
             .fontSize(13)
             .fontColor(this.primaryTextColor())
+            .placeholderColor(this.secondaryTextColor())
             .backgroundColor(this.inputColor())
             .borderRadius(10)
             .padding({ left: 10, right: 10 })
@@ -696,6 +746,7 @@ export struct CharacterBrowserDetail {
               .height(42)
               .fontSize(13)
               .fontColor(this.primaryTextColor())
+              .placeholderColor(this.secondaryTextColor())
               .backgroundColor(this.inputColor())
               .borderRadius(10)
               .padding({ left: 10, right: 10 })
@@ -739,6 +790,7 @@ export struct CharacterBrowserDetail {
               .height(90)
               .fontSize(13)
               .fontColor(this.primaryTextColor())
+              .placeholderColor(this.secondaryTextColor())
               .backgroundColor(this.inputColor())
               .borderRadius(10)
               .padding(8)
@@ -993,6 +1045,16 @@ export struct CharacterBrowserDetail {
     this.markDirty();
   }
 
+  private avatarBadgeText(): string {
+    const trimmed = this.name.trim();
+    const badgeSource = trimmed.startsWith('UI Audit ') ? trimmed.slice(9) : trimmed;
+    return badgeSource.length > 0 ? badgeSource.slice(0, 1).toUpperCase() : '角';
+  }
+
+  private avatarBadgeColor(): string {
+    return this.darkMode ? '#3B82F6' : '#4A90E2';
+  }
+
   private currentAvatar(): string {
     return this.savedAvatar.length > 0 ? this.savedAvatar : this.item.avatar;
   }
@@ -1198,7 +1260,8 @@ export struct CharacterBrowserPanel {
         .alignItems(HorizontalAlign.Center)
       } else if (this.gridMode) {
         Scroll() {
-          Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween }) {
+          Flex({ wrap: FlexWrap.Wrap, justifyContent: FlexAlign.SpaceBetween,
+            alignItems: ItemAlign.Start, alignContent: FlexAlign.Start }) {
             ForEach(this.displayedItems(), (item: CharacterBrowserItem) => {
               CharacterBrowserCard({
                 item,
@@ -1211,6 +1274,7 @@ export struct CharacterBrowserPanel {
             }, (item: CharacterBrowserItem) => item.id)
           }
           .width('100%')
+          .constraintSize({ minHeight: '100%' })
           .padding({ left: 16, right: 16, top: 12, bottom: 26 })
         }
         .layoutWeight(1)
@@ -1364,41 +1428,53 @@ export struct CharacterBrowserPanel {
   private filterBar() {
     Scroll() {
       Row({ space: 8 }) {
-        this.filterPill('全部', this.activeFilter === 'all', () => this.activeFilter = 'all')
-        this.filterPill('★ 收藏', this.activeFilter === 'fav', () => {
+        this.filterPill('全部', () => this.activeFilter = 'all')
+        this.filterPill('★ 收藏', () => {
           this.activeFilter = this.activeFilter === 'fav' ? 'all' : 'fav';
         })
-        ForEach(this.allTags(), (tag: string) => {
-          this.filterPill(tag, this.activeFilter === tag, () => {
-            this.activeFilter = this.activeFilter === tag ? 'all' : tag;
-          });
-        }, (tag: string) => tag)
         if (this.activeFilter !== 'all' || this.query.length > 0) {
-          this.filterPill('× 清除', false, () => {
+          this.filterPill('× 清除', () => {
             this.activeFilter = 'all';
             this.query = '';
           });
         }
+        ForEach(this.allTags(), (tag: string) => {
+          this.filterPill(tag, () => {
+            this.activeFilter = this.activeFilter === tag ? 'all' : tag;
+          });
+        }, (tag: string) => tag)
       }
       .padding({ left: 20, right: 20 })
     }
     .width('100%')
     .height(42)
     .scrollable(ScrollDirection.Horizontal)
-    .scrollBar(BarState.Off)
+    .scrollBar(BarState.Auto)
+    .edgeEffect(EdgeEffect.Spring)
+    .accessibilityText('横向滚动筛选标签')
   }
 
   @Builder
-  private filterPill(label: string, active: boolean, action: () => void) {
+  private filterPill(label: string, action: () => void) {
     Button(label, { stateEffect: true })
       .height(30)
       .padding({ left: 11, right: 11 })
       .fontSize(12)
-      .fontColor(active ? '#FFFFFF' : this.secondaryTextColor())
-      .backgroundColor(active ? '#4A90E2' : this.chromeColor())
-      .border({ width: 1, color: active ? '#4A90E2' : this.cardBorderColor() })
+      .fontColor(this.filterPillActive(label) ? '#FFFFFF' : this.secondaryTextColor())
+      .backgroundColor(this.filterPillActive(label) ? '#4A90E2' : this.chromeColor())
+      .border({ width: 1, color: this.filterPillActive(label) ? '#4A90E2' : this.cardBorderColor() })
       .borderRadius(15)
       .onClick(action)
+  }
+
+  private filterPillActive(label: string): boolean {
+    if (label === '全部') {
+      return this.activeFilter === 'all';
+    }
+    if (label === '★ 收藏') {
+      return this.activeFilter === 'fav';
+    }
+    return label !== '× 清除' && this.activeFilter === label;
   }
 
   @Builder
