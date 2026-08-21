@@ -1,4 +1,7 @@
 import { CharacterBrowserChatItem, CharacterBrowserItem, CharacterBrowserService } from '../backend/CharacterBrowserService';
+import { ColorMetrics, LengthMetrics } from '@kit.ArkUI';
+import { ActionBarButton, ActionBarStyle, HdsActionBar } from '@kit.UIDesignKit';
+import { HdsImmersiveEffects } from './HdsImmersiveEffects';
 
 const CHARACTER_BROWSER_ANIMATION_MS = 220;
 const CHARACTER_BROWSER_ROW_HEIGHT = 124;
@@ -390,20 +393,12 @@ export struct CharacterBrowserDetail {
   @Builder
   private detailHeader() {
     Row({ space: 10 }) {
-      Button({ type: ButtonType.Circle, stateEffect: true }) {
-        Text('‹')
-          .fontSize(30)
-          .fontColor(this.primaryTextColor())
-      }
-      .width(42)
-      .height(42)
-      .padding(0)
-      .backgroundColor(this.chromeColor())
-      .onClick(() => {
-        if (this.onBackRequest()) {
-          this.onBack();
-        }
+      HdsActionBar({
+        endButtons: [this.detailBackAction()],
+        actionBarStyle: this.detailActionStyle()
       })
+        .width(42)
+        .height(42)
 
       Text(this.name.length > 0 ? this.name : '角色详情')
         .fontSize(20)
@@ -413,28 +408,30 @@ export struct CharacterBrowserDetail {
         .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
 
-      Button({ type: ButtonType.Circle, stateEffect: true }) {
-        Text(this.favorite ? '★' : '☆')
-          .fontSize(22)
-          .fontColor(this.favorite ? '#F6C744' : this.secondaryTextColor())
+      HdsActionBar({
+        endButtons: [this.detailFavoriteAction()],
+        actionBarStyle: this.detailActionStyle()
+      })
+        .width(42)
+        .height(42)
+
+      Stack() {
+        HdsActionBar({
+          endButtons: [this.detailSaveAction()],
+          actionBarStyle: this.detailActionStyle()
+        })
+          .width(42)
+          .height(42)
+        if (this.saving) {
+          LoadingProgress()
+            .width(20)
+            .height(20)
+            .color('#4A90E2')
+        }
       }
       .width(42)
       .height(42)
-      .padding(0)
-      .backgroundColor(this.chromeColor())
-      .onClick(() => {
-        this.favorite = !this.favorite;
-        this.markDirty();
-      })
-
-      Button('保存', { stateEffect: true })
-        .height(42)
-        .padding({ left: 16, right: 16 })
-        .fontColor('#FFFFFF')
-        .backgroundColor('#4A90E2')
-        .borderRadius(14)
-        .enabled(!this.saving)
-        .onClick(() => this.save())
+      .accessibilityText(this.saving ? '正在保存' : '保存')
     }
     .width('100%')
     .height(64)
@@ -1106,6 +1103,57 @@ export struct CharacterBrowserDetail {
     return `${Math.floor(diff / day)}天前`;
   }
 
+  private detailBackAction(): ActionBarButton {
+    return this.detailActionButton($r('app.media.ic_public_back'), '返回', (): void => {
+      if (this.onBackRequest()) {
+        this.onBack();
+      }
+    });
+  }
+
+  private detailFavoriteAction(): ActionBarButton {
+    return this.detailActionButton(this.favorite ? $r('app.media.ic_public_favorite') :
+      $r('app.media.ic_public_favorite_outline'),
+      this.favorite ? '取消收藏' : '收藏', (): void => {
+        this.favorite = !this.favorite;
+        this.markDirty();
+      }, this.favorite ? '#F6C744' : this.secondaryTextColor());
+  }
+
+  private detailSaveAction(): ActionBarButton {
+    return this.detailActionButton($r('app.media.ic_public_save'), this.saving ? '正在保存' : '保存', (): void => {
+      this.save();
+    }, '#4A90E2', !this.saving);
+  }
+
+  private detailActionButton(icon: Resource, label: string, action: () => void,
+    iconColor: string = this.primaryTextColor(), enabled: boolean = true): ActionBarButton {
+    return new ActionBarButton({
+      width: LengthMetrics.vp(42),
+      backgroundColor: ColorMetrics.resourceColor(this.chromeColor()),
+      shadowStyle: ShadowStyle.OUTER_DEFAULT_SM,
+      enabled: enabled,
+      baseIcon: icon,
+      iconFillColor: ColorMetrics.resourceColor(iconColor),
+      iconSize: LengthMetrics.vp(22),
+      accessibilityText: label,
+      hoverTips: label,
+      onClick: action
+    });
+  }
+
+  private detailActionStyle(): ActionBarStyle {
+    return new ActionBarStyle({
+      height: LengthMetrics.vp(42),
+      backgroundBlurStyle: BlurStyle.COMPONENT_REGULAR,
+      backgroundColor: ColorMetrics.resourceColor(this.chromeColor()),
+      innerSpace: LengthMetrics.vp(0),
+      startSpace: LengthMetrics.vp(0),
+      endSpace: LengthMetrics.vp(0),
+      margin: LengthMetrics.vp(0)
+    });
+  }
+
   private browserBackgroundColor(): string {
     return this.darkMode ? '#15151C' : '#F5F7FA';
   }
@@ -1275,7 +1323,7 @@ export struct CharacterBrowserPanel {
           }
           .width('100%')
           .constraintSize({ minHeight: '100%' })
-          .padding({ left: 16, right: 16, top: 12, bottom: 26 })
+          .padding({ left: 16, right: 16, top: 12, bottom: 108 })
         }
         .layoutWeight(1)
         .edgeEffect(EdgeEffect.Spring)
@@ -1293,6 +1341,11 @@ export struct CharacterBrowserPanel {
                 onFavorite: (selected: CharacterBrowserItem): void => this.toggleFavorite(selected)
               })
             }, (item: CharacterBrowserItem) => item.id)
+            ListItem() {
+              Row()
+                .width('100%')
+                .height(94)
+            }
           }
           .width('100%')
           .edgeEffect(EdgeEffect.Spring)
@@ -1332,36 +1385,26 @@ export struct CharacterBrowserPanel {
         }
         .alignItems(HorizontalAlign.Start)
         Blank()
-        Button({ type: ButtonType.Circle, stateEffect: true }) {
-          Text('◐')
-            .fontSize(20)
-            .fontColor(this.primaryTextColor())
+        Row({ space: 8 }) {
+          HdsActionBar({
+            endButtons: [this.themeAction()],
+            actionBarStyle: this.compactActionStyle()
+          })
+            .width(CHARACTER_BROWSER_SEARCH_SIZE)
+            .height(CHARACTER_BROWSER_SEARCH_SIZE)
+          HdsActionBar({
+            endButtons: [this.createAction()],
+            actionBarStyle: this.compactActionStyle()
+          })
+            .width(CHARACTER_BROWSER_SEARCH_SIZE)
+            .height(CHARACTER_BROWSER_SEARCH_SIZE)
+          HdsActionBar({
+            endButtons: [this.closeAction()],
+            actionBarStyle: this.compactActionStyle()
+          })
+            .width(CHARACTER_BROWSER_SEARCH_SIZE)
+            .height(CHARACTER_BROWSER_SEARCH_SIZE)
         }
-        .width(42)
-        .height(42)
-        .padding(0)
-        .backgroundColor(this.chromeColor())
-        .onClick(() => this.onToggleTheme())
-        Button({ type: ButtonType.Circle, stateEffect: true }) {
-          Text('＋')
-            .fontSize(24)
-            .fontColor(this.tagTextColor())
-        }
-        .width(42)
-        .height(42)
-        .padding(0)
-        .backgroundColor(this.chromeColor())
-        .onClick(() => this.createCharacter())
-        Button({ type: ButtonType.Circle, stateEffect: true }) {
-          Text('×')
-            .fontSize(24)
-            .fontColor(this.primaryTextColor())
-        }
-        .width(42)
-        .height(42)
-        .padding(0)
-        .backgroundColor(this.chromeColor())
-        .onClick(() => this.onClose())
       }
       .width('100%')
       .height(46)
@@ -1395,21 +1438,21 @@ export struct CharacterBrowserPanel {
         }
         .layoutWeight(1)
         .height(CHARACTER_BROWSER_SEARCH_SIZE)
+        .clip(true)
+        .borderRadius(CHARACTER_BROWSER_SEARCH_SIZE / 2)
+        .visualEffect(HdsImmersiveEffects.search(this.darkMode))
+        .accessibilityText('搜索角色名称或描述')
         .onClick(() => {
           if (this.searchCollapsed) {
             this.searchCollapsed = false;
           }
         })
-        Button({ type: ButtonType.Circle, stateEffect: true }) {
-          Text('↻')
-            .fontSize(24)
-            .fontColor(this.primaryTextColor())
-        }
-        .width(42)
-        .height(42)
-        .padding(0)
-        .backgroundColor(this.chromeColor())
-        .onClick(() => this.refresh())
+        HdsActionBar({
+          endButtons: this.refreshActions(),
+          actionBarStyle: this.compactActionStyle()
+        })
+          .width(CHARACTER_BROWSER_SEARCH_SIZE)
+          .height(CHARACTER_BROWSER_SEARCH_SIZE)
       }
       .width('100%')
       .height(CHARACTER_BROWSER_SEARCH_SIZE)
@@ -1656,6 +1699,49 @@ export struct CharacterBrowserPanel {
       customStyle: true
     });
     dialog.open();
+  }
+
+  private themeAction(): ActionBarButton {
+    return this.actionButton($r('app.media.ic_controlcenter_dark_filled'),
+      this.darkMode ? '切换到亮色模式' : '切换到暗色模式', (): void => this.onToggleTheme());
+  }
+
+  private createAction(): ActionBarButton {
+    return this.actionButton($r('app.media.ic_public_add'), '新建角色', (): void => this.createCharacter(), true);
+  }
+
+  private closeAction(): ActionBarButton {
+    return this.actionButton($r('app.media.ic_public_close'), '关闭角色卡', (): void => this.onClose());
+  }
+
+  private refreshActions(): ActionBarButton[] {
+    return [this.actionButton($r('app.media.ic_public_refresh'), '刷新角色卡', (): void => this.refresh())];
+  }
+
+  private actionButton(icon: Resource, label: string, action: () => void, accent: boolean = false): ActionBarButton {
+    return new ActionBarButton({
+      width: LengthMetrics.vp(CHARACTER_BROWSER_SEARCH_SIZE),
+      backgroundColor: ColorMetrics.resourceColor(this.chromeColor()),
+      shadowStyle: ShadowStyle.OUTER_DEFAULT_SM,
+      baseIcon: icon,
+      iconFillColor: ColorMetrics.resourceColor(accent ? this.tagTextColor() : this.primaryTextColor()),
+      iconSize: LengthMetrics.vp(22),
+      accessibilityText: label,
+      hoverTips: label,
+      onClick: action
+    });
+  }
+
+  private compactActionStyle(): ActionBarStyle {
+    return new ActionBarStyle({
+      height: LengthMetrics.vp(CHARACTER_BROWSER_SEARCH_SIZE),
+      backgroundBlurStyle: BlurStyle.COMPONENT_REGULAR,
+      backgroundColor: ColorMetrics.resourceColor(this.chromeColor()),
+      innerSpace: LengthMetrics.vp(0),
+      startSpace: LengthMetrics.vp(0),
+      endSpace: LengthMetrics.vp(0),
+      margin: LengthMetrics.vp(0)
+    });
   }
 
   private primaryTextColor(): string {
