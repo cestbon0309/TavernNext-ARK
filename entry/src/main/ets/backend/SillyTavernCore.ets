@@ -1,4 +1,4 @@
-import { util } from '@kit.ArkTS';
+import { taskpool, util } from '@kit.ArkTS';
 import { resourceManager } from '@kit.LocalizationKit';
 import { DataDirectories, UserDirectories } from './DataDirectories';
 import { FileEntry, FileStore } from './FileStore';
@@ -13,6 +13,7 @@ import {
   withoutExtension,
 } from './PathUtils';
 import { PngCardStore } from './PngCardStore';
+import { writePngCardFavorite } from './PngCardFavoriteTask';
 import { ShareExportService } from './ShareExportService';
 
 type JsonValue = Object | string | number | boolean | null | JsonArray;
@@ -247,6 +248,7 @@ export class SillyTavernCore {
   private settingsSavedListener: SettingsSavedListener | null;
   private encoder: util.TextEncoder = new util.TextEncoder('utf-8');
   private decoder: util.TextDecoder = new util.TextDecoder('utf-8');
+  private favoriteWrites: Map<string, Promise<boolean>> = new Map();
 
   constructor(store: FileStore, dirs: DataDirectories, shareExports: ShareExportService,
     manager: resourceManager.ResourceManager | null = null, settingsSavedListener: SettingsSavedListener | null = null) {
@@ -751,6 +753,40 @@ export class SillyTavernCore {
     }
     this.invalidateAvatarThumbnail(avatarName);
     return HttpResponse.text('OK');
+  }
+
+  async setCharacterFavoriteAsync(request: HttpRequest): Promise<HttpResponse> {
+    const body = this.bodyAsRecord(request);
+    const avatarUrl = this.asString(body['avatar']) || this.asString(body['avatar_url']);
+    if (avatarUrl.length === 0 || typeof body['favorite'] !== 'boolean') {
+      return HttpResponse.text('Error: avatar and favorite are required', 400);
+    }
+
+    const avatarName = ensurePngExtension(sanitizeFileName(avatarUrl));
+    const path = joinPath(this.userDirs.characters, avatarName);
+    if (!await this.writeCharacterFavoriteAsync(path, body['favorite'] as boolean)) {
+      return HttpResponse.json(jsonMessage('failed_to_write_character'), 500);
+    }
+    return HttpResponse.text('OK');
+  }
+
+  private async writeCharacterFavoriteAsync(path: string, favorite: boolean): Promise<boolean> {
+    const previous = this.favoriteWrites.get(path);
+    const write = previous === undefined ? this.executeCharacterFavoriteWrite(path, favorite) :
+      previous.catch((_err: Error): boolean => false).then(() => this.executeCharacterFavoriteWrite(path, favorite));
+    this.favoriteWrites.set(path, write);
+    try {
+      return await write;
+    } finally {
+      if (this.favoriteWrites.get(path) === write) {
+        this.favoriteWrites.delete(path);
+      }
+    }
+  }
+
+  private async executeCharacterFavoriteWrite(path: string, favorite: boolean): Promise<boolean> {
+    const task = new taskpool.Task(writePngCardFavorite, path, favorite);
+    return await taskpool.execute(task, taskpool.Priority.LOW) as boolean;
   }
 
   duplicateCharacter(request: HttpRequest): HttpResponse {

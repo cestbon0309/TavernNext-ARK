@@ -29,6 +29,7 @@ import {
     system_message_types,
     this_chid,
     unshallowCharacter,
+    updateFavButtonState,
     updateRemoteChatName,
 } from '../script.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
@@ -550,10 +551,28 @@ globalThis.__tavernNextOpenChat = async ({ avatar = '', group = '', file = '', f
     return false;
 };
 
-globalThis.__tavernNextCharacterMutation = async ({ action = '', avatar = '', name = '', deleteChats = true } = {}) => {
+globalThis.__tavernNextCharacterMutation = async ({ action = '', avatar = '', name = '', favorite = false, deleteChats = true } = {}) => {
     try {
         if (action === 'refresh') {
             return (await refreshCharactersForNative()) ? 'ok' : 'failed';
+        }
+        if (action === 'favorite') {
+            const characterId = characters.findIndex(x => x.avatar === avatar);
+            if (characterId === -1) {
+                return 'missing';
+            }
+            const character = characters[characterId];
+            character.fav = favorite;
+            character.data ??= {};
+            character.data.extensions ??= {};
+            character.data.extensions.fav = favorite;
+            $(`#CharID${characterId}`).toggleClass('is_fav', favorite).find('.ch_fav').val(favorite);
+            $(`.avatar.character_select[data-chid="${characterId}"]`).toggleClass('is_fav', favorite)
+                .find('.ch_fav').val(favorite);
+            if (String(this_chid) === String(characterId)) {
+                updateFavButtonState(favorite);
+            }
+            return 'ok';
         }
         if (action === 'rename') {
             let characterId = characters.findIndex(x => x.avatar === avatar);

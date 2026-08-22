@@ -503,10 +503,6 @@ export struct CharacterBrowserDetail {
   private initialSignature: string = '';
   private service: CharacterBrowserService = new CharacterBrowserService();
   private detailScroller: Scroller = new Scroller();
-  private favoriteBeforeTouch: boolean = false;
-  private favoriteTouchActive: boolean = false;
-  private favoriteClickHandledByTouch: boolean = false;
-  private favoriteTimer: number = 0;
   onBack: () => void = (): void => {
   };
   onBackRequest: CharacterDetailBackAction = (): boolean => true;
@@ -1335,57 +1331,6 @@ export struct CharacterBrowserDetail {
     return `${Math.floor(diff / day)}天前`;
   }
 
-  private handleFavoriteTouch(event: TouchEvent): void {
-    event.stopPropagation();
-    if (event.type === TouchType.Down && !this.favoriteTouchActive) {
-      this.favoriteClickHandledByTouch = false;
-      this.favoriteTouchActive = true;
-      this.favoriteBeforeTouch = this.favorite;
-      this.favorite = !this.favorite;
-      return;
-    }
-    if (event.type === TouchType.Up && this.favoriteTouchActive) {
-      this.favoriteTouchActive = false;
-      this.favoriteClickHandledByTouch = true;
-      this.scheduleFavoriteSave();
-      return;
-    }
-    if (event.type === TouchType.Cancel && this.favoriteTouchActive) {
-      this.favoriteTouchActive = false;
-      this.favoriteClickHandledByTouch = false;
-      this.favorite = this.favoriteBeforeTouch;
-    }
-  }
-
-  private handleFavoriteClick(): void {
-    if (this.favoriteClickHandledByTouch) {
-      this.favoriteClickHandledByTouch = false;
-      return;
-    }
-    this.favorite = !this.favorite;
-    this.scheduleFavoriteSave();
-  }
-
-  private scheduleFavoriteSave(): void {
-    clearTimeout(this.favoriteTimer);
-    this.favoriteTimer = setTimeout(() => this.persistFavorite(), CHARACTER_BROWSER_FAVORITE_DEBOUNCE_MS);
-  }
-
-  private persistFavorite(): void {
-    this.favoriteTimer = 0;
-    const avatar = this.currentAvatar();
-    const favorite = this.favorite;
-    this.item.favorite = favorite;
-    this.onChanged(this.currentItem());
-    this.service.setFavorite(this.backendUrl, avatar, favorite).then((success: boolean) => {
-      if (success) {
-        this.onWebMutation('refresh', avatar).catch((_err: Error) => {
-        });
-      }
-    }).catch((_err: Error) => {
-    });
-  }
-
   private browserBackgroundColor(): ResourceColor {
     return $r('app.color.native_browser_detail_background');
   }
@@ -1429,14 +1374,6 @@ export struct CharacterBrowserDetail {
   private detailNavigationMenu(): HdsNavigationMenuContentOptions {
     return {
       value: [
-        {
-          content: {
-            label: this.favorite ? '取消收藏' : '收藏',
-            icon: this.favorite ? $r('app.media.ic_public_favorite') : $r('app.media.ic_public_favorite_outline'),
-            type: IconStyleMode.SMALL,
-            action: (): void => this.handleFavoriteClick()
-          }
-        },
         {
           content: {
             label: '保存',
@@ -2335,7 +2272,7 @@ export struct CharacterBrowserPanel {
   private persistFavorite(item: CharacterBrowserItem): void {
     this.service.setFavorite(this.backendUrl, item.avatar, item.favorite).then((success: boolean) => {
       if (success) {
-        this.onWebMutation('refresh', item.avatar).catch((_err: Error) => {
+        this.onWebMutation('favorite', item.avatar, item.favorite ? 'true' : 'false').catch((_err: Error) => {
         });
       }
     }).catch((_err: Error) => {

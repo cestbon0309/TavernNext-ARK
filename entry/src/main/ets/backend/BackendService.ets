@@ -381,6 +381,16 @@ export class BackendService {
     return response;
   }
 
+  private async setCharacterFavoriteAsync(request: HttpRequest): Promise<HttpResponse> {
+    const response = await this.core.setCharacterFavoriteAsync(request);
+    if (response.statusCode === 200) {
+      const body = bodyAsRecord(request);
+      const avatar = ensurePngExtension(sanitizeFileName(asString(body['avatar'])));
+      this.characterBrowser.updateFavoriteCache(avatar, asBoolean(body['favorite']));
+    }
+    return response;
+  }
+
   private hookDuplicateCharacter(request: HttpRequest): HttpResponse {
     const response = this.core.duplicateCharacter(request);
     if (response.statusCode === 200) {
@@ -554,6 +564,8 @@ export class BackendService {
       async (request) => this.hookEditCharacterAttribute(request));
     this.server.route('POST', '/api/characters/merge-attributes',
       async (request) => this.hookMergeCharacterAttributes(request));
+    this.server.route('POST', '/api/ohos/characters/favorite',
+      async (request) => await this.setCharacterFavoriteAsync(request));
     this.server.route('POST', '/api/characters/duplicate', async (request) => this.hookDuplicateCharacter(request));
     this.server.route('POST', '/api/characters/rename', async (request) => this.hookRenameCharacter(request));
     this.server.route('POST', '/api/characters/delete', async (request) => this.hookDeleteCharacter(request));
