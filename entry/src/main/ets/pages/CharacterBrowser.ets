@@ -1916,27 +1916,7 @@ export struct CharacterBrowserPanel {
         .fontColor(this.secondaryTextColor())
       Blank()
       this.filterButton()
-      Stack({ alignContent: Alignment.TopStart }) {
-        Row()
-          .width(CHARACTER_BROWSER_SORT_SEGMENT_WIDTH)
-          .height(30)
-          .backgroundColor('#4A90E2')
-          .borderRadius(15)
-          .position({ x: 1 + this.sortModeIndex() * CHARACTER_BROWSER_SORT_SEGMENT_WIDTH, y: 1 })
-          .animation({ duration: CHARACTER_BROWSER_ANIMATION_MS, curve: Curve.FastOutSlowIn })
-        Row() {
-          this.sortSegment('名称', 'name')
-          this.sortSegment('数量', 'chatCount')
-          this.sortSegment('时间', 'created')
-        }
-        .position({ x: 1, y: 1 })
-      }
-      .width(CHARACTER_BROWSER_SORT_SEGMENT_WIDTH * 3 + 2)
-      .height(32)
-      .backgroundColor(this.chromeColor())
-      .border({ width: 1, color: this.cardBorderColor() })
-      .borderRadius(16)
-      .clip(true)
+      this.sortControl()
       this.viewModeButton()
     }
     .width('100%')
@@ -1946,35 +1926,67 @@ export struct CharacterBrowserPanel {
 
   @Builder
   private filterButton() {
-    Button('筛选标签', { stateEffect: true })
-      .height(32)
-      .padding({ left: 10, right: 10 })
-      .fontSize(12)
-      .fontColor(this.activeFilter === 'all' ? this.secondaryTextColor() : this.tagTextColor())
-      .backgroundColor(this.chromeColor())
-      .border({ width: 1, color: this.cardBorderColor() })
-      .borderRadius(16)
-      .accessibilityText('筛选标签')
-      .bindPopup(this.filterMenuVisible, {
-        builder: (): void => {
-          this.filterPopupContent();
-        },
-        placement: Placement.Bottom,
-        targetSpace: 8,
-        width: 220,
-        radius: 14,
-        popupColor: this.chromeColor(),
-        backgroundBlurStyle: BlurStyle.COMPONENT_THICK,
-        mask: true,
-        autoCancel: true,
-        onStateChange: (event: PopupStateChangeParam): void => {
-          this.filterMenuVisible = event.isVisible;
-        },
-        enableArrow: true
-      })
-      .onClick(() => {
-        this.filterMenuVisible = !this.filterMenuVisible;
-      })
+    if (Api26MaterialAdapter.isSupported()) {
+      Button('筛选标签', { stateEffect: true })
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .fontSize(12)
+        .fontColor(this.activeFilter === 'all' ? this.secondaryTextColor() : this.tagTextColor())
+        .backgroundColor(Color.Transparent)
+        .systemMaterial(Api26MaterialAdapter.search())
+        .borderRadius(16)
+        .accessibilityText('筛选标签')
+        .bindPopup(this.filterMenuVisible, {
+          builder: (): void => {
+            this.filterPopupContent();
+          },
+          placement: Placement.Bottom,
+          targetSpace: 8,
+          width: 220,
+          radius: 14,
+          popupColor: this.chromeColor(),
+          backgroundBlurStyle: BlurStyle.COMPONENT_THICK,
+          mask: true,
+          autoCancel: true,
+          onStateChange: (event: PopupStateChangeParam): void => {
+            this.filterMenuVisible = event.isVisible;
+          },
+          enableArrow: true
+        })
+        .onClick(() => {
+          this.filterMenuVisible = !this.filterMenuVisible;
+        })
+    } else {
+      Button('筛选标签', { stateEffect: true })
+        .height(32)
+        .padding({ left: 10, right: 10 })
+        .fontSize(12)
+        .fontColor(this.activeFilter === 'all' ? this.secondaryTextColor() : this.tagTextColor())
+        .backgroundColor(Color.Transparent)
+        .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN)
+        .borderRadius(16)
+        .accessibilityText('筛选标签')
+        .bindPopup(this.filterMenuVisible, {
+          builder: (): void => {
+            this.filterPopupContent();
+          },
+          placement: Placement.Bottom,
+          targetSpace: 8,
+          width: 220,
+          radius: 14,
+          popupColor: this.chromeColor(),
+          backgroundBlurStyle: BlurStyle.COMPONENT_THICK,
+          mask: true,
+          autoCancel: true,
+          onStateChange: (event: PopupStateChangeParam): void => {
+            this.filterMenuVisible = event.isVisible;
+          },
+          enableArrow: true
+        })
+        .onClick(() => {
+          this.filterMenuVisible = !this.filterMenuVisible;
+        })
+    }
   }
 
   @Builder
@@ -2020,19 +2032,77 @@ export struct CharacterBrowserPanel {
 
   @Builder
   private viewModeButton() {
-    Button({ type: ButtonType.Circle, stateEffect: true }) {
-      Image(this.gridMode ? $r('app.media.ic_view_list') : $r('app.media.ic_view_grid'))
-        .width(18)
-        .height(18)
-        .fillColor(this.tagTextColor())
+    if (Api26MaterialAdapter.isSupported()) {
+      Button({ type: ButtonType.Circle, stateEffect: true }) {
+        Image(this.gridMode ? $r('app.media.ic_view_list') : $r('app.media.ic_view_grid'))
+          .width(18)
+          .height(18)
+          .fillColor(this.tagTextColor())
+      }
+        .width(32)
+        .height(32)
+        .padding(0)
+        .backgroundColor(Color.Transparent)
+        .systemMaterial(Api26MaterialAdapter.search())
+        .accessibilityText(this.gridMode ? '切换到列表' : '切换到网格')
+        .onClick(() => this.gridMode = !this.gridMode)
+    } else {
+      Button({ type: ButtonType.Circle, stateEffect: true }) {
+        Image(this.gridMode ? $r('app.media.ic_view_list') : $r('app.media.ic_view_grid'))
+          .width(18)
+          .height(18)
+          .fillColor(this.tagTextColor())
+      }
+        .width(32)
+        .height(32)
+        .padding(0)
+        .backgroundColor(Color.Transparent)
+        .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN)
+        .accessibilityText(this.gridMode ? '切换到列表' : '切换到网格')
+        .onClick(() => this.gridMode = !this.gridMode)
     }
-      .width(32)
-      .height(32)
-      .padding(0)
-      .backgroundColor(this.chromeColor())
-      .border({ width: 1, color: this.cardBorderColor() })
-      .accessibilityText(this.gridMode ? '切换到列表' : '切换到网格')
-      .onClick(() => this.gridMode = !this.gridMode)
+  }
+
+  @Builder
+  private sortControl() {
+    if (Api26MaterialAdapter.isSupported()) {
+      Stack({ alignContent: Alignment.TopStart }) {
+        this.sortControlContent()
+      }
+        .width(CHARACTER_BROWSER_SORT_SEGMENT_WIDTH * 3 + 2)
+        .height(32)
+        .backgroundColor(Color.Transparent)
+        .systemMaterial(Api26MaterialAdapter.search())
+        .borderRadius(16)
+        .clip(true)
+    } else {
+      Stack({ alignContent: Alignment.TopStart }) {
+        this.sortControlContent()
+      }
+        .width(CHARACTER_BROWSER_SORT_SEGMENT_WIDTH * 3 + 2)
+        .height(32)
+        .backgroundColor(Color.Transparent)
+        .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN)
+        .borderRadius(16)
+        .clip(true)
+    }
+  }
+
+  @Builder
+  private sortControlContent() {
+    Row()
+      .width(CHARACTER_BROWSER_SORT_SEGMENT_WIDTH)
+      .height(30)
+      .backgroundColor('#4A90E2')
+      .borderRadius(15)
+      .position({ x: 1 + this.sortModeIndex() * CHARACTER_BROWSER_SORT_SEGMENT_WIDTH, y: 1 })
+      .animation({ duration: CHARACTER_BROWSER_ANIMATION_MS, curve: Curve.FastOutSlowIn })
+    Row() {
+      this.sortSegment('名称', 'name')
+      this.sortSegment('数量', 'chatCount')
+      this.sortSegment('时间', 'created')
+    }
+      .position({ x: 1, y: 1 })
   }
 
   @Builder
