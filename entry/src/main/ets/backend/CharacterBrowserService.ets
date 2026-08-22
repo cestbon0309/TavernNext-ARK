@@ -289,15 +289,10 @@ export class CharacterBrowserService {
   }
 
   async setFavorite(baseUrl: string, avatar: string, favorite: boolean): Promise<boolean> {
-    const extensions: JsonRecord = {};
-    extensions['fav'] = favorite;
-    const data: JsonRecord = {};
-    data['extensions'] = extensions;
     const payload: JsonRecord = {};
     payload['avatar'] = avatar;
-    payload['fav'] = favorite;
-    payload['data'] = data;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/merge-attributes'), payload);
+    payload['favorite'] = favorite;
+    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/ohos/characters/favorite'), payload);
     return this.isSuccess(result);
   }
 

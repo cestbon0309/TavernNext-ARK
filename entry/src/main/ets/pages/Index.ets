@@ -1083,6 +1083,7 @@ struct Index {
       action: action,
       avatar: avatar,
       name: value ?? '',
+      favorite: action === 'favorite' && value === 'true',
       deleteChats: true
     });
     if (action === 'delete') {

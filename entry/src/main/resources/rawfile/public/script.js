@@ -10521,7 +10521,7 @@ export function updateChatMetadata(newValues, reset) {
  * Updates the state of the favorite button based on the provided state.
  * @param {boolean} state Whether the favorite button should be on or off.
  */
-function updateFavButtonState(state) {
+export function updateFavButtonState(state) {
     // Update global state of the flag
     // TODO: This is bad and needs to be refactored.
     fav_ch_checked = state;
