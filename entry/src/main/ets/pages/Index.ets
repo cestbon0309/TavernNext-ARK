@@ -8,6 +8,7 @@ import { ApplicationStateService } from '../backend/ApplicationStateService';
 import { BackendService, BackendStatus } from '../backend/BackendService';
 import { ChatBrowserItem, ChatBrowserRefreshListener } from '../backend/ChatBrowserService';
 import { CharacterBrowserItem } from '../backend/CharacterBrowserService';
+import { Api26MaterialAdapter } from './Api26MaterialAdapter';
 import { CharacterBrowserPanel } from './CharacterBrowser';
 import { DataArchiveProgressService, DataArchiveProgressState } from '../backend/DataArchiveProgressService';
 import { ExportedFile } from '../backend/ShareExportService';
@@ -818,6 +819,34 @@ struct Index {
   @Builder
   private chatBrowserSearchBar() {
     Row() {
+      this.chatBrowserSearchField()
+    }
+    .width('100%')
+    .height(CHAT_BROWSER_SEARCH_SIZE)
+    .padding({ left: 24, right: 24 })
+  }
+
+  @Builder
+  private chatBrowserSearchField() {
+    if (Api26MaterialAdapter.isSupported()) {
+      Search({
+        value: this.chatBrowserQuery,
+        placeholder: '搜索聊天记录',
+        controller: this.chatBrowserSearchController
+      })
+        .layoutWeight(1)
+        .height(CHAT_BROWSER_SEARCH_SIZE)
+        .textFont({ size: 15 })
+        .placeholderColor(this.chatBrowserPlaceholderColor())
+        .fontColor(this.chatBrowserPrimaryTextColor())
+        .backgroundColor(Color.Transparent)
+        .systemMaterial(Api26MaterialAdapter.search())
+        .borderRadius(CHAT_BROWSER_SEARCH_SIZE / 2)
+        .id(CHAT_BROWSER_SEARCH_INPUT_KEY)
+        .onChange((value: string) => {
+          this.chatBrowserQuery = value;
+        })
+    } else {
       Search({
         value: this.chatBrowserQuery,
         placeholder: '搜索聊天记录',
@@ -836,9 +865,6 @@ struct Index {
           this.chatBrowserQuery = value;
         })
     }
-    .width('100%')
-    .height(CHAT_BROWSER_SEARCH_SIZE)
-    .padding({ left: 24, right: 24 })
   }
 
   @Builder
@@ -1020,7 +1046,7 @@ struct Index {
       }
       .width('100%')
       .height('100%')
-      .padding({ top: 12, bottom: 16 })
+      .padding({ top: 12 })
     }
     .mode(NavigationMode.Stack)
     .titleMode(HdsNavigationTitleMode.MINI)
@@ -1045,7 +1071,7 @@ struct Index {
         scrollEffectOpts: {
           enableScrollEffect: true,
           scrollEffectType: ScrollEffectType.GRADIENT_BLUR,
-          enableRefreshOffsetChange: true
+          enableRefreshOffsetChange: false
         },
         originalStyle: {
           backgroundStyle: {
@@ -1085,8 +1111,8 @@ struct Index {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
         },
-        blurStrategy: BlurStrategy.ADAPTIVE,
-        thermoCtrl: true
+        blurStrategy: BlurStrategy.ENABLE,
+        thermoCtrl: false
       },
       avoidLayoutSafeArea: true,
       enableComponentSafeArea: false

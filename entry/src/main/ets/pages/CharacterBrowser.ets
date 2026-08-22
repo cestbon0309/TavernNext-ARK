@@ -4,10 +4,11 @@ import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { BackendService } from '../backend/BackendService';
 import { CharacterBrowserChatItem, CharacterBrowserItem, CharacterBrowserRefreshListener,
   CharacterBrowserService } from '../backend/CharacterBrowserService';
-import { ColorMetrics, ComponentContent, LengthMetrics, window } from '@kit.ArkUI';
-import { ActionBarButton, ActionBarStyle, BlurStrategy, hdsMaterial, HdsActionBar, HdsNavigation,
-  HdsNavigationMenuContentOptions, HdsNavigationTitleMode, IconStyleMode, ScrollEffectType,
-  TitleSize } from '@kit.UIDesignKit';
+import { Api26MaterialAdapter } from './Api26MaterialAdapter';
+import { ComponentContent, LengthMetrics } from '@kit.ArkUI';
+import { BlurStrategy, hdsMaterial, HdsNavigation, HdsNavDestination,
+  HdsNavigationMenuContentOptions, HdsNavDestinationTitleMode, HdsNavigationTitleMode,
+  IconStyleMode, ScrollEffectType, TitleBarStyleOptions, TitleSize } from '@kit.UIDesignKit';
 
 const CHARACTER_BROWSER_ANIMATION_MS = 220;
 const CHARACTER_BROWSER_ROW_HEIGHT = 124;
@@ -19,10 +20,13 @@ const CHARACTER_BROWSER_REFRESH_INDICATOR_SIZE = 24;
 const CHARACTER_BROWSER_REFRESH_INDICATOR_GAP = 36;
 const CHARACTER_BROWSER_REFRESH_SETTLE_SHIFT = 43;
 const CHARACTER_BROWSER_REFRESH_MIN_MS = 600;
-const CHARACTER_BROWSER_REFRESH_SPACER_HEIGHT = 236;
+const CHARACTER_BROWSER_REFRESH_SPACER_HEIGHT = 188;
 const CHARACTER_BROWSER_FAVORITE_DEBOUNCE_MS = 1000;
 const CHARACTER_BROWSER_SORT_SEGMENT_WIDTH = 44;
+const CHARACTER_BROWSER_THREE_COLUMN_MIN_WIDTH = 600;
 const CHARACTER_BROWSER_IMPORT_MENU_ID = 'CharacterBrowserImportMenu';
+const CHARACTER_BROWSER_DETAIL_ROUTE = 'CharacterBrowserDetail';
+const CHARACTER_BROWSER_DETAIL_TITLEBAR_SPACER = 96;
 const CHARACTER_BROWSER_REFRESH_INDICATOR_TOP = CHARACTER_BROWSER_REFRESH_SPACER_HEIGHT + 12 -
   CHARACTER_BROWSER_REFRESH_INDICATOR_SIZE - CHARACTER_BROWSER_REFRESH_INDICATOR_GAP;
 
@@ -44,6 +48,16 @@ class CharacterBrowserImportMenuActions {
   };
   create: () => void = (): void => {
   };
+}
+
+class CharacterBrowserFilterMenuItem {
+  value: string;
+  action: () => void;
+
+  constructor(value: string, action: () => void) {
+    this.value = value;
+    this.action = action;
+  }
 }
 
 @Component
@@ -147,7 +161,7 @@ export struct CharacterBrowserCard {
         },
         edgeEffect: SwipeEdgeEffect.Spring,
         onOffsetChange: (offset: number) => {
-          this.swipeProgress = Math.max(0, Math.min(1, Math.abs(offset) / CHARACTER_BROWSER_DELETE_WIDTH));
+          this.updateSwipeProgress(offset);
         }
       })
     }
@@ -163,18 +177,34 @@ export struct CharacterBrowserCard {
           .fontColor('#FFFFFF')
       }
       .width(CHARACTER_BROWSER_DELETE_WIDTH)
-      .height(CHARACTER_BROWSER_ROW_HEIGHT)
-      .padding(0)
-      .backgroundColor('#FF4757')
-      .borderRadius(14)
-      .opacity(this.swipeProgress)
-      .onClick(() => {
-        this.onDelete(this.item);
-      })
+        .height(CHARACTER_BROWSER_ROW_HEIGHT)
+        .padding(0)
+        .backgroundColor('#FF4757')
+        .borderRadius(22)
+        .opacity(this.swipeProgress)
+        .scale({
+          x: this.deleteActionScale(),
+          y: this.deleteActionScale()
+        })
+        .onClick(() => {
+          this.onDelete(this.item);
+        })
       .animation({ duration: 120, curve: Curve.EaseOut })
     }
     .width(CHARACTER_BROWSER_DELETE_WIDTH + 12)
     .height(CHARACTER_BROWSER_ROW_HEIGHT)
+  }
+
+  private updateSwipeProgress(offset: number): void {
+    const progress = Math.max(0, Math.min(1, Math.abs(offset) / CHARACTER_BROWSER_DELETE_WIDTH));
+    if (Math.abs(this.swipeProgress - progress) < 0.01) {
+      return;
+    }
+    this.swipeProgress = progress;
+  }
+
+  private deleteActionScale(): number {
+    return 0.7 + this.swipeProgress * 0.3;
   }
 
   @Builder
@@ -470,10 +500,9 @@ export struct CharacterBrowserDetail {
   @State saved: boolean = false;
   @State savedAvatar: string = '';
   @State savedName: string = '';
-  @State safeAreaTop: number = 0;
-  @State safeAreaBottom: number = 0;
   private initialSignature: string = '';
   private service: CharacterBrowserService = new CharacterBrowserService();
+  private detailScroller: Scroller = new Scroller();
   private favoriteBeforeTouch: boolean = false;
   private favoriteTouchActive: boolean = false;
   private favoriteClickHandledByTouch: boolean = false;
@@ -497,126 +526,83 @@ export struct CharacterBrowserDetail {
 
   aboutToAppear(): void {
     this.copyFromItem(this.item);
-    this.updateSafeAreaInsets();
     this.loadChats();
   }
 
   build() {
-    Column() {
-      this.detailHeader()
-      Scroll() {
-        Column({ space: 12 }) {
-          this.summaryCard()
-          this.actionBar()
-          this.chatHistory()
-          this.tagsSection()
-          this.textAreaSection('角色描述', this.description, (value: string): void => {
-            this.description = value;
-            this.markDirty();
-          }, '描述角色的外貌、性格、背景与能力……支持 Markdown', 4)
-          this.textAreaSection('首条消息', this.firstMessage, (value: string): void => {
-            this.firstMessage = value;
-            this.markDirty();
-          }, '角色在新对话开始时发送的第一条消息……', 3)
-          this.collapsibleCreator()
-          this.collapsibleAdvanced()
-          this.collapsibleGreetings()
-          Button(this.saved ? '已保存' : (this.saving ? '正在保存…' : '保存更改'), { stateEffect: true })
-            .width('100%')
-            .height(48)
-            .fontSize(16)
-            .fontWeight(FontWeight.Medium)
-            .fontColor('#FFFFFF')
-            .backgroundColor('#4A90E2')
-            .borderRadius(14)
-            .enabled(!this.saving)
-            .onClick(() => this.save())
+    HdsNavDestination() {
+      Column() {
+        Scroll(this.detailScroller) {
+          Column({ space: 12 }) {
+            Blank()
+              .width('100%')
+              .height(CHARACTER_BROWSER_DETAIL_TITLEBAR_SPACER)
+            this.summaryCard()
+            this.actionBar()
+            this.chatHistory()
+            this.tagsSection()
+            this.textAreaSection('角色描述', this.description, (value: string): void => {
+              this.description = value;
+              this.markDirty();
+            }, '描述角色的外貌、性格、背景与能力……支持 Markdown', 4)
+            this.textAreaSection('首条消息', this.firstMessage, (value: string): void => {
+              this.firstMessage = value;
+              this.markDirty();
+            }, '角色在新对话开始时发送的第一条消息……', 3)
+            this.collapsibleCreator()
+            this.collapsibleAdvanced()
+            this.collapsibleGreetings()
+            Button(this.saved ? '已保存' : (this.saving ? '正在保存…' : '保存更改'), { stateEffect: true })
+              .width('100%')
+              .height(48)
+              .fontSize(16)
+              .fontWeight(FontWeight.Medium)
+              .fontColor('#FFFFFF')
+              .backgroundColor('#4A90E2')
+              .borderRadius(14)
+              .enabled(!this.saving)
+              .onClick(() => this.save())
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 14, bottom: 28 })
         }
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 14, bottom: 28 })
-      }
-      .layoutWeight(1)
-      .edgeEffect(EdgeEffect.Spring)
-    }
-    .width('100%')
-    .height('100%')
-    .padding({ bottom: this.safeAreaBottom })
-    .backgroundColor(this.browserBackgroundColor())
-    .animation({ duration: CHARACTER_BROWSER_ANIMATION_MS, curve: Curve.EaseInOut })
-    .onAreaChange(() => this.updateSafeAreaInsets())
-  }
-
-  @Builder
-  private detailHeader() {
-    Row({ space: 10 }) {
-      HdsActionBar({
-        endButtons: [this.detailBackAction()],
-        actionBarStyle: this.detailActionStyle(),
-        blurStrategy: BlurStrategy.ADAPTIVE
-      })
-        .width(42)
-        .height(42)
-
-      Text(this.name.length > 0 ? this.name : '角色详情')
-        .fontSize(20)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(this.primaryTextColor())
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
         .layoutWeight(1)
-
-      Button({ type: ButtonType.Circle, stateEffect: true }) {
-        Image(this.favorite ? $r('app.media.ic_public_favorite') : $r('app.media.ic_public_favorite_outline'))
-          .width(22)
-          .height(22)
-          .fillColor(this.favorite ? '#F6C744' : this.primaryTextColor())
+        .edgeEffect(EdgeEffect.Spring)
       }
-      .width(42)
-      .height(42)
-      .padding(0)
-      .backgroundColor(this.chromeColor())
-      .border({ width: 1, color: this.cardBorderColor() })
-      .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
-      .shadow(ShadowStyle.OUTER_DEFAULT_SM)
-      .accessibilityText(this.favorite ? '取消收藏' : '收藏')
-      .onTouch((event: TouchEvent) => this.handleFavoriteTouch(event))
-      .onClick(() => this.handleFavoriteClick())
-
-      HdsActionBar({
-        endButtons: [this.detailSaveAction()],
-        actionBarStyle: this.detailActionStyle(),
-        blurStrategy: BlurStrategy.ADAPTIVE
+      .width('100%')
+      .height('100%')
+      .backgroundColor(this.browserBackgroundColor())
+    }
+      .titleMode(HdsNavDestinationTitleMode.MINI)
+      .titleBar({
+        padding: {
+          start: LengthMetrics.vp(20),
+          end: LengthMetrics.vp(20)
+        },
+        content: {
+          title: {
+            mainTitle: this.name.length > 0 ? this.name : '角色详情',
+            mainTitleSize: TitleSize.TITLE_S
+          },
+          menu: this.detailNavigationMenu()
+        },
+        style: this.detailTitleBarStyle(),
+        avoidLayoutSafeArea: true,
+        enableComponentSafeArea: false
       })
-        .width(42)
-        .height(42)
-        .accessibilityText('保存')
-    }
-    .width('100%')
-    .height(64 + this.safeAreaTop)
-    .padding({ left: 16, right: 16, top: this.safeAreaTop })
-    .backgroundColor(this.headerColor())
-    .border({ width: { bottom: 1 }, color: this.cardBorderColor() })
-  }
-
-  private updateSafeAreaInsets(): void {
-    try {
-      const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const mainWindow = context.windowStage.getMainWindowSync();
-      const systemArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
-      const cutoutArea = mainWindow.getWindowAvoidArea(window.AvoidAreaType.TYPE_CUTOUT);
-      const topPx = Math.max(systemArea.topRect.height, cutoutArea.topRect.height);
-      const nextTop = this.getUIContext().px2vp(topPx);
-      const nextBottom = this.getUIContext().px2vp(systemArea.bottomRect.height);
-      if (nextTop !== this.safeAreaTop) {
-        this.safeAreaTop = nextTop;
-      }
-      if (nextBottom !== this.safeAreaBottom) {
-        this.safeAreaBottom = nextBottom;
-      }
-    } catch (_err) {
-      this.safeAreaTop = 0;
-      this.safeAreaBottom = 0;
-    }
+      .hideBackButton(false)
+      .onBackPressed((): boolean => {
+        if (this.onBackRequest()) {
+          this.onBack();
+        }
+        return true;
+      })
+      .bindToScrollable([this.detailScroller])
+      .withTheme({ enableThemeColorMode: true })
+      .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
+      .width('100%')
+      .height('100%')
+      .backgroundColor(this.browserBackgroundColor());
   }
 
   @Builder
@@ -1349,20 +1335,6 @@ export struct CharacterBrowserDetail {
     return `${Math.floor(diff / day)}天前`;
   }
 
-  private detailBackAction(): ActionBarButton {
-    return this.detailActionButton($r('app.media.ic_public_back'), '返回', (): void => {
-      if (this.onBackRequest()) {
-        this.onBack();
-      }
-    });
-  }
-
-  private detailSaveAction(): ActionBarButton {
-    return this.detailActionButton($r('app.media.ic_public_save'), '保存', (): void => {
-      setTimeout(() => this.save(), CHARACTER_BROWSER_ANIMATION_MS);
-    }, '#4A90E2');
-  }
-
   private handleFavoriteTouch(event: TouchEvent): void {
     event.stopPropagation();
     if (event.type === TouchType.Down && !this.favoriteTouchActive) {
@@ -1404,6 +1376,7 @@ export struct CharacterBrowserDetail {
     const avatar = this.currentAvatar();
     const favorite = this.favorite;
     this.item.favorite = favorite;
+    this.onChanged(this.currentItem());
     this.service.setFavorite(this.backendUrl, avatar, favorite).then((success: boolean) => {
       if (success) {
         this.onWebMutation('refresh', avatar).catch((_err: Error) => {
@@ -1413,38 +1386,8 @@ export struct CharacterBrowserDetail {
     });
   }
 
-  private detailActionButton(icon: Resource, label: string, action: () => void,
-    iconColor: ResourceColor = this.primaryTextColor(), enabled: boolean = true): ActionBarButton {
-    return new ActionBarButton({
-      width: LengthMetrics.vp(42),
-      shadowStyle: ShadowStyle.OUTER_DEFAULT_SM,
-      enabled: enabled,
-      baseIcon: icon,
-      iconFillColor: ColorMetrics.resourceColor(iconColor),
-      iconSize: LengthMetrics.vp(22),
-      accessibilityText: label,
-      hoverTips: label,
-      onClick: action
-    });
-  }
-
-  private detailActionStyle(): ActionBarStyle {
-    return new ActionBarStyle({
-      height: LengthMetrics.vp(42),
-      backgroundBlurStyle: BlurStyle.COMPONENT_REGULAR,
-      innerSpace: LengthMetrics.vp(0),
-      startSpace: LengthMetrics.vp(0),
-      endSpace: LengthMetrics.vp(0),
-      margin: LengthMetrics.vp(0)
-    });
-  }
-
   private browserBackgroundColor(): ResourceColor {
     return $r('app.color.native_browser_detail_background');
-  }
-
-  private headerColor(): ResourceColor {
-    return $r('app.color.native_browser_header');
   }
 
   private inputColor(): ResourceColor {
@@ -1482,21 +1425,100 @@ export struct CharacterBrowserDetail {
   private tagBorderColor(): ResourceColor {
     return $r('app.color.native_browser_tag_border');
   }
+
+  private detailNavigationMenu(): HdsNavigationMenuContentOptions {
+    return {
+      value: [
+        {
+          content: {
+            label: this.favorite ? '取消收藏' : '收藏',
+            icon: this.favorite ? $r('app.media.ic_public_favorite') : $r('app.media.ic_public_favorite_outline'),
+            type: IconStyleMode.SMALL,
+            action: (): void => this.handleFavoriteClick()
+          }
+        },
+        {
+          content: {
+            label: '保存',
+            icon: $r('app.media.ic_public_save'),
+            type: IconStyleMode.SMALL,
+            action: (): void => {
+              this.save().catch((_err: Error) => {
+              });
+            }
+          }
+        }
+      ]
+    };
+  }
+
+  private detailTitleBarStyle(): TitleBarStyleOptions {
+    return {
+      scrollEffectOpts: {
+        enableScrollEffect: true,
+        scrollEffectType: ScrollEffectType.GRADIENT_BLUR,
+        enableRefreshOffsetChange: false
+      },
+      originalStyle: {
+        backgroundStyle: {
+          backgroundColor: $r('app.color.native_browser_gradient_mask'),
+          maskExtraHeight: 28,
+          blurRadius: 28
+        },
+        contentStyle: {
+          titleStyle: {
+            mainTitleColor: this.primaryTextColor(),
+            subTitleColor: this.secondaryTextColor()
+          },
+          menuStyle: {
+            backgroundColor: $r('app.color.native_browser_control_background'),
+            iconColor: this.primaryTextColor()
+          }
+        }
+      },
+      scrollEffectStyle: {
+        backgroundStyle: {
+          backgroundColor: $r('app.color.native_browser_gradient_mask'),
+          maskExtraHeight: 28,
+          blurRadius: 28
+        },
+        contentStyle: {
+          titleStyle: {
+            mainTitleColor: this.primaryTextColor(),
+            subTitleColor: this.secondaryTextColor()
+          },
+          menuStyle: {
+            backgroundColor: $r('app.color.native_browser_control_background'),
+            iconColor: this.primaryTextColor()
+          }
+        }
+      },
+      systemMaterialEffect: {
+        materialType: hdsMaterial.MaterialType.ADAPTIVE,
+        materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
+      },
+      blurStrategy: BlurStrategy.ENABLE,
+      thermoCtrl: false
+    };
+  }
 }
 
 @Component
 export struct CharacterBrowserPanel {
   @Prop backendUrl: string = 'http://127.0.0.1:8000';
+  @Watch('onDetailOpenChanged')
   @Prop detailOpen: boolean = false;
   @State items: CharacterBrowserItem[] = [];
   @State query: string = '';
   @State activeFilter: string = 'all';
   @State sortMode: string = 'name';
   @State gridMode: boolean = true;
+  @State filterMenuVisible: boolean = false;
   @State refreshing: boolean = false;
   @State loading: boolean = true;
   @State refreshOffset: number = 0;
-  @State detail: CharacterBrowserItem | null = null;
+  @State gridColumnCount: number = 2;
+  private navigationStack: NavPathStack = new NavPathStack();
   private service: CharacterBrowserService = new CharacterBrowserService();
   private gridScroller: Scroller = new Scroller();
   private listScroller: Scroller = new Scroller();
@@ -1546,38 +1568,37 @@ export struct CharacterBrowserPanel {
     this.service.unsubscribeRefresh(this.refreshListener);
   }
 
-  build() {
-    if (this.detail !== null && this.detailOpen) {
-      CharacterBrowserDetail({
-        item: this.detail,
-        backendUrl: this.backendUrl,
-        onBack: (): void => {
-          this.detail = null;
-          this.onDetailChange(false);
-        },
-        onOpenChat: this.onOpenChat,
-        onWebMutation: this.onWebMutation,
-        onBackRequest: this.onBackRequest,
-        onDirtyChange: (dirty: boolean): void => {
-          this.onDirtyChange(dirty);
-        },
-        onDeleted: (): void => {
-          this.detail = null;
-          this.onDetailChange(false);
-        },
-        onChanged: (item: CharacterBrowserItem): void => {
-          this.detail = item;
-        },
-        onToast: this.onToast
-      })
-    } else {
-      this.listView();
+  private onDetailOpenChanged(): void {
+    if (!this.detailOpen && this.navigationStack.size() > 0) {
+      this.popDetail();
     }
+  }
+
+  build() {
+    this.listView();
+  }
+
+  @Builder
+  private detailDestination(item: CharacterBrowserItem) {
+    CharacterBrowserDetail({
+      item,
+      backendUrl: this.backendUrl,
+      onBack: (): void => this.popDetail(),
+      onOpenChat: this.onOpenChat,
+      onWebMutation: this.onWebMutation,
+      onBackRequest: this.onBackRequest,
+      onDirtyChange: (dirty: boolean): void => {
+        this.onDirtyChange(dirty);
+      },
+      onDeleted: (): void => this.popDetail(),
+      onChanged: (changed: CharacterBrowserItem): void => this.updateDetail(changed),
+      onToast: this.onToast
+    });
   }
 
   @Builder
   private listView() {
-    HdsNavigation() {
+    HdsNavigation(this.navigationStack) {
       Column() {
         if (this.loading) {
           Column({ space: 12 }) {
@@ -1606,13 +1627,13 @@ export struct CharacterBrowserPanel {
                 this.refreshIndicator()
               }
               .columnStart(0)
-              .columnEnd(1)
+              .columnEnd(this.gridColumnCount - 1)
               if (this.displayedItems().length === 0) {
                 GridItem() {
                   this.emptyState()
                 }
                 .columnStart(0)
-                .columnEnd(1)
+                .columnEnd(this.gridColumnCount - 1)
               } else {
                 LazyForEach(this.dataSource, (item: CharacterBrowserItem) => {
                   GridItem() {
@@ -1633,11 +1654,11 @@ export struct CharacterBrowserPanel {
               .width('100%')
               .height(108)
               .columnStart(0)
-              .columnEnd(1)
+              .columnEnd(this.gridColumnCount - 1)
             }
             .width('100%')
             .height('100%')
-            .columnsTemplate('1fr 1fr')
+            .columnsTemplate(this.gridColumnsTemplate())
             .columnsGap(8)
             .rowsGap(7)
             .padding({ left: 8, right: 8 })
@@ -1646,6 +1667,9 @@ export struct CharacterBrowserPanel {
             .translate({ y: this.refreshing ? -CHARACTER_BROWSER_REFRESH_SETTLE_SHIFT : 0 })
             .animation({ duration: CHARACTER_BROWSER_ANIMATION_MS, curve: Curve.FastOutSlowIn })
             .edgeEffect(EdgeEffect.Spring)
+            .onAreaChange((_oldValue: Area, newValue: Area) => {
+              this.updateGridColumnCount(newValue.width);
+            })
           }
           .width('100%')
           .height('100%')
@@ -1737,14 +1761,14 @@ export struct CharacterBrowserPanel {
         menu: this.navigationMenu(),
         bottomBuilder: {
           builder: () => this.titleBarBottom(),
-          height: 134
+          height: CHARACTER_BROWSER_SEARCH_SIZE + 44
         }
       },
       style: {
         scrollEffectOpts: {
           enableScrollEffect: true,
           scrollEffectType: ScrollEffectType.GRADIENT_BLUR,
-          enableRefreshOffsetChange: true
+          enableRefreshOffsetChange: false
         },
         originalStyle: {
           backgroundStyle: {
@@ -1784,14 +1808,15 @@ export struct CharacterBrowserPanel {
           materialType: hdsMaterial.MaterialType.ADAPTIVE,
           materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE
         },
-        blurStrategy: BlurStrategy.ADAPTIVE,
-        thermoCtrl: true
+        blurStrategy: BlurStrategy.ENABLE,
+        thermoCtrl: false
       },
       avoidLayoutSafeArea: true,
       enableComponentSafeArea: false
     })
     .withTheme({ enableThemeColorMode: true })
     .bindToScrollable([this.gridScroller, this.listScroller])
+    .navDestination(this.detailRoute)
     .ignoreLayoutSafeArea([LayoutSafeAreaType.SYSTEM], [LayoutSafeAreaEdge.BOTTOM])
     .width('100%')
     .height('100%')
@@ -1800,10 +1825,76 @@ export struct CharacterBrowserPanel {
   }
 
   @Builder
+  private detailRoute(name: string, param: Object) {
+    if (name === CHARACTER_BROWSER_DETAIL_ROUTE) {
+      this.detailDestination(this.routeCharacterItem(param));
+    }
+  }
+
+  private routeCharacterItem(param: Object): CharacterBrowserItem {
+    const routeInfo = param as NavPathInfo;
+    const source = routeInfo.param !== undefined ? routeInfo.param as CharacterBrowserItem : param as CharacterBrowserItem;
+
+    const item = new CharacterBrowserItem();
+    item.id = source.id ?? '';
+    item.avatar = source.avatar ?? '';
+    item.name = source.name ?? '';
+    item.chat = source.chat ?? '';
+    item.favorite = source.favorite ?? false;
+    item.tags = source.tags ?? [];
+    item.dateAddedMs = source.dateAddedMs ?? 0;
+    item.dateLastChatMs = source.dateLastChatMs ?? 0;
+    item.chatSizeBytes = source.chatSizeBytes ?? 0;
+    item.dataSizeBytes = source.dataSizeBytes ?? 0;
+    item.description = source.description ?? '';
+    item.personality = source.personality ?? '';
+    item.scenario = source.scenario ?? '';
+    item.firstMessage = source.firstMessage ?? '';
+    item.exampleMessages = source.exampleMessages ?? '';
+    item.creatorNotes = source.creatorNotes ?? '';
+    item.creator = source.creator ?? '';
+    item.version = source.version ?? '';
+    item.talkativeness = source.talkativeness ?? 0.5;
+    item.depthPrompt = source.depthPrompt ?? '';
+    item.depth = source.depth ?? 4;
+    item.depthRole = source.depthRole ?? 'system';
+    item.alternateGreetings = source.alternateGreetings ?? [];
+    item.jsonData = source.jsonData ?? '';
+    item.data = source.data ?? {};
+    return item;
+  }
+
+  @Builder
   private titleBarBottom() {
     Column() {
       Row() {
-        Search({ placeholder: '搜索角色名称或描述', value: this.query })
+        this.characterSearchField()
+      }
+      .width('100%')
+      .height(CHARACTER_BROWSER_SEARCH_SIZE)
+      .padding({ left: 24, right: 24 })
+      this.resultToolbar()
+    }
+    .width('100%')
+    .height(CHARACTER_BROWSER_SEARCH_SIZE + 44)
+  }
+
+  @Builder
+  private characterSearchField() {
+    if (Api26MaterialAdapter.isSupported()) {
+      Search({ placeholder: '搜索角色名称或描述', value: this.query })
+        .layoutWeight(1)
+        .height(CHARACTER_BROWSER_SEARCH_SIZE)
+        .textFont({ size: 15 })
+        .fontColor(this.primaryTextColor())
+        .placeholderColor(this.secondaryTextColor())
+        .backgroundColor(Color.Transparent)
+        .systemMaterial(Api26MaterialAdapter.search())
+        .borderRadius(CHARACTER_BROWSER_SEARCH_SIZE / 2)
+        .accessibilityText('搜索角色名称或描述')
+        .onChange((value: string) => this.setQuery(value))
+    } else {
+      Search({ placeholder: '搜索角色名称或描述', value: this.query })
         .layoutWeight(1)
         .height(CHARACTER_BROWSER_SEARCH_SIZE)
         .textFont({ size: 15 })
@@ -1814,63 +1905,7 @@ export struct CharacterBrowserPanel {
         .borderRadius(CHARACTER_BROWSER_SEARCH_SIZE / 2)
         .accessibilityText('搜索角色名称或描述')
         .onChange((value: string) => this.setQuery(value))
-      }
-      .width('100%')
-      .height(CHARACTER_BROWSER_SEARCH_SIZE)
-      .padding({ left: 24, right: 24 })
-      this.filterBar()
-      this.resultToolbar()
     }
-    .width('100%')
-    .height(134)
-  }
-
-  @Builder
-  private filterBar() {
-    Scroll() {
-      Row({ space: 8 }) {
-        this.filterPill('全部', () => this.setFilter('all'))
-        this.filterPill('★ 收藏', () => {
-          this.setFilter(this.activeFilter === 'fav' ? 'all' : 'fav');
-        })
-        ForEach(this.allTags(), (tag: string) => {
-          this.filterPill(tag, () => {
-            this.setFilter(this.activeFilter === tag ? 'all' : tag);
-          });
-        }, (tag: string) => tag)
-      }
-      .padding({ left: 20, right: 20 })
-    }
-    .width('100%')
-    .height(42)
-    .scrollable(ScrollDirection.Horizontal)
-    .scrollBar(BarState.Off)
-    .edgeEffect(EdgeEffect.Spring)
-    .align(Alignment.Start)
-    .accessibilityText('横向滚动筛选标签')
-  }
-
-  @Builder
-  private filterPill(label: string, action: () => void) {
-    Button(label, { stateEffect: true })
-      .height(30)
-      .padding({ left: 11, right: 11 })
-      .fontSize(12)
-      .fontColor(this.filterPillActive(label) ? '#FFFFFF' : this.secondaryTextColor())
-      .backgroundColor(this.filterPillActive(label) ? '#4A90E2' : this.chromeColor())
-      .border({ width: 1, color: this.filterPillActive(label) ? '#4A90E2' : this.cardBorderColor() })
-      .borderRadius(15)
-      .onClick(action)
-  }
-
-  private filterPillActive(label: string): boolean {
-    if (label === '全部') {
-      return this.activeFilter === 'all';
-    }
-    if (label === '★ 收藏') {
-      return this.activeFilter === 'fav';
-    }
-    return this.activeFilter === label;
   }
 
   @Builder
@@ -1880,6 +1915,7 @@ export struct CharacterBrowserPanel {
         .fontSize(13)
         .fontColor(this.secondaryTextColor())
       Blank()
+      this.filterButton()
       Stack({ alignContent: Alignment.TopStart }) {
         Row()
           .width(CHARACTER_BROWSER_SORT_SEGMENT_WIDTH)
@@ -1901,23 +1937,102 @@ export struct CharacterBrowserPanel {
       .border({ width: 1, color: this.cardBorderColor() })
       .borderRadius(16)
       .clip(true)
-      Button({ type: ButtonType.Circle, stateEffect: true }) {
-        Image(this.gridMode ? $r('app.media.ic_view_list') : $r('app.media.ic_view_grid'))
-          .width(18)
-          .height(18)
-          .fillColor(this.tagTextColor())
-      }
-        .width(32)
-        .height(32)
-        .padding(0)
-        .backgroundColor(this.chromeColor())
-        .border({ width: 1, color: this.cardBorderColor() })
-        .accessibilityText(this.gridMode ? '切换到列表' : '切换到网格')
-        .onClick(() => this.gridMode = !this.gridMode)
+      this.viewModeButton()
     }
     .width('100%')
     .height(44)
-    .padding({ left: 20, right: 20 })
+      .padding({ left: 20, right: 20 })
+  }
+
+  @Builder
+  private filterButton() {
+    Button('筛选标签', { stateEffect: true })
+      .height(32)
+      .padding({ left: 10, right: 10 })
+      .fontSize(12)
+      .fontColor(this.activeFilter === 'all' ? this.secondaryTextColor() : this.tagTextColor())
+      .backgroundColor(this.chromeColor())
+      .border({ width: 1, color: this.cardBorderColor() })
+      .borderRadius(16)
+      .accessibilityText('筛选标签')
+      .bindPopup(this.filterMenuVisible, {
+        builder: (): void => {
+          this.filterPopupContent();
+        },
+        placement: Placement.Bottom,
+        targetSpace: 8,
+        width: 220,
+        radius: 14,
+        popupColor: this.chromeColor(),
+        backgroundBlurStyle: BlurStyle.COMPONENT_THICK,
+        mask: true,
+        autoCancel: true,
+        onStateChange: (event: PopupStateChangeParam): void => {
+          this.filterMenuVisible = event.isVisible;
+        },
+        enableArrow: true
+      })
+      .onClick(() => {
+        this.filterMenuVisible = !this.filterMenuVisible;
+      })
+  }
+
+  @Builder
+  private filterPopupContent() {
+    Column({ space: 4 }) {
+      Text('筛选标签')
+        .width('100%')
+        .fontSize(13)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.primaryTextColor())
+        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      ForEach(this.filterMenuItems(), (item: CharacterBrowserFilterMenuItem) => {
+        Button({ stateEffect: true }) {
+          Text(item.value)
+            .width('100%')
+            .fontSize(13)
+            .fontColor(this.filterMenuItemActive(item.value) ? this.tagTextColor() : this.primaryTextColor())
+            .textAlign(TextAlign.Start)
+        }
+          .width('100%')
+          .height(36)
+          .padding({ left: 12, right: 12 })
+          .backgroundColor(this.filterMenuItemActive(item.value) ? this.chromeColor() : Color.Transparent)
+          .borderRadius(10)
+          .onClick(() => {
+            item.action();
+            this.filterMenuVisible = false;
+          });
+      }, (item: CharacterBrowserFilterMenuItem) => item.value)
+    }
+    .padding(8)
+  }
+
+  private filterMenuItemActive(label: string): boolean {
+    if (label === '全部') {
+      return this.activeFilter === 'all';
+    }
+    if (label === '★ 收藏') {
+      return this.activeFilter === 'fav';
+    }
+    return this.activeFilter === label;
+  }
+
+  @Builder
+  private viewModeButton() {
+    Button({ type: ButtonType.Circle, stateEffect: true }) {
+      Image(this.gridMode ? $r('app.media.ic_view_list') : $r('app.media.ic_view_grid'))
+        .width(18)
+        .height(18)
+        .fillColor(this.tagTextColor())
+    }
+      .width(32)
+      .height(32)
+      .padding(0)
+      .backgroundColor(this.chromeColor())
+      .border({ width: 1, color: this.cardBorderColor() })
+      .accessibilityText(this.gridMode ? '切换到列表' : '切换到网格')
+      .onClick(() => this.gridMode = !this.gridMode)
   }
 
   @Builder
@@ -1952,6 +2067,20 @@ export struct CharacterBrowserPanel {
     return this.filteredItems(this.items);
   }
 
+  private gridColumnsTemplate(): string {
+    return this.gridColumnCount === 3 ? '1fr 1fr 1fr' : '1fr 1fr';
+  }
+
+  private updateGridColumnCount(width: Length): void {
+    if (typeof width !== 'number' || width <= 0) {
+      return;
+    }
+    const nextCount = width >= CHARACTER_BROWSER_THREE_COLUMN_MIN_WIDTH ? 3 : 2;
+    if (nextCount !== this.gridColumnCount) {
+      this.gridColumnCount = nextCount;
+    }
+  }
+
   private filteredItems(items: CharacterBrowserItem[]): CharacterBrowserItem[] {
     let result = items.filter((item: CharacterBrowserItem): boolean => {
       const query = this.query.trim().toLowerCase();
@@ -1982,6 +2111,17 @@ export struct CharacterBrowserPanel {
       }
     }
     return tags;
+  }
+
+  private filterMenuItems(): CharacterBrowserFilterMenuItem[] {
+    const items: CharacterBrowserFilterMenuItem[] = [
+      new CharacterBrowserFilterMenuItem('全部', (): void => this.setFilter('all')),
+      new CharacterBrowserFilterMenuItem('★ 收藏', (): void => this.setFilter('fav'))
+    ];
+    for (const tag of this.allTags()) {
+      items.push(new CharacterBrowserFilterMenuItem(tag, (): void => this.setFilter(tag)));
+    }
+    return items;
   }
 
   private setQuery(value: string): void {
@@ -2077,11 +2217,30 @@ export struct CharacterBrowserPanel {
 
   private openDetail(item: CharacterBrowserItem): void {
     this.service.get(this.backendUrl, item.avatar).then((full: CharacterBrowserItem) => {
-      this.detail = full;
       this.onDetailChange(true);
+      this.navigationStack.pushPath(new NavPathInfo(CHARACTER_BROWSER_DETAIL_ROUTE, full), true);
     }).catch((_err: Error) => {
       this.onToast('读取角色详情失败。');
     });
+  }
+
+  private popDetail(): void {
+    if (this.navigationStack.size() === 0) {
+      return;
+    }
+    this.navigationStack.pop(true);
+    this.onDetailChange(false);
+    this.onDirtyChange(false);
+  }
+
+  private updateDetail(item: CharacterBrowserItem): void {
+    for (const candidate of this.items) {
+      if (candidate.id === item.id || candidate.avatar === item.avatar) {
+        candidate.favorite = item.favorite;
+        break;
+      }
+    }
+    this.updateDataSource();
   }
 
   private toggleFavorite(item: CharacterBrowserItem): void {
