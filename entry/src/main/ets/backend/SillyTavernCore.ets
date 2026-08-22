@@ -515,6 +515,29 @@ export class SillyTavernCore {
     return HttpResponse.json(characters);
   }
 
+  async listCharactersAsync(): Promise<Object[]> {
+    const entries = (await this.store.listAsync(this.userDirs.characters)).filter((entry: FileEntry): boolean => {
+      return entry.isFile && extensionOf(entry.name) === '.png';
+    });
+    entries.sort((left: FileEntry, right: FileEntry): number => left.name.localeCompare(right.name));
+    const characters: Object[] = [];
+    for (const entry of entries) {
+      await this.yieldToEventLoop();
+      const bytes = await this.store.readBytesAsync(entry.path);
+      if (bytes === null) {
+        continue;
+      }
+      const card = this.cardStore.readCardFromBytes(bytes);
+      if (card === null) {
+        continue;
+      }
+      await this.yieldToEventLoop();
+      const stats = await this.calculateChatStatsAsync(joinPath(this.userDirs.chats, withoutExtension(entry.name)));
+      characters.push(this.toCharacterResponse(this.normalizeCharacterCard(card), entry.name, entry, true, stats));
+    }
+    return characters;
+  }
+
   getDataFile(request: HttpRequest): HttpResponse {
     const file = this.asString(request.query['file']);
     const type = this.asString(request.query['type']);
@@ -2082,11 +2105,12 @@ export class SillyTavernCore {
     return value.replace("Creator's notes go here.", '');
   }
 
-  private toCharacterResponse(card: Object, avatarName: string, entry: FileEntry, shallow: boolean): CharacterResponse {
+  private toCharacterResponse(card: Object, avatarName: string, entry: FileEntry, shallow: boolean,
+    knownStats: ChatStats | null = null): CharacterResponse {
     const record = card as JsonRecord;
     const data = this.asObject(record['data']) as JsonRecord;
     const extensions = this.asObject(data['extensions']) as JsonRecord;
-    const stats = this.calculateChatStats(joinPath(this.userDirs.chats, withoutExtension(avatarName)));
+    const stats = knownStats ?? this.calculateChatStats(joinPath(this.userDirs.chats, withoutExtension(avatarName)));
 
     const result = new CharacterResponse();
     result.shallow = shallow;
@@ -2161,6 +2185,25 @@ export class SillyTavernCore {
       stats.dateLastChat = Math.max(stats.dateLastChat, entry.mtimeMs);
     }
     return stats;
+  }
+
+  private async calculateChatStatsAsync(path: string): Promise<ChatStats> {
+    const stats = new ChatStats();
+    const entries = await this.store.listAsync(path);
+    for (const entry of entries) {
+      if (!entry.isFile) {
+        continue;
+      }
+      stats.chatSize += entry.size;
+      stats.dateLastChat = Math.max(stats.dateLastChat, entry.mtimeMs);
+    }
+    return stats;
+  }
+
+  private async yieldToEventLoop(): Promise<void> {
+    await new Promise<void>((resolve) => {
+      setTimeout(() => resolve(), 0);
+    });
   }
 
   private calculateDataSize(data: JsonRecord): number {
