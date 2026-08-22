@@ -3,6 +3,118 @@
     {
       "name": "start_window_background",
       "value": "#171717"
+    },
+    {
+      "name": "native_browser_background",
+      "value": "#F1F2F5"
+    },
+    {
+      "name": "native_browser_detail_background",
+      "value": "#F5F7FA"
+    },
+    {
+      "name": "native_browser_header",
+      "value": "#E8EBEF"
+    },
+    {
+      "name": "native_browser_primary_text",
+      "value": "#0A0A0A"
+    },
+    {
+      "name": "native_browser_chat_secondary_text",
+      "value": "#B3717182"
+    },
+    {
+      "name": "native_browser_character_secondary_text",
+      "value": "#B3494E5B"
+    },
+    {
+      "name": "native_browser_metric_text",
+      "value": "#CC717182"
+    },
+    {
+      "name": "native_browser_placeholder_text",
+      "value": "#9E50505C"
+    },
+    {
+      "name": "native_browser_warning_text",
+      "value": "#8A5E00"
+    },
+    {
+      "name": "native_browser_accent",
+      "value": "#4A90E2"
+    },
+    {
+      "name": "native_browser_tab_unselected",
+      "value": "#B8494E5B"
+    },
+    {
+      "name": "native_browser_chat_card",
+      "value": "#F0FFFFFF"
+    },
+    {
+      "name": "native_browser_chat_card_border",
+      "value": "#D1FFFFFF"
+    },
+    {
+      "name": "native_browser_character_card",
+      "value": "#F0FFFFFF"
+    },
+    {
+      "name": "native_browser_character_card_border",
+      "value": "#0F000000"
+    },
+    {
+      "name": "native_browser_card_shadow",
+      "value": "#1F1F2937"
+    },
+    {
+      "name": "native_browser_grid_border",
+      "value": "#B8FFFFFF"
+    },
+    {
+      "name": "native_browser_disabled_badge",
+      "value": "#A855F7"
+    },
+    {
+      "name": "native_browser_cover_background",
+      "value": "#E4E7EB"
+    },
+    {
+      "name": "native_browser_avatar_border",
+      "value": "#334A90E2"
+    },
+    {
+      "name": "native_browser_tag_text",
+      "value": "#356FB3"
+    },
+    {
+      "name": "native_browser_tag_background",
+      "value": "#1F4A90E2"
+    },
+    {
+      "name": "native_browser_tag_border",
+      "value": "#294A90E2"
+    },
+    {
+      "name": "native_browser_detail_input",
+      "value": "#D6F3F3F5"
+    },
+    {
+      "name": "native_browser_detail_card",
+      "value": "#5CFFFFFF"
+    },
+    {
+      "name": "native_browser_chrome",
+      "value": "#C2FFFFFF"
+    },
+    {
+      "name": "native_browser_gradient_mask",
+      "value": "#14000000"
+    },
+    {
+      "name": "native_browser_control_background",
+      "value": "#18000000"
     }
   ]
 }

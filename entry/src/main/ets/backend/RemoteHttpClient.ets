@@ -36,8 +36,9 @@ export class RemoteHttpClient {
     return this.request(url, 'GET', '', headers, timeoutMs, false);
   }
 
-  async getBytes(url: string, headers: Record<string, string> = {}, timeoutMs: number = 120000): Promise<RemoteHttpResult> {
-    return this.request(url, 'GET', '', headers, timeoutMs, true);
+  async getBytes(url: string, headers: Record<string, string> = {}, timeoutMs: number = 120000,
+    maxLimit?: number): Promise<RemoteHttpResult> {
+    return this.request(url, 'GET', '', headers, timeoutMs, true, maxLimit);
   }
 
   async postJson(url: string, value: Object, headers: Record<string, string> = {},
@@ -106,7 +107,7 @@ export class RemoteHttpClient {
   }
 
   private async request(url: string, method: string, body: string | ArrayBuffer, headers: Record<string, string>,
-    timeoutMs: number, expectBytes: boolean): Promise<RemoteHttpResult> {
+    timeoutMs: number, expectBytes: boolean, maxLimit?: number): Promise<RemoteHttpResult> {
     const request = http.createHttp();
     try {
       const options: http.HttpRequestOptions = {
@@ -116,6 +117,9 @@ export class RemoteHttpClient {
         connectTimeout: timeoutMs,
         expectDataType: expectBytes ? http.HttpDataType.ARRAY_BUFFER : http.HttpDataType.STRING,
       };
+      if (maxLimit !== undefined) {
+        options.maxLimit = maxLimit;
+      }
       this.applyProtocol(options);
       if (method !== 'GET') {
         options.extraData = body;

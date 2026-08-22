@@ -150,6 +150,19 @@ export class FileStore {
     }
   }
 
+  async writeTextAsync(path: string, content: string): Promise<void> {
+    this.ensureParentDir(path);
+    try {
+      const file = await fileIo.open(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC | fileIo.OpenMode.READ_WRITE);
+      try {
+        await fileIo.write(file.fd, content, { encoding: 'utf-8' });
+      } finally {
+        await fileIo.close(file);
+      }
+    } catch (_err) {
+    }
+  }
+
   writeBytes(path: string, content: Uint8Array): void {
     this.ensureParentDir(path);
     try {

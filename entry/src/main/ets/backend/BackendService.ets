@@ -3,6 +3,7 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSettingsService, APP_SETTING_FORCE_HTTP1_1 } from './AppSettingsService';
 import { BackgroundPrivacyService } from './BackgroundPrivacyService';
 import { ChatBrowserService } from './ChatBrowserService';
+import { CharacterBrowserService } from './CharacterBrowserService';
 import { DataDirectories } from './DataDirectories';
 import { CryptoUtils } from './CryptoUtils';
 import { DefaultContentSeeder } from './DefaultContentSeeder';
@@ -75,6 +76,7 @@ export class BackendService {
   private appSettings: AppSettingsService;
   private backgroundPrivacy: BackgroundPrivacyService;
   private chatBrowser: ChatBrowserService;
+  private characterBrowser: CharacterBrowserService;
   private staticFiles: StaticFileServer;
   private lastMessage: string = 'Not started';
   private startPromise: Promise<BackendStatus> | null = null;
@@ -119,6 +121,8 @@ export class BackendService {
     this.tokenizers = new TokenizerService();
     this.vectors = new VectorService(this.store, this.directories, this.secrets);
     this.chatBrowser = new ChatBrowserService(this.store, this.directories);
+    this.characterBrowser = new CharacterBrowserService(this.store, this.directories,
+      () => this.core.listCharactersAsync());
     this.staticFiles = new StaticFileServer(context.resourceManager, () => this.shellTheme.getBackgroundColor());
     this.server = new HttpServer('127.0.0.1', 8000);
     stepStartedAt = Date.now();
@@ -137,6 +141,10 @@ export class BackendService {
 
   getChatBrowser(): ChatBrowserService {
     return this.chatBrowser;
+  }
+
+  getCharacterBrowser(): CharacterBrowserService {
+    return this.characterBrowser;
   }
   getBackgroundPrivacy(): BackgroundPrivacyService {
     return this.backgroundPrivacy;
@@ -180,6 +188,11 @@ export class BackendService {
       this.lastMessage = `ArkTS backend is listening. init=${this.initDurationMs}ms listen=${this.listenDurationMs}ms total=${this.startupDurationMs}ms.`;
       hilog.info(DOMAIN, TAG, 'Backend startup finished: init=%{public}d ms listen=%{public}d ms total=%{public}d ms',
         this.initDurationMs, this.listenDurationMs, this.startupDurationMs);
+      setTimeout(() => {
+        this.characterBrowser.initializeCacheAsync().catch((_err: Error) => {
+          hilog.error(DOMAIN, TAG, 'Character browser cache warmup failed');
+        });
+      }, 500);
     } catch (err) {
       this.listenDurationMs = Date.now() - listenStartedAt;
       this.startupDurationMs = this.initDurationMs + this.listenDurationMs;
@@ -212,6 +225,7 @@ export class BackendService {
           const chName = asString(body['ch_name']);
           this.chatBrowser.setCharacterName(internalPng, chName.length > 0 ? chName : withoutExtension(internalPng));
         }
+        this.characterBrowser.scheduleRefresh();
       }
       return response;
     } catch (_err) {
@@ -228,6 +242,7 @@ export class BackendService {
         const avatar = ensurePngExtension(sanitizeFileName(asString(body['avatar_url'])));
         const chName = asString(body['ch_name']) || asString(body['name']);
         this.chatBrowser.setCharacterName(avatar, chName.length > 0 ? chName : withoutExtension(avatar));
+        this.characterBrowser.scheduleRefresh();
       }
       return response;
     } catch (_err) {
@@ -238,7 +253,11 @@ export class BackendService {
   private async editCharacterAvatar(request: HttpRequest): Promise<HttpResponse> {
     try {
       const avatarImage = await this.media.processCharacterAvatarUpload(request);
-      return this.core.editCharacterAvatar(request, avatarImage);
+      const response = this.core.editCharacterAvatar(request, avatarImage);
+      if (response.statusCode === 200) {
+        this.characterBrowser.scheduleRefresh();
+      }
+      return response;
     } catch (_err) {
       return HttpResponse.text('Is not a valid image', 400);
     }
@@ -325,6 +344,7 @@ export class BackendService {
       if (chName.length > 0) {
         this.chatBrowser.setCharacterName(ensurePngExtension(sanitizeFileName(asString(body['avatar_url']))), chName);
       }
+      this.characterBrowser.scheduleRefresh();
     }
     return response;
   }
@@ -339,6 +359,17 @@ export class BackendService {
       if (avatar.length > 0 && name.length > 0) {
         this.chatBrowser.setCharacterName(ensurePngExtension(sanitizeFileName(avatar)), name);
       }
+      const extensions = asRecord(data['extensions']);
+      const favoriteOnly = body['fav'] !== undefined &&
+        Object.keys(body).every((key: string): boolean => key === 'avatar' || key === 'avatar_url' ||
+          key === 'fav' || key === 'data') &&
+        Object.keys(data).every((key: string): boolean => key === 'extensions') &&
+        Object.keys(extensions).every((key: string): boolean => key === 'fav');
+      if (favoriteOnly) {
+        this.characterBrowser.updateFavoriteCache(ensurePngExtension(sanitizeFileName(avatar)), asBoolean(body['fav']));
+      } else {
+        this.characterBrowser.scheduleRefresh();
+      }
     }
     return response;
   }
@@ -352,6 +383,7 @@ export class BackendService {
       if (target.length > 0 && source.length > 0) {
         this.chatBrowser.duplicateCharacterName(source, target);
       }
+      this.characterBrowser.scheduleRefresh();
     }
     return response;
   }
@@ -366,6 +398,7 @@ export class BackendService {
       if (newAvatar.length > 0 && oldAvatar.length > 0 && newName.length > 0) {
         this.chatBrowser.renameCharacterChats(oldAvatar, newAvatar, newName);
       }
+      this.characterBrowser.scheduleRefresh();
     }
     return response;
   }
@@ -381,6 +414,7 @@ export class BackendService {
       } else {
         this.chatBrowser.orphanizeCharacterChats(avatar, withoutExtension(avatar));
       }
+      this.characterBrowser.scheduleRefresh();
     }
     return response;
   }
@@ -392,6 +426,7 @@ export class BackendService {
       if (typeof file_name === 'string' && file_name.length > 0) {
         this.chatBrowser.rescanCharacterName(`${file_name}.png`);
       }
+      this.characterBrowser.scheduleRefresh();
     }
     return response;
   }

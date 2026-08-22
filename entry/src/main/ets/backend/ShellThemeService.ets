@@ -1,5 +1,6 @@
 import { Context } from '@kit.AbilityKit';
 import { ColorMetrics, window } from '@kit.ArkUI';
+import { resourceManager } from '@kit.LocalizationKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSettingsService, APP_SETTING_SHELL_BACKGROUND_COLOR } from './AppSettingsService';
 import { HttpRequest, HttpResponse, JsonRecord } from './HttpTypes';
@@ -25,12 +26,15 @@ class RgbaColor {
 
 export class ShellThemeService {
   private static instance: ShellThemeService | null = null;
+  private context: Context;
   private settings: AppSettingsService;
   private backgroundColor: string = DEFAULT_BACKGROUND;
   private mainWindow: window.Window | null = null;
+  private immersiveLayout: boolean = false;
   private listeners: BackgroundListener[] = [];
 
   private constructor(context: Context) {
+    this.context = context;
     this.settings = AppSettingsService.getInstance(context.filesDir);
     this.backgroundColor = this.normalizeColor(this.settings.getString(APP_SETTING_SHELL_BACKGROUND_COLOR, DEFAULT_BACKGROUND)) ?? DEFAULT_BACKGROUND;
     this.applyToStartWindow();
@@ -58,6 +62,19 @@ export class ShellThemeService {
 
   refreshWindow(): void {
     this.applyShellTheme();
+  }
+
+  setImmersiveLayout(enabled: boolean): void {
+    this.immersiveLayout = enabled;
+    if (this.mainWindow === null) {
+      return;
+    }
+    try {
+      this.mainWindow.setImmersiveModeEnabledState(enabled);
+      this.applyToWindow();
+    } catch (err) {
+      hilog.warn(DOMAIN, TAG, 'Failed to set immersive layout. Cause: %{public}s', JSON.stringify(err));
+    }
   }
 
   reportBackground(request: HttpRequest): HttpResponse {
@@ -123,10 +140,11 @@ export class ShellThemeService {
 
     try {
       this.mainWindow.setWindowBackgroundColor(this.backgroundColor);
-      const contentColor = this.contentColorFor(this.backgroundColor);
+      const contentColor = this.immersiveLayout ? this.nativeBrowserContentColor() :
+        this.contentColorFor(this.backgroundColor);
       this.mainWindow.setWindowSystemBarProperties({
         statusBarColor: TRANSPARENT,
-        navigationBarColor: this.backgroundColor,
+        navigationBarColor: this.immersiveLayout ? TRANSPARENT : this.backgroundColor,
         isStatusBarLightIcon: contentColor === '#FFFFFF',
         isNavigationBarLightIcon: contentColor === '#FFFFFF',
         statusBarContentColor: contentColor,
@@ -136,6 +154,15 @@ export class ShellThemeService {
       });
     } catch (err) {
       hilog.warn(DOMAIN, TAG, 'Failed to apply shell theme. Cause: %{public}s', JSON.stringify(err));
+    }
+  }
+
+  private nativeBrowserContentColor(): string {
+    try {
+      return this.context.resourceManager.getConfigurationSync().colorMode === resourceManager.ColorMode.DARK ?
+        '#FFFFFF' : '#000000';
+    } catch (_err) {
+      return '#000000';
     }
   }
 
