@@ -122,7 +122,7 @@ export class BackendService {
     this.vectors = new VectorService(this.store, this.directories, this.secrets);
     this.chatBrowser = new ChatBrowserService(this.store, this.directories);
     this.characterBrowser = new CharacterBrowserService(this.store, this.directories,
-      () => this.core.listCharactersAsync());
+      () => this.core.listCharactersAsync(), () => this.media.ensureCharacterBrowserThumbnailsAsync());
     this.staticFiles = new StaticFileServer(context.resourceManager, () => this.shellTheme.getBackgroundColor());
     this.server = new HttpServer('127.0.0.1', 8000);
     stepStartedAt = Date.now();
@@ -490,6 +490,8 @@ export class BackendService {
     this.server.route('GET', '/csrf-token', async () => this.core.csrfToken());
     this.server.route('GET', '/version', async () => this.core.version());
     this.server.route('GET', '/thumbnail', async (request) => await this.media.getDataFile(request));
+    this.server.route('GET', '/api/ohos/characters/thumbnail',
+      async (request) => this.media.characterBrowserThumbnail(request));
     this.server.route('POST', '/api/ohos/shell-theme/background',
       async (request) => this.shellTheme.reportBackground(request));
     this.server.route('POST', '/api/ohos/chats/browser/open', async () => this.chatBrowser.openBrowser());
