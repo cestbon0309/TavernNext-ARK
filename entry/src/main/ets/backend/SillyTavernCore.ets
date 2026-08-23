@@ -80,7 +80,7 @@ class SettingsResponse {
 
 class VersionResponse {
   agent: string = 'SillyTavern:1.17.0:TavernNext-OHOS';
-  pkgVersion: string = '1.2.6-ohos';
+  pkgVersion: string = '1.2.7-ohos';
   gitRevision: string = '';
   gitBranch: string = 'arkts-port';
   commitDate: string = '';
