@@ -128,6 +128,7 @@ export struct CharacterBrowserCard {
   @Prop backendUrl: string = 'http://127.0.0.1:8000';
   @Prop item: CharacterBrowserItem = new CharacterBrowserItem();
   @Prop grid: boolean = false;
+  @Prop thumbnailRevision: number = 0;
   @State swipeProgress: number = 0;
   @State favorite: boolean = false;
   private favoriteBeforeTouch: boolean = false;
@@ -324,12 +325,10 @@ export struct CharacterBrowserCard {
         .margin({ top: 9, right: 9 })
         .backgroundColor('rgba(18,18,20,0.58)')
         .border({ width: 1, color: 'rgba(255,255,255,0.20)' })
-        .backgroundBlurStyle(BlurStyle.COMPONENT_REGULAR)
         .onTouch((event: TouchEvent) => this.handleFavoriteTouch(event))
         .onClick(() => this.handleFavoriteClick())
       }
       .width('100%')
-      .onClick(() => this.onOpen(this.item))
 
       Column({ space: 3 }) {
         Text(this.item.name)
@@ -357,17 +356,22 @@ export struct CharacterBrowserCard {
       }
       .width('100%')
       .padding({ left: 11, right: 11, top: 10, bottom: 8 })
-      .backgroundColor(Color.Transparent)
-      .backgroundBlurStyle(BlurStyle.BACKGROUND_THIN)
-      .onClick(() => this.onOpen(this.item))
+      .linearGradient({
+        angle: 180,
+        colors: [
+          ['rgba(12,12,14,0.22)', 0],
+          ['rgba(12,12,14,0.88)', 1]
+        ]
+      })
     }
     .width('100%')
     .aspectRatio(1)
     .border({ width: 1, color: this.gridBorderColor() })
     .borderRadius(18)
-    .shadow({ radius: 10, color: this.shadowColor(), offsetX: 0, offsetY: 3 })
     .clip(true)
+    .renderGroup(true)
     .margin({ bottom: 7 })
+    .onClick(() => this.onOpen(this.item))
   }
 
   private handleFavoriteTouch(event: TouchEvent): void {
@@ -420,6 +424,10 @@ export struct CharacterBrowserCard {
   private avatarUrl(): string {
     if (this.item.avatar.length === 0) {
       return '';
+    }
+    if (this.grid) {
+      return `${this.backendUrl}/api/ohos/characters/thumbnail?file=${encodeURIComponent(this.item.avatar)}` +
+        `&v=${this.thumbnailRevision}`;
     }
     return `${this.backendUrl}/characters/${encodeURIComponent(this.item.avatar)}`;
   }
@@ -1455,6 +1463,7 @@ export struct CharacterBrowserPanel {
   @State loading: boolean = true;
   @State refreshOffset: number = 0;
   @State gridColumnCount: number = 2;
+  @State thumbnailRevision: number = 0;
   private navigationStack: NavPathStack = new NavPathStack();
   private service: CharacterBrowserService = new CharacterBrowserService();
   private gridScroller: Scroller = new Scroller();
@@ -1485,6 +1494,7 @@ export struct CharacterBrowserPanel {
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     this.service = BackendService.getInstance(context).getCharacterBrowser();
     this.service.subscribeRefresh(this.refreshListener);
+    this.refreshCharacterThumbnails();
     const hasCachedList = this.service.hasCachedList();
     if (hasCachedList) {
       this.applyItems(this.service.cachedList());
@@ -1578,6 +1588,7 @@ export struct CharacterBrowserPanel {
                         item,
                         backendUrl: this.backendUrl,
                         grid: true,
+                        thumbnailRevision: this.thumbnailRevision,
                         onOpen: (selected: CharacterBrowserItem): void => this.openDetail(selected),
                         onFavorite: (selected: CharacterBrowserItem): void => this.toggleFavorite(selected)
                       })
@@ -2219,6 +2230,15 @@ export struct CharacterBrowserPanel {
     }).finally(() => {
       const remainingMs = Math.max(0, CHARACTER_BROWSER_REFRESH_MIN_MS - (Date.now() - startedAt));
       setTimeout(() => this.refreshing = false, remainingMs);
+    });
+  }
+
+  private refreshCharacterThumbnails(): void {
+    this.service.ensureThumbnailsAsync().then((generated: number) => {
+      if (generated > 0) {
+        this.thumbnailRevision = Date.now();
+      }
+    }).catch((_err: Error) => {
     });
   }
 

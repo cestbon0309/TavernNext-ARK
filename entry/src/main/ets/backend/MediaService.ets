@@ -1,4 +1,4 @@
-import { util } from '@kit.ArkTS';
+import { taskpool, util } from '@kit.ArkTS';
 import { image } from '@kit.ImageKit';
 import { zlib } from '@kit.BasicServicesKit';
 import { DataDirectories, UserDirectories } from './DataDirectories';
@@ -8,6 +8,7 @@ import { extensionOf, joinPath, sanitizeFileName, withoutExtension } from './Pat
 import { CryptoUtils } from './CryptoUtils';
 import { RemoteHttpClient, RemoteHttpResult } from './RemoteHttpClient';
 import { PngCardStore } from './PngCardStore';
+import { generateCharacterThumbnail } from './CharacterThumbnailTask';
 
 type JsonValue = JsonScalar | JsonArray;
 
@@ -63,6 +64,8 @@ class PerchanceContent {
 }
 
 export class MediaService {
+  private static readonly characterBrowserThumbnailSize: number = 512;
+  private static readonly characterBrowserThumbnailQuality: number = 88;
   private static readonly bgThumbWidth: number = 160;
   private static readonly bgThumbHeight: number = 90;
   private static readonly avatarThumbWidth: number = 96;
@@ -91,6 +94,7 @@ export class MediaService {
   private cardStore: PngCardStore;
   private base64: util.Base64Helper = new util.Base64Helper();
   private decoder: util.TextDecoder = new util.TextDecoder('utf-8');
+  private characterThumbnailPromise: Promise<number> | null = null;
 
   constructor(store: FileStore, dirs: DataDirectories, crypto: CryptoUtils) {
     this.store = store;
@@ -115,6 +119,57 @@ export class MediaService {
       return HttpResponse.empty(404);
     }
     return HttpResponse.bytes(bytes, 200, this.contentTypeForFile(path));
+  }
+
+  characterBrowserThumbnail(request: HttpRequest): HttpResponse {
+    const rawFile = this.asString(request.query['file']);
+    const file = sanitizeFileName(rawFile);
+    if (rawFile.length === 0 || file !== rawFile || extensionOf(file) !== '.png') {
+      return HttpResponse.empty(404);
+    }
+    const bytes = this.store.readBytes(this.characterBrowserThumbnailPath(file));
+    if (bytes === null) {
+      return HttpResponse.empty(404);
+    }
+    const response = HttpResponse.bytes(bytes, 200, 'image/jpeg');
+    response.headers['cache-control'] = 'public, max-age=31536000, immutable';
+    return response;
+  }
+
+  ensureCharacterBrowserThumbnailsAsync(): Promise<number> {
+    if (this.characterThumbnailPromise === null) {
+      this.characterThumbnailPromise = this.rebuildCharacterBrowserThumbnailsAsync().finally(() => {
+        this.characterThumbnailPromise = null;
+      });
+    }
+    return this.characterThumbnailPromise;
+  }
+
+  private async rebuildCharacterBrowserThumbnailsAsync(): Promise<number> {
+    const entries = (await this.store.listAsync(this.userDirs.characters)).filter((entry: FileEntry): boolean => {
+      return entry.isFile && extensionOf(entry.name) === '.png';
+    });
+    let generated = 0;
+    for (const entry of entries) {
+      const targetPath = this.characterBrowserThumbnailPath(entry.name);
+      const target = await this.store.statAsync(targetPath, entry.name);
+      if (target !== null && target.mtimeMs >= entry.mtimeMs) {
+        continue;
+      }
+      const task = new taskpool.Task(generateCharacterThumbnail, entry.path, targetPath,
+        MediaService.characterBrowserThumbnailSize, MediaService.characterBrowserThumbnailQuality);
+      try {
+        if (await taskpool.execute(task, taskpool.Priority.LOW) as boolean) {
+          generated += 1;
+        }
+      } catch (_err) {
+      }
+    }
+    return generated;
+  }
+
+  private characterBrowserThumbnailPath(file: string): string {
+    return joinPath(this.dirs.characterThumbnailRoot, `${sanitizeFileName(file)}.jpg`);
   }
 
   async listBackgrounds(): Promise<HttpResponse> {

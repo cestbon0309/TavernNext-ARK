@@ -14,6 +14,7 @@ const DOMAIN = 0x5441;
 const TAG = 'TavernCharacterBrowser';
 
 type CharacterBrowserListProvider = () => Promise<Object[]>;
+type CharacterBrowserThumbnailProvider = () => Promise<number>;
 export type CharacterBrowserRefreshListener = (items: CharacterBrowserItem[]) => void;
 
 export class CharacterBrowserItem {
@@ -90,21 +91,37 @@ export class CharacterBrowserService {
   private store: FileStore | null = null;
   private cachePath: string = '';
   private listProvider: CharacterBrowserListProvider | null = null;
+  private thumbnailProvider: CharacterBrowserThumbnailProvider | null = null;
   private cachedItems: CharacterBrowserItem[] = [];
   private cacheLoaded: boolean = false;
   private cacheRefreshedAt: number = 0;
   private refreshListeners: CharacterBrowserRefreshListener[] = [];
   private refreshPromise: Promise<CharacterBrowserItem[]> | null = null;
   private cacheLoadPromise: Promise<CharacterBrowserItem[]> | null = null;
+  private thumbnailPromise: Promise<number> | null = null;
   private refreshScheduled: boolean = false;
   private refreshPending: boolean = false;
 
-  constructor(store?: FileStore, dirs?: DataDirectories, listProvider?: CharacterBrowserListProvider) {
+  constructor(store?: FileStore, dirs?: DataDirectories, listProvider?: CharacterBrowserListProvider,
+    thumbnailProvider?: CharacterBrowserThumbnailProvider) {
     if (store !== undefined && dirs !== undefined && listProvider !== undefined) {
       this.store = store;
       this.cachePath = joinPath(dirs.storageRoot, CHARACTER_BROWSER_CACHE_FILE);
       this.listProvider = listProvider;
+      this.thumbnailProvider = thumbnailProvider ?? null;
     }
+  }
+
+  ensureThumbnailsAsync(): Promise<number> {
+    if (this.thumbnailProvider === null) {
+      return Promise.resolve(0);
+    }
+    if (this.thumbnailPromise === null) {
+      this.thumbnailPromise = this.thumbnailProvider().finally(() => {
+        this.thumbnailPromise = null;
+      });
+    }
+    return this.thumbnailPromise;
   }
 
   subscribeRefresh(listener: CharacterBrowserRefreshListener): void {
