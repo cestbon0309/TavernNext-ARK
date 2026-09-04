@@ -1,6 +1,6 @@
 import { socket } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
-import { hilog } from '@kit.PerformanceAnalysisKit';
+import { DiagnosticLogService as hilog } from './DiagnosticLogService';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { HttpRequest, HttpResponse, JsonArray, JsonRecord, jsonMessage, RouteHandler } from './HttpTypes';
 import { MultipartParser } from './MultipartParser';

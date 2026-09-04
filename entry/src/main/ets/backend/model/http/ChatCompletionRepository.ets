@@ -13,6 +13,7 @@ import {
   normalizeOpenAiResponsesResponse,
 } from './ResponseNormalizers';
 import { GeminiInteractionsStreamNormalizer, OpenAiResponsesStreamNormalizer } from './StreamNormalizers';
+import { DiagnosticLogService } from '../../DiagnosticLogService';
 
 export class ChatCompletionRepository {
   private http: RemoteHttpClient = new RemoteHttpClient();
@@ -368,8 +369,10 @@ export class ChatCompletionRepository {
     }
     const total = usage.cacheCreationInputTokens + usage.cacheReadInputTokens + usage.inputTokens;
     const modelText = model.trim().length > 0 ? ` model=${model.trim()}` : '';
-    console.info(`[LLM] ${source} prompt cache usage:${modelText} cache_read_input_tokens=${usage.cacheReadInputTokens} ` +
-      `cache_creation_input_tokens=${usage.cacheCreationInputTokens} input_tokens=${usage.inputTokens} total_input_tokens=${total}`);
+    DiagnosticLogService.info(0x5441, 'ChatCompletionRepository',
+      '[LLM] %{public}s prompt cache usage:%{public}s cache_read_input_tokens=%{public}d ' +
+      'cache_creation_input_tokens=%{public}d input_tokens=%{public}d total_input_tokens=%{public}d', source,
+      modelText, usage.cacheReadInputTokens, usage.cacheCreationInputTokens, usage.inputTokens, total);
     return true;
   }
 

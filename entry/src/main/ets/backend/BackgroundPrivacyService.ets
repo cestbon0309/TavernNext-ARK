@@ -1,5 +1,5 @@
 import { window } from '@kit.ArkUI';
-import { hilog } from '@kit.PerformanceAnalysisKit';
+import { DiagnosticLogService as hilog } from './DiagnosticLogService';
 import { AppSettingsService, APP_SETTING_BACKGROUND_PRIVACY_ENABLED } from './AppSettingsService';
 import { ApplicationStateService } from './ApplicationStateService';
 import { JsonRecord } from './HttpTypes';

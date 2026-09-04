@@ -150,6 +150,19 @@ export class FileStore {
     }
   }
 
+  appendText(path: string, content: string): void {
+    this.ensureParentDir(path);
+    try {
+      const file = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.APPEND | fileIo.OpenMode.WRITE_ONLY);
+      try {
+        fileIo.writeSync(file.fd, content, { encoding: 'utf-8' });
+      } finally {
+        fileIo.closeSync(file);
+      }
+    } catch (_err) {
+    }
+  }
+
   async writeTextAsync(path: string, content: string): Promise<void> {
     this.ensureParentDir(path);
     try {

@@ -1,11 +1,11 @@
 import { common, Context } from '@kit.AbilityKit';
-import { hilog } from '@kit.PerformanceAnalysisKit';
 import { AppSettingsService, APP_SETTING_FORCE_HTTP1_1 } from './AppSettingsService';
 import { BackgroundPrivacyService } from './BackgroundPrivacyService';
 import { ChatBrowserService } from './ChatBrowserService';
 import { CharacterBrowserService } from './CharacterBrowserService';
 import { DataDirectories } from './DataDirectories';
 import { CryptoUtils } from './CryptoUtils';
+import { DiagnosticLogService } from './DiagnosticLogService';
 import { DefaultContentSeeder } from './DefaultContentSeeder';
 import { ExtensionsService } from './ExtensionsService';
 import { FileStore } from './FileStore';
@@ -105,6 +105,7 @@ export class BackendService {
     this.syncShellThemeFromCurrentSettings();
     this.logStartupStep('syncShellThemeFromCurrentSettings', stepStartedAt);
     this.shareExports = new ShareExportService(context as common.UIAbilityContext, this.store, this.directories.exportRoot);
+    DiagnosticLogService.setShareExportService(this.shareExports);
     this.core = new SillyTavernCore(this.store, this.directories, this.shareExports, context.resourceManager,
       (settings: JsonRecord) => this.syncShellThemeFromSettings(settings));
     this.media = new MediaService(this.store, this.directories, this.crypto);
@@ -129,7 +130,7 @@ export class BackendService {
     this.registerRoutes();
     this.logStartupStep('registerRoutes', stepStartedAt);
     this.initDurationMs = Date.now() - initStartedAt;
-    hilog.info(DOMAIN, TAG, 'Backend init finished in %{public}d ms', this.initDurationMs);
+    DiagnosticLogService.info(DOMAIN, TAG, 'Backend init finished in %{public}d ms', this.initDurationMs);
   }
 
   static getInstance(context: Context): BackendService {
@@ -186,18 +187,18 @@ export class BackendService {
       this.listenDurationMs = Date.now() - listenStartedAt;
       this.startupDurationMs = this.initDurationMs + this.listenDurationMs;
       this.lastMessage = `ArkTS backend is listening. init=${this.initDurationMs}ms listen=${this.listenDurationMs}ms total=${this.startupDurationMs}ms.`;
-      hilog.info(DOMAIN, TAG, 'Backend startup finished: init=%{public}d ms listen=%{public}d ms total=%{public}d ms',
+      DiagnosticLogService.info(DOMAIN, TAG, 'Backend startup finished: init=%{public}d ms listen=%{public}d ms total=%{public}d ms',
         this.initDurationMs, this.listenDurationMs, this.startupDurationMs);
       setTimeout(() => {
         this.characterBrowser.initializeCacheAsync().catch((_err: Error) => {
-          hilog.error(DOMAIN, TAG, 'Character browser cache warmup failed');
+          DiagnosticLogService.error(DOMAIN, TAG, 'Character browser cache warmup failed');
         });
       }, 500);
     } catch (err) {
       this.listenDurationMs = Date.now() - listenStartedAt;
       this.startupDurationMs = this.initDurationMs + this.listenDurationMs;
       this.lastMessage = `Failed to start backend after ${this.startupDurationMs}ms: ${JSON.stringify(err)}`;
-      hilog.error(DOMAIN, TAG, 'Backend startup failed after %{public}d ms: %{public}s', this.startupDurationMs,
+      DiagnosticLogService.error(DOMAIN, TAG, 'Backend startup failed after %{public}d ms: %{public}s', this.startupDurationMs,
         JSON.stringify(err));
     }
     return this.status();
@@ -212,6 +213,15 @@ export class BackendService {
   status(): BackendStatus {
     return new BackendStatus(this.server.isListening(), `http://${this.server.host}:${this.server.port}`,
       this.directories.dataRoot, this.lastMessage, this.initDurationMs, this.listenDurationMs, this.startupDurationMs);
+  }
+
+  hasFrontendInitializedBetween(startedAtMs: number, deadlineMs: number): boolean {
+    const initializedAtMs = asNumber(this.frontendStartupReport['initializedAtMs']);
+    return initializedAtMs >= startedAtMs && initializedAtMs <= deadlineMs;
+  }
+
+  beginFrontendStartupMonitoring(): void {
+    this.frontendStartupReport = {};
   }
 
   private async createCharacter(request: HttpRequest): Promise<HttpResponse> {
@@ -487,6 +497,9 @@ export class BackendService {
     this.server.route('GET', '/api/ohos/backend/status', async () => HttpResponse.json(this.statusJson()));
     this.server.route('GET', '/api/ohos/startup/report', async () => HttpResponse.json(this.startupReportJson()));
     this.server.route('POST', '/api/ohos/startup/frontend', async (request) => this.receiveFrontendStartupReport(request));
+    this.server.route('POST', '/api/ohos/diagnostics/frontend', async (request) => {
+      return this.receiveFrontendDiagnosticLog(request);
+    });
     this.server.route('GET', '/csrf-token', async () => this.core.csrfToken());
     this.server.route('GET', '/version', async () => this.core.version());
     this.server.route('GET', '/thumbnail', async (request) => await this.media.getDataFile(request));
@@ -870,10 +883,24 @@ export class BackendService {
     const body = asRecord(request.body as Object | undefined);
     const report: JsonRecord = {};
     report['reportedAtMs'] = Date.now();
+    report['initializedAtMs'] = asNumber(body['initializedAtMs']);
     report['totalDurationMs'] = asNumber(body['totalDurationMs']);
     report['steps'] = asArray(body['steps']);
     this.frontendStartupReport = report;
+    if (asNumber(report['initializedAtMs']) > 0) {
+      DiagnosticLogService.getInstance().markFrontendInitialized();
+    }
     return HttpResponse.json(this.startupReportJson());
+  }
+
+  private receiveFrontendDiagnosticLog(request: HttpRequest): HttpResponse {
+    const body = bodyAsRecord(request);
+    const level = asString(body['level']);
+    const message = asString(body['message']);
+    if (message.length > 0) {
+      DiagnosticLogService.getInstance().appendWebLog(level, message);
+    }
+    return HttpResponse.empty();
   }
 
   private startupReportJson(): JsonRecord {
@@ -885,6 +912,6 @@ export class BackendService {
   }
 
   private logStartupStep(label: string, startedAt: number): void {
-    hilog.info(DOMAIN, TAG, '%{public}s took %{public}d ms', label, Date.now() - startedAt);
+    DiagnosticLogService.info(DOMAIN, TAG, '%{public}s took %{public}d ms', label, Date.now() - startedAt);
   }
 }

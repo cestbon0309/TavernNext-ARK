@@ -10,6 +10,7 @@ import { CharacterBrowserItem } from '../backend/CharacterBrowserService';
 import { Api26MaterialAdapter } from './Api26MaterialAdapter';
 import { CharacterBrowserPanel } from './CharacterBrowser';
 import { DataArchiveProgressService, DataArchiveProgressState } from '../backend/DataArchiveProgressService';
+import { DiagnosticLogService } from '../backend/DiagnosticLogService';
 import { ExportedFile } from '../backend/ShareExportService';
 import { ShellThemeService } from '../backend/ShellThemeService';
 import { WebDialogService, WebPromptDialogCancelAction, WebPromptDialogConfirmAction } from './WebDialogService';
@@ -39,9 +40,18 @@ const CHAT_BROWSER_HEADER_ICON_GLYPH_SIZE = 22;
 const CHAT_BROWSER_ROW_HEIGHT = 96;
 const CHAT_BROWSER_DELETE_ACTION_WIDTH = 80;
 const CHAT_BROWSER_DELETE_ACTION_GAP = 12;
+const STARTUP_WATCHDOG_TIMEOUT_MS = 30 * 1000;
+const STARTUP_PROBE_TIMEOUT_MS = 3000;
+const STARTUP_BACKGROUND_RETRY_MS = 1000;
 
 type ChatBrowserItemAction = (item: ChatBrowserItem) => void;
 type WebPromptDialogCloseAction = () => void;
+
+class DiagnosticWebBridge {
+  append(level: string, message: string): void {
+    DiagnosticLogService.getInstance().appendWebLog(level, message);
+  }
+}
 
 @CustomDialog
 struct WebPromptDialog {
@@ -443,6 +453,11 @@ struct Index {
   private backendService: BackendService | null = null;
   private shellTheme: ShellThemeService | null = null;
   private persistenceFlushInFlight: boolean = false;
+  private diagnosticBridge: DiagnosticWebBridge = new DiagnosticWebBridge();
+  private diagnosticBridgeRegistered: boolean = false;
+  private startupWatchdogTimer: number = -1;
+  private startupWatchdogHandled: boolean = false;
+  private startupProbeToken: number = 0;
   private chatBrowserRefreshListener: ChatBrowserRefreshListener = (items: ChatBrowserItem[]): void => {
     this.chatBrowserItems = items;
     this.chatBrowserDeletingIds = [];
@@ -452,6 +467,7 @@ struct Index {
   aboutToAppear(): void {
     this.configureWebDebuggingAccess();
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    this.startDiagnosticWatchdog();
     const theme = ShellThemeService.getInstance(context);
     this.shellTheme = theme;
     this.applyShellBackground(theme.getBackgroundColor());
@@ -459,6 +475,7 @@ struct Index {
       this.applyShellBackground(color);
     });
     const service = BackendService.getInstance(context);
+    service.beginFrontendStartupMonitoring();
     this.backendService = service;
     ApplicationStateService.getInstance().subscribe((foreground: boolean) => {
       if (!foreground) {
@@ -483,6 +500,18 @@ struct Index {
     if (this.backendService !== null) {
       this.backendService.getChatBrowser().unsubscribeRefresh(this.chatBrowserRefreshListener);
     }
+    if (this.startupWatchdogTimer >= 0) {
+      clearTimeout(this.startupWatchdogTimer);
+      this.startupWatchdogTimer = -1;
+    }
+    this.startupProbeToken += 1;
+    if (this.diagnosticBridgeRegistered) {
+      try {
+        this.controller.deleteJavaScriptRegister('__tavernNextDiagnosticBridge');
+      } catch (_err) {
+      }
+      this.diagnosticBridgeRegistered = false;
+    }
   }
 
   private configureWebDebuggingAccess(): void {
@@ -502,6 +531,225 @@ struct Index {
     this.running = status.running;
     this.url = status.url;
     this.message = status.message;
+  }
+
+  private diagnosticWebUrl(): string {
+    if (!DiagnosticLogService.getInstance().isCapturing()) {
+      return this.url;
+    }
+    const separator = this.url.includes('?') ? '&' : '?';
+    return `${this.url}${separator}tavernNextDiagnostics=1`;
+  }
+
+  private startDiagnosticWatchdog(): void {
+    const diagnostics = DiagnosticLogService.getInstance();
+    if (diagnostics.isCapturing()) {
+      return;
+    }
+    if (this.startupWatchdogTimer >= 0 || this.startupWatchdogHandled) {
+      return;
+    }
+    this.startupWatchdogTimer = setTimeout(() => {
+      this.startupWatchdogTimer = -1;
+      this.checkFrontendInitialization();
+    }, diagnostics.remainingLaunchDelay(STARTUP_WATCHDOG_TIMEOUT_MS));
+  }
+
+  private checkFrontendInitialization(): void {
+    if (this.startupWatchdogHandled) {
+      return;
+    }
+    if (ApplicationStateService.getInstance().isBackground()) {
+      this.startupWatchdogTimer = setTimeout(() => {
+        this.startupWatchdogTimer = -1;
+        this.checkFrontendInitialization();
+      }, STARTUP_BACKGROUND_RETRY_MS);
+      return;
+    }
+    this.startupWatchdogHandled = true;
+    const diagnostics = DiagnosticLogService.getInstance();
+    const startedAtMs = diagnostics.launchStartTime();
+    const deadlineMs = diagnostics.launchDeadline(STARTUP_WATCHDOG_TIMEOUT_MS);
+    if (this.backendService?.hasFrontendInitializedBetween(startedAtMs, deadlineMs)) {
+      DiagnosticLogService.getInstance().appendWebLog('info',
+        'Frontend initialization report received within 30 seconds');
+      return;
+    }
+    const probeToken = ++this.startupProbeToken;
+    let probe: Promise<string>;
+    try {
+      probe = this.controller.runJavaScript(`(() => {
+        if (window.__tavernNextFrontendInitialized === true) {
+          return String(window.__tavernNextFrontendInitializedAtMs || 0);
+        }
+        const loader = document.querySelector('.splash-screen, #preloader');
+        return loader ? 'not-ready-loader' : 'not-ready-marker';
+      })();`);
+    } catch (err) {
+      DiagnosticLogService.getInstance().appendWebLog('error',
+        `Frontend initialization watchdog could not execute probe: ${JSON.stringify(err)}`);
+      DiagnosticLogService.getInstance().markNextLaunchCapture();
+      this.showFrontendInitializationFailureDialog();
+      return;
+    }
+    const timeout = new Promise<string>((resolve: (value: string) => void) => {
+      setTimeout(() => resolve('probe-timeout'), STARTUP_PROBE_TIMEOUT_MS);
+    });
+    Promise.race([probe, timeout]).then((result: string) => {
+      if (probeToken !== this.startupProbeToken) {
+        return;
+      }
+      const normalized = (result ?? '').replace(/"/g, '');
+      const initializedAtMs = Number(normalized);
+      if (initializedAtMs > 0 && initializedAtMs <= deadlineMs) {
+        diagnostics.markFrontendInitialized();
+        DiagnosticLogService.getInstance().appendWebLog('info', 'Frontend initialization completed within 30 seconds');
+        return;
+      }
+      DiagnosticLogService.getInstance().appendWebLog('error', `Frontend initialization watchdog: ${normalized}`);
+      DiagnosticLogService.getInstance().markNextLaunchCapture();
+      this.showFrontendInitializationFailureDialog();
+    }).catch((_err: Error) => {
+      if (probeToken !== this.startupProbeToken) {
+        return;
+      }
+      DiagnosticLogService.getInstance().appendWebLog('error', 'Frontend initialization watchdog probe failed');
+      DiagnosticLogService.getInstance().markNextLaunchCapture();
+      this.showFrontendInitializationFailureDialog();
+    });
+  }
+
+  private showFrontendInitializationFailureDialog(): void {
+    AlertDialog.show({
+      title: '前端启动异常',
+      message: '前端在 30 秒内没有完成初始化。请重启应用，下一次启动将自动收集 30 秒的启动日志并打开分享面板，请将生成的 TXT 文件发送给开发者。',
+      autoCancel: false,
+      primaryButton: {
+        value: '知道了',
+        action: () => {
+        }
+      }
+    });
+  }
+
+  private attachDiagnosticBridge(): void {
+    if (this.diagnosticBridgeRegistered || !DiagnosticLogService.getInstance().isCapturing()) {
+      return;
+    }
+    try {
+      this.controller.registerJavaScriptProxy(this.diagnosticBridge, '__tavernNextDiagnosticBridge', ['append']);
+      this.diagnosticBridgeRegistered = true;
+    } catch (err) {
+      DiagnosticLogService.getInstance().appendWebLog('error', `Failed to register diagnostic bridge: ${JSON.stringify(err)}`);
+    }
+  }
+
+  private flushDiagnosticWebLogQueue(): void {
+    if (!DiagnosticLogService.getInstance().isCapturing()) {
+      return;
+    }
+    this.controller.runJavaScript(`(() => {
+      if (typeof window.__tavernNextDiagnosticFlush === 'function') {
+        window.__tavernNextDiagnosticFlush();
+        return 'flushed';
+      }
+      return 'missing';
+    })();`).catch((_err: Error) => {
+    });
+  }
+
+  private injectDiagnosticLogger(): void {
+    if (!DiagnosticLogService.getInstance().isCapturing()) {
+      return;
+    }
+    this.controller.runJavaScript(`(() => {
+      if (window.__tavernNextDiagnosticLoggerInstalled) {
+        return 'already-installed';
+      }
+      window.__tavernNextDiagnosticLoggerInstalled = true;
+      const pending = [];
+      const stringify = (value) => {
+        if (value instanceof Error) {
+          return value.stack || value.message || String(value);
+        }
+        if (typeof value === 'string') {
+          return value;
+        }
+        if (value === null || typeof value !== 'object') {
+          return String(value);
+        }
+        return '[' + (value.constructor?.name || 'object') + ']';
+      };
+      const send = (level, values) => {
+        const message = values.map(stringify).join(' ');
+        if (!message) {
+          return;
+        }
+        const startupMessage = /^(\[TavernNext startup\]|ArkWeb|window\.|document\.|resource-error|unhandledrejection)/.test(message);
+        if (!startupMessage) {
+          return;
+        }
+        try {
+          const bridge = window.__tavernNextDiagnosticBridge;
+          if (bridge && typeof bridge.append === 'function') {
+            bridge.append(level, message);
+            return;
+          }
+        } catch (_) {
+        }
+        pending.push({ level, message });
+        if (pending.length > 200) {
+          pending.shift();
+        }
+      };
+      window.__tavernNextDiagnosticFlush = () => {
+        while (pending.length > 0) {
+          const item = pending.shift();
+          try {
+            const bridge = window.__tavernNextDiagnosticBridge;
+            if (!bridge || typeof bridge.append !== 'function') {
+              pending.unshift(item);
+              return false;
+            }
+            bridge.append(item.level, item.message);
+          } catch (_) {
+            pending.unshift(item);
+            return false;
+          }
+        }
+        return true;
+      };
+      ['debug', 'info', 'log', 'warn', 'error'].forEach((level) => {
+        const original = typeof console[level] === 'function' ? console[level].bind(console) : null;
+        console[level] = (...args) => {
+          if (original) {
+            original(...args);
+          }
+          send(level, args);
+        };
+      });
+      window.addEventListener('error', (event) => {
+        send('error', ['window.error', event.message, event.filename, event.lineno, event.colno,
+          event.error || '']);
+      }, true);
+      window.addEventListener('unhandledrejection', (event) => {
+        send('error', ['unhandledrejection', event.reason]);
+      }, true);
+      window.addEventListener('load', () => send('info', ['window.load']));
+      window.addEventListener('pageshow', () => send('info', ['window.pageshow']));
+      document.addEventListener('readystatechange', () => send('debug', ['document.readyState', document.readyState]));
+      document.addEventListener('error', (event) => {
+        const target = event.target;
+        if (target && target.tagName) {
+          send('error', ['resource-error', target.tagName, target.src || target.href || '']);
+        }
+      }, true);
+      send('info', ['ArkWeb diagnostic logger installed']);
+      window.__tavernNextDiagnosticFlush();
+      return 'installed';
+    })();`).catch((_err: Error) => {
+      DiagnosticLogService.getInstance().appendWebLog('error', 'Failed to inject ArkWeb diagnostic logger');
+    });
   }
 
   private applyShellBackground(color: string): void {
@@ -569,7 +817,7 @@ struct Index {
   build() {
     Stack() {
       if (this.running) {
-        Web({ src: this.url, controller: this.controller })
+        Web({ src: this.diagnosticWebUrl(), controller: this.controller })
           .javaScriptAccess(true)
           .domStorageAccess(true)
           .databaseAccess(true)
@@ -582,16 +830,21 @@ struct Index {
           .backgroundColor(this.shellBackground)
           .opacity(this.webReady ? 1 : 0)
           .onControllerAttached(() => {
+            this.attachDiagnosticBridge();
             this.attachDownloadDelegate();
           })
           .onOverrideUrlLoading((request) => this.handleWebNavigation(request))
           .onPageBegin(() => {
             this.pageError = '';
             this.hideWebUntilReady();
+            this.injectDiagnosticLogger();
+            DiagnosticLogService.getInstance().appendWebLog('info', 'ArkWeb page begin');
           })
           .onPageEnd(() => {
+            this.flushDiagnosticWebLogQueue();
             this.injectShellThemeProbe();
             this.revealWebAfterFirstPaint();
+            DiagnosticLogService.getInstance().appendWebLog('info', 'ArkWeb page end');
           })
           .onAlert((event) => {
             this.webDialogService.handleAlert(event.message, () => {
@@ -619,16 +872,30 @@ struct Index {
             return true;
           })
           .onErrorReceive((event) => {
+            DiagnosticLogService.getInstance().appendWebLog('error',
+              `ArkWeb load error: ${event.error.getErrorInfo()}`);
             if (event.request.isMainFrame()) {
               this.pageError = `WebView failed to load SillyTavern: ${event.error.getErrorInfo()}`;
               this.webReady = true;
             }
           })
           .onHttpErrorReceive((event) => {
+            DiagnosticLogService.getInstance().appendWebLog('error', 'ArkWeb HTTP error received');
             if (event.request.isMainFrame()) {
               this.pageError = 'SillyTavern page returned an HTTP error.';
               this.webReady = true;
             }
+          })
+          .onRenderExited((event) => {
+            DiagnosticLogService.getInstance().appendWebLog('error',
+              `ArkWeb render process exited: reason=${event.renderExitReason}`);
+          })
+          .onRenderProcessNotResponding((data) => {
+            DiagnosticLogService.getInstance().appendWebLog('error',
+              `ArkWeb render process not responding: pid=${data.pid} reason=${data.reason}`);
+          })
+          .onRenderProcessResponding(() => {
+            DiagnosticLogService.getInstance().appendWebLog('info', 'ArkWeb render process responding again');
           })
       } else {
         Column({ space: 12 }) {

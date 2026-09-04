@@ -29,6 +29,107 @@
             }
         })();
     </script>
+    <script>
+        (() => {
+            const diagnosticsRequested = new URLSearchParams(location.search).get('tavernNextDiagnostics') === '1';
+            if (!diagnosticsRequested) {
+                return;
+            }
+            if (window.__tavernNextDiagnosticLoggerInstalled) {
+                return;
+            }
+            window.__tavernNextDiagnosticLoggerInstalled = true;
+            const pending = [];
+            const stringify = (value) => {
+                if (value instanceof Error) {
+                    return value.stack || value.message || String(value);
+                }
+                if (typeof value === 'string') {
+                    return value;
+                }
+                if (value === null || typeof value !== 'object') {
+                    return String(value);
+                }
+                return '[' + (value.constructor?.name || 'object') + ']';
+            };
+            const send = (level, values) => {
+                const message = values.map(stringify).join(' ');
+                if (!message) {
+                    return;
+                }
+                const startupMessage = /^(\[TavernNext startup\]|ArkWeb|window\.|document\.|resource-error|unhandledrejection)/.test(message);
+                if (!startupMessage) {
+                    return;
+                }
+                try {
+                    const bridge = window.__tavernNextDiagnosticBridge;
+                    if (bridge && typeof bridge.append === 'function') {
+                        bridge.append(level, message);
+                        return;
+                    }
+                } catch (_) {
+                }
+                fetch('/api/ohos/diagnostics/frontend', {
+                    method: 'POST',
+                    headers: { 'content-type': 'application/json' },
+                    body: JSON.stringify({ level, message })
+                }).catch(() => {
+                    pending.push({ level, message });
+                    if (pending.length > 200) {
+                        pending.shift();
+                    }
+                });
+            };
+            window.__tavernNextDiagnosticFlush = () => {
+                while (pending.length > 0) {
+                    const item = pending.shift();
+                    try {
+                        const bridge = window.__tavernNextDiagnosticBridge;
+                        if (!bridge || typeof bridge.append !== 'function') {
+                            fetch('/api/ohos/diagnostics/frontend', {
+                                method: 'POST',
+                                headers: { 'content-type': 'application/json' },
+                                body: JSON.stringify(item)
+                            }).catch(() => pending.unshift(item));
+                            continue;
+                        }
+                        bridge.append(item.level, item.message);
+                    } catch (_) {
+                        pending.unshift(item);
+                        return false;
+                    }
+                }
+                return true;
+            };
+            ['debug', 'info', 'log', 'warn', 'error'].forEach((level) => {
+                const original = typeof console[level] === 'function' ? console[level].bind(console) : null;
+                console[level] = (...args) => {
+                    if (original) {
+                        original(...args);
+                    }
+                    send(level, args);
+                };
+            });
+            window.addEventListener('error', (event) => {
+                send('error', ['window.error', event.message, event.filename, event.lineno, event.colno,
+                    event.error || '']);
+            }, true);
+            window.addEventListener('unhandledrejection', (event) => {
+                send('error', ['unhandledrejection', event.reason]);
+            }, true);
+            window.addEventListener('load', () => send('info', ['window.load']));
+            window.addEventListener('pageshow', () => send('info', ['window.pageshow']));
+            document.addEventListener('readystatechange', () => send('debug', ['document.readyState', document.readyState]));
+            document.addEventListener('error', (event) => {
+                const target = event.target;
+                if (target && target.tagName) {
+                    send('error', ['resource-error', target.tagName, target.src || target.href || '']);
+                }
+            }, true);
+            send('info', ['ArkWeb diagnostic logger installed']);
+            window.__tavernNextDiagnosticFlush();
+        })();
+    </script>
     <link rel="preload" as="style" href="style.css">
     <link rel="manifest" crossorigin="use-credentials" href="manifest.json">
     <link href="webfonts/NotoSans/stylesheet.css" rel="stylesheet">

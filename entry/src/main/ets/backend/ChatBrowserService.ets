@@ -1,4 +1,4 @@
-import { hilog } from '@kit.PerformanceAnalysisKit';
+import { DiagnosticLogService as hilog } from './DiagnosticLogService';
 import { AppSettingsService, APP_SETTING_CHAT_BROWSER_DARK_MODE } from './AppSettingsService';
 import { DataDirectories, UserDirectories } from './DataDirectories';
 import { FileEntry, FileStore } from './FileStore';
