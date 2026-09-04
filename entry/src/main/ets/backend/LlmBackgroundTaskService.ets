@@ -1,7 +1,7 @@
 import { common, wantAgent, Want, WantAgent } from '@kit.AbilityKit';
 import { backgroundTaskManager } from '@kit.BackgroundTasksKit';
 import { notificationManager } from '@kit.NotificationKit';
-import { hilog } from '@kit.PerformanceAnalysisKit';
+import { DiagnosticLogService as hilog } from './DiagnosticLogService';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { ApplicationStateService } from './ApplicationStateService';
 import { AppSettingsService, APP_SETTING_NOTIFY_ON_COMPLETED } from './AppSettingsService';

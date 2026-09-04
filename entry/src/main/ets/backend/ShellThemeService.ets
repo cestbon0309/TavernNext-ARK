@@ -1,7 +1,7 @@
 import { Context } from '@kit.AbilityKit';
 import { ColorMetrics, window } from '@kit.ArkUI';
 import { resourceManager } from '@kit.LocalizationKit';
-import { hilog } from '@kit.PerformanceAnalysisKit';
+import { DiagnosticLogService as hilog } from './DiagnosticLogService';
 import { AppSettingsService, APP_SETTING_SHELL_BACKGROUND_COLOR } from './AppSettingsService';
 import { HttpRequest, HttpResponse, JsonRecord } from './HttpTypes';
 

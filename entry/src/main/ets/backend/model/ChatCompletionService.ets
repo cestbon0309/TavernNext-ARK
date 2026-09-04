@@ -15,6 +15,7 @@ import { asArrayValue, asBooleanValue, asNumberValue, asRecordValue } from './Js
 import { PromptCachingService } from './PromptCaching';
 import { LlmApiLogger } from './LlmApiLogger';
 import { LlmBackgroundTaskService } from '../LlmBackgroundTaskService';
+import { DiagnosticLogService } from '../DiagnosticLogService';
 
 export class ChatCompletionService {
   private configResolver: ChatCompletionConfigResolver;
@@ -416,7 +417,9 @@ export class ChatCompletionService {
     payload: JsonRecord): void {
     const model = `${payload['model'] ?? ''}`;
     const stream = asBooleanValue(payload['stream']);
-    console.info(`[LLM] source=${source} endpoint=${endpointPath} model=${model} stream=${stream} base=${config.baseUrl}`);
+    DiagnosticLogService.info(0x5441, 'ChatCompletionService',
+      '[LLM] source=%{public}s endpoint=%{public}s model=%{public}s stream=%{public}s base=%{public}s', source,
+      endpointPath, model, stream, config.baseUrl);
   }
 }
 

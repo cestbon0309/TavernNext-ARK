@@ -1,6 +1,6 @@
 import { BusinessError } from '@kit.BasicServicesKit';
 import { dlpAntiPeep } from '@kit.DeviceSecurityKit';
-import { hilog } from '@kit.PerformanceAnalysisKit';
+import { DiagnosticLogService as hilog } from './DiagnosticLogService';
 import { HttpRequest, HttpResponse, JsonRecord } from './HttpTypes';
 import { asBoolean, asRecord } from './JsonUtils';
 

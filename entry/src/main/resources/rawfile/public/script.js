@@ -298,6 +298,8 @@ globalThis.SillyTavern = {
     libs,
     getContext,
 };
+globalThis.__tavernNextFrontendInitialized = false;
+globalThis.__tavernNextFrontendInitializedAtMs = 0;
 
 globalThis.__tavernNextFlushPersistentState = flushTavernNextPersistentState;
 globalThis.__tavernNextIsChatVisible = () => {
@@ -810,6 +812,7 @@ function createStartupTrace() {
         },
         async report() {
             const payload = {
+                initializedAtMs: globalThis.__tavernNextFrontendInitializedAtMs,
                 totalDurationMs: Math.round(performance.now() - startedAt),
                 steps,
             };
@@ -942,6 +945,8 @@ async function firstLoadInit() {
     await startupTrace.measure('hide startup loader', async () => await initLoaderHandle.hide());
     await startupTrace.measure('fixViewport', async () => await fixViewport());
     await startupTrace.measure('APP_READY event', async () => await eventSource.emit(event_types.APP_READY));
+    globalThis.__tavernNextFrontendInitializedAtMs = Date.now();
+    globalThis.__tavernNextFrontendInitialized = true;
     await startupTrace.report();
 }
 

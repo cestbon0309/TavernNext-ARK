@@ -2,7 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { uniformTypeDescriptor } from '@kit.ArkData';
 import { fileUri } from '@kit.CoreFileKit';
 import { systemShare } from '@kit.ShareKit';
-import { hilog } from '@kit.PerformanceAnalysisKit';
+import { DiagnosticLogService as hilog } from './DiagnosticLogService';
 import { FileEntry, FileStore } from './FileStore';
 import { emptyJsonRecord, HttpResponse, JsonRecord } from './HttpTypes';
 import { extensionOf, joinPath, sanitizeFileName, withoutExtension } from './PathUtils';
@@ -75,14 +75,14 @@ export class ShareExportService {
     this.store.deleteFile(file.path);
   }
 
-  discardExportFiles(category: string, fileNamePattern: RegExp): number {
+  discardExportFiles(category: string, fileNamePattern: RegExp, modifiedBeforeMs: number = Number.MAX_VALUE): number {
     const safeCategory = sanitizeFileName(category);
     if (safeCategory.length === 0) {
       return 0;
     }
     const directory = joinPath(this.root, safeCategory);
     const files = this.store.list(directory).filter((entry: FileEntry): boolean => {
-      return entry.isFile && fileNamePattern.test(entry.name);
+      return entry.isFile && entry.mtimeMs < modifiedBeforeMs && fileNamePattern.test(entry.name);
     });
     let deleted = 0;
     for (const file of files) {

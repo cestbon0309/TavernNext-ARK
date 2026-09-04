@@ -1,5 +1,5 @@
 import { ApplicationStateChangeCallback, common } from '@kit.AbilityKit';
-import { hilog } from '@kit.PerformanceAnalysisKit';
+import { DiagnosticLogService as hilog } from './DiagnosticLogService';
 
 const DOMAIN = 0x5441;
 const TAG = 'ApplicationState';
