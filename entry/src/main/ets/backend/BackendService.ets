@@ -90,6 +90,7 @@ export class BackendService {
   private listenDurationMs: number = 0;
   private startupDurationMs: number = 0;
   private frontendStartupReport: JsonRecord = {};
+  private firstRunSettings: boolean = false;
 
   private constructor(context: Context) {
     const initStartedAt = Date.now();
@@ -161,6 +162,10 @@ export class BackendService {
   }
   getBackgroundPrivacy(): BackgroundPrivacyService {
     return this.backgroundPrivacy;
+  }
+
+  isFirstRunSettings(): boolean {
+    return this.firstRunSettings;
   }
 
 
@@ -790,6 +795,7 @@ export class BackendService {
     }
     const text = this.store.readText(settingsPath, '');
     if (this.isValidSettingsText(text)) {
+      this.firstRunSettings = this.isFirstRunSettingsText(text);
       this.maybeCreateAutomaticSettingsSnapshot(text);
       return;
     }
@@ -804,12 +810,14 @@ export class BackendService {
     }
 
     if (this.restoreNewestValidSettingsSnapshot(settingsPath, backups)) {
+      this.firstRunSettings = this.isFirstRunSettingsText(this.store.readText(settingsPath, ''));
       DiagnosticLogService.info(DOMAIN, TAG, 'settings.json recovered from the newest valid snapshot');
       return;
     }
     const bundledDefaults = this.readBundledDefaultSettings(manager);
     if (this.isValidSettingsText(bundledDefaults)) {
       this.store.writeText(settingsPath, bundledDefaults);
+      this.firstRunSettings = this.isFirstRunSettingsText(bundledDefaults);
       DiagnosticLogService.info(DOMAIN, TAG,
         'settings.json recovered from bundled default settings because no valid snapshot exists');
       return;
@@ -886,6 +894,15 @@ export class BackendService {
     try {
       const parsed = JSON.parse(text) as Object;
       return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  private isFirstRunSettingsText(text: string): boolean {
+    try {
+      const parsed = JSON.parse(text) as JsonRecord;
+      return parsed['firstRun'] === true;
     } catch (_err) {
       return false;
     }
