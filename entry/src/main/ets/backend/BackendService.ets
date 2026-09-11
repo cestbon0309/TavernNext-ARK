@@ -1,4 +1,6 @@
 import { common, Context } from '@kit.AbilityKit';
+import { util } from '@kit.ArkTS';
+import { resourceManager } from '@kit.LocalizationKit';
 import { AppSettingsService, APP_SETTING_FORCE_HTTP1_1 } from './AppSettingsService';
 import { BackgroundPrivacyService } from './BackgroundPrivacyService';
 import { ChatBrowserService } from './ChatBrowserService';
@@ -104,7 +106,7 @@ export class BackendService {
     this.directories.ensureDefaultUserFiles();
     this.logStartupStep('DataDirectories.ensureDefaultUserFiles', stepStartedAt);
     stepStartedAt = Date.now();
-    this.repairSettingsFile();
+    this.repairSettingsFile(context.resourceManager);
     this.logStartupStep('settingsFile.repair', stepStartedAt);
     this.appSettings = AppSettingsService.getInstance(context.filesDir);
     this.shellTheme = ShellThemeService.getInstance(context);
@@ -771,7 +773,7 @@ export class BackendService {
     this.syncShellThemeFromSettings(settings);
   }
 
-  private repairSettingsFile(): void {
+  private repairSettingsFile(manager: resourceManager.ResourceManager): void {
     const settingsPath = joinPath(this.directories.defaultUser.root, 'settings.json');
     if (!this.store.exists(settingsPath)) {
       return;
@@ -795,9 +797,25 @@ export class BackendService {
       DiagnosticLogService.info(DOMAIN, TAG, 'settings.json recovered from the newest valid snapshot');
       return;
     }
+    const bundledDefaults = this.readBundledDefaultSettings(manager);
+    if (this.isValidSettingsText(bundledDefaults)) {
+      this.store.writeText(settingsPath, bundledDefaults);
+      DiagnosticLogService.info(DOMAIN, TAG,
+        'settings.json recovered from bundled default settings because no valid snapshot exists');
+      return;
+    }
     this.store.writeText(settingsPath, '{}');
     DiagnosticLogService.error(DOMAIN, TAG,
-      'settings.json recovery finished without a valid snapshot, defaults will be used');
+      'settings.json recovery finished without bundled defaults, empty settings will be used');
+  }
+
+  private readBundledDefaultSettings(manager: resourceManager.ResourceManager): string {
+    try {
+      const bytes = manager.getRawFileContentSync('default/content/settings.json');
+      return new util.TextDecoder('utf-8').decodeToString(bytes);
+    } catch (_err) {
+      return '';
+    }
   }
 
   private restoreNewestValidSettingsSnapshot(settingsPath: string, backups: string): boolean {
