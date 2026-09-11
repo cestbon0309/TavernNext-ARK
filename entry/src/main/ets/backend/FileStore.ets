@@ -1,6 +1,6 @@
 import { fileIo } from '@kit.CoreFileKit';
 import { emptyJsonRecord, JsonRecord } from './HttpTypes';
-import { extensionOf, joinPath } from './PathUtils';
+import { extensionOf, joinPath, sanitizeFileName } from './PathUtils';
 
 export class FileEntry {
   name: string;
@@ -24,6 +24,12 @@ export class FileEntry {
 }
 
 export class FileStore {
+  private tempRoot: string;
+
+  constructor(tempRoot: string = '') {
+    this.tempRoot = tempRoot;
+  }
+
   exists(path: string): boolean {
     try {
       return fileIo.accessSync(path);
@@ -139,14 +145,21 @@ export class FileStore {
 
   writeText(path: string, content: string): void {
     this.ensureParentDir(path);
+    const tempPath = this.tempPathFor(path);
     try {
-      const file = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC | fileIo.OpenMode.READ_WRITE);
+      const file = fileIo.openSync(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC | fileIo.OpenMode.READ_WRITE);
       try {
         fileIo.writeSync(file.fd, content, { encoding: 'utf-8' });
+        fileIo.fsyncSync(file.fd);
       } finally {
         fileIo.closeSync(file);
       }
     } catch (_err) {
+      this.deleteFile(tempPath);
+      return;
+    }
+    if (!this.replaceFile(tempPath, path)) {
+      this.deleteFile(tempPath);
     }
   }
 
@@ -165,21 +178,29 @@ export class FileStore {
 
   async writeTextAsync(path: string, content: string): Promise<void> {
     this.ensureParentDir(path);
+    const tempPath = this.tempPathFor(path);
     try {
-      const file = await fileIo.open(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC | fileIo.OpenMode.READ_WRITE);
+      const file = await fileIo.open(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC | fileIo.OpenMode.READ_WRITE);
       try {
         await fileIo.write(file.fd, content, { encoding: 'utf-8' });
+        await fileIo.fsync(file.fd);
       } finally {
         await fileIo.close(file);
       }
     } catch (_err) {
+      this.deleteFile(tempPath);
+      return;
+    }
+    if (!this.replaceFile(tempPath, path)) {
+      this.deleteFile(tempPath);
     }
   }
 
   writeBytes(path: string, content: Uint8Array): void {
     this.ensureParentDir(path);
+    const tempPath = this.tempPathFor(path);
     try {
-      const file = fileIo.openSync(path, fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC | fileIo.OpenMode.READ_WRITE);
+      const file = fileIo.openSync(tempPath, fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC | fileIo.OpenMode.READ_WRITE);
       try {
         const buffer = new ArrayBuffer(content.byteLength);
         new Uint8Array(buffer).set(content);
@@ -188,6 +209,11 @@ export class FileStore {
         fileIo.closeSync(file);
       }
     } catch (_err) {
+      this.deleteFile(tempPath);
+      return;
+    }
+    if (!this.replaceFile(tempPath, path)) {
+      this.deleteFile(tempPath);
     }
   }
 
@@ -217,12 +243,70 @@ export class FileStore {
       return false;
     }
     this.ensureParentDir(target);
-    if (this.exists(target)) {
-      this.deleteFile(target);
+    const tempPath = this.tempPathFor(target);
+    this.deleteFile(tempPath);
+    try {
+      fileIo.copyFileSync(source, tempPath);
+    } catch (_err) {
+      this.deleteFile(tempPath);
+      return false;
+    }
+    if (!this.replaceFile(tempPath, target)) {
+      this.deleteFile(tempPath);
+      return false;
+    }
+    return this.exists(target);
+  }
+
+  moveFile(source: string, target: string): boolean {
+    if (!this.exists(source)) {
+      return false;
+    }
+    this.ensureParentDir(target);
+    try {
+      fileIo.renameSync(source, target);
+      return this.exists(target);
+    } catch (_err) {
+    }
+    if (!this.copyFile(source, target)) {
+      return false;
+    }
+    return this.deleteFile(source);
+  }
+
+  private tempPathFor(path: string): string {
+    if (this.tempRoot.length === 0) {
+      return `${path}.tmp`;
+    }
+    this.ensureDir(this.tempRoot);
+    const name = sanitizeFileName(this.baseName(path));
+    return joinPath(this.tempRoot, `${name}-${this.pathHash(path)}.tmp`);
+  }
+
+  private pathHash(path: string): string {
+    let hash = 5381;
+    for (let index = 0; index < path.length; index += 1) {
+      hash = (((hash << 5) - hash) + path.charCodeAt(index)) | 0;
+    }
+    let hex = (hash >>> 0).toString(16);
+    while (hex.length < 8) {
+      hex = `0${hex}`;
+    }
+    return hex;
+  }
+
+  private replaceFile(tempPath: string, targetPath: string): boolean {
+    try {
+      fileIo.renameSync(tempPath, targetPath);
+      return true;
+    } catch (_err) {
     }
     try {
-      fileIo.copyFileSync(source, target);
-      return this.exists(target);
+      if (this.exists(targetPath)) {
+        fileIo.unlinkSync(targetPath);
+      }
+      fileIo.renameSync(tempPath, targetPath);
+      return true;
     } catch (_err) {
       return false;
     }
