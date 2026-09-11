@@ -9,7 +9,7 @@ import { CryptoUtils } from './CryptoUtils';
 import { DiagnosticLogService } from './DiagnosticLogService';
 import { DefaultContentSeeder } from './DefaultContentSeeder';
 import { ExtensionsService } from './ExtensionsService';
-import { FileStore } from './FileStore';
+import { FileEntry, FileStore } from './FileStore';
 import { GitService } from './GitService';
 import { HttpRequest, HttpResponse, JsonRecord } from './HttpTypes';
 import { HttpServer } from './HttpServer';
@@ -29,6 +29,8 @@ import { VectorService } from './VectorService';
 
 const DOMAIN = 0x5441;
 const TAG = 'TavernBackendService';
+const SETTINGS_SNAPSHOT_PREFIX = 'settings_default-user_';
+const SETTINGS_SNAPSHOT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 class ChatStats {
   count: number = 0;
@@ -89,7 +91,9 @@ export class BackendService {
 
   private constructor(context: Context) {
     const initStartedAt = Date.now();
-    this.store = new FileStore();
+    const tempRoot = joinPath(context.filesDir, '_tmp');
+    this.store = new FileStore(tempRoot);
+    this.store.deleteDirectory(tempRoot);
     this.crypto = new CryptoUtils();
     this.directories = new DataDirectories(context.filesDir, this.store);
     let stepStartedAt = Date.now();
@@ -100,8 +104,11 @@ export class BackendService {
     this.logStartupStep('DefaultContentSeeder.seedDefaultUser', stepStartedAt);
     stepStartedAt = Date.now();
     this.directories.ensureDefaultUserFiles();
-    this.appSettings = AppSettingsService.getInstance(context.filesDir);
     this.logStartupStep('DataDirectories.ensureDefaultUserFiles', stepStartedAt);
+    stepStartedAt = Date.now();
+    this.repairSettingsFile();
+    this.logStartupStep('settingsFile.repair', stepStartedAt);
+    this.appSettings = AppSettingsService.getInstance(context.filesDir);
     this.shellTheme = ShellThemeService.getInstance(context);
     stepStartedAt = Date.now();
     this.syncShellThemeFromCurrentSettings();
@@ -772,6 +779,104 @@ export class BackendService {
   private syncShellThemeFromCurrentSettings(): void {
     const settings = this.store.readJsonRecord(joinPath(this.directories.defaultUser.root, 'settings.json'));
     this.syncShellThemeFromSettings(settings);
+  }
+
+  private repairSettingsFile(): void {
+    const settingsPath = joinPath(this.directories.defaultUser.root, 'settings.json');
+    if (!this.store.exists(settingsPath)) {
+      return;
+    }
+    const text = this.store.readText(settingsPath, '');
+    if (this.isValidSettingsText(text)) {
+      this.maybeCreateAutomaticSettingsSnapshot(text);
+      return;
+    }
+
+    DiagnosticLogService.error(DOMAIN, TAG,
+      'settings.json is not valid JSON, attempting automatic recovery');
+    const backups = this.directories.defaultUser.backups;
+    const preservedPath = joinPath(backups, `settings_corrupt_default-user_${this.compactTimestamp()}.json`);
+    if (!this.store.moveFile(settingsPath, preservedPath)) {
+      this.store.copyFile(settingsPath, preservedPath);
+      this.store.deleteFile(settingsPath);
+    }
+
+    if (this.restoreNewestValidSettingsSnapshot(settingsPath, backups)) {
+      DiagnosticLogService.info(DOMAIN, TAG, 'settings.json recovered from the newest valid snapshot');
+      return;
+    }
+    this.store.writeText(settingsPath, '{}');
+    DiagnosticLogService.error(DOMAIN, TAG,
+      'settings.json recovery finished without a valid snapshot, defaults will be used');
+  }
+
+  private restoreNewestValidSettingsSnapshot(settingsPath: string, backups: string): boolean {
+    const candidates = this.store.list(backups)
+      .filter((entry: FileEntry): boolean => entry.isFile && entry.name.startsWith(SETTINGS_SNAPSHOT_PREFIX) &&
+        entry.name.endsWith('.json'))
+      .sort((left: FileEntry, right: FileEntry): number => right.mtimeMs - left.mtimeMs);
+    for (const candidate of candidates) {
+      const text = this.store.readText(candidate.path, '');
+      if (this.isValidSettingsText(text)) {
+        this.store.writeText(settingsPath, text);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private maybeCreateAutomaticSettingsSnapshot(text: string): void {
+    const trimmed = text.trim();
+    if (trimmed.length === 0 || trimmed === '{}') {
+      return;
+    }
+    const backups = this.directories.defaultUser.backups;
+    let newestMs = 0;
+    for (const entry of this.store.list(backups)) {
+      if (entry.isFile && entry.name.startsWith(SETTINGS_SNAPSHOT_PREFIX) && entry.name.endsWith('.json') &&
+        entry.mtimeMs > newestMs) {
+        newestMs = entry.mtimeMs;
+      }
+    }
+    if (newestMs > 0 && Date.now() - newestMs < SETTINGS_SNAPSHOT_INTERVAL_MS) {
+      return;
+    }
+    const target = joinPath(backups, `${SETTINGS_SNAPSHOT_PREFIX}${this.compactTimestamp()}.json`);
+    this.store.writeText(target, text);
+    this.pruneSettingsSnapshots(50);
+    DiagnosticLogService.info(DOMAIN, TAG, 'Created automatic settings snapshot');
+  }
+
+  private pruneSettingsSnapshots(limit: number): void {
+    const files = this.store.list(this.directories.defaultUser.backups)
+      .filter((entry: FileEntry): boolean => entry.isFile && entry.name.startsWith(SETTINGS_SNAPSHOT_PREFIX) &&
+        entry.name.endsWith('.json'))
+      .sort((left: FileEntry, right: FileEntry): number => left.mtimeMs - right.mtimeMs);
+    while (files.length > limit) {
+      const oldest = files.shift();
+      if (oldest === undefined) {
+        break;
+      }
+      this.store.deleteFile(oldest.path);
+    }
+  }
+
+  private isValidSettingsText(text: string): boolean {
+    if (text.trim().length === 0) {
+      return false;
+    }
+    try {
+      const parsed = JSON.parse(text) as Object;
+      return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  private compactTimestamp(): string {
+    const date = new Date();
+    const pad = (value: number): string => value < 10 ? `0${value}` : `${value}`;
+    return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
   }
 
   private syncShellThemeFromSettings(settings: JsonRecord): void {
