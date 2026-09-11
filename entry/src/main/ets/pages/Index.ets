@@ -467,7 +467,6 @@ struct Index {
   aboutToAppear(): void {
     this.configureWebDebuggingAccess();
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
-    this.startDiagnosticWatchdog();
     const theme = ShellThemeService.getInstance(context);
     this.shellTheme = theme;
     this.applyShellBackground(theme.getBackgroundColor());
@@ -477,6 +476,9 @@ struct Index {
     const service = BackendService.getInstance(context);
     service.beginFrontendStartupMonitoring();
     this.backendService = service;
+    if (!service.isFirstRunSettings()) {
+      this.startDiagnosticWatchdog();
+    }
     ApplicationStateService.getInstance().subscribe((foreground: boolean) => {
       if (!foreground) {
         this.flushWebPersistentState('application-background');
