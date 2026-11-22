@@ -2,6 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { BackendService } from '../backend/BackendService';
+import { LocalAuth } from '../backend/LocalAuth';
 import { CharacterBrowserChatItem, CharacterBrowserItem, CharacterBrowserRefreshListener,
   CharacterBrowserService } from '../backend/CharacterBrowserService';
 import { Api26MaterialAdapter } from './Api26MaterialAdapter';
@@ -426,10 +427,11 @@ export struct CharacterBrowserCard {
       return '';
     }
     if (this.grid) {
-      return `${this.backendUrl}/api/ohos/characters/thumbnail?file=${encodeURIComponent(this.item.avatar)}` +
-        `&v=${this.thumbnailRevision}`;
+      return LocalAuth.withQueryToken(
+        `${this.backendUrl}/api/ohos/characters/thumbnail?file=${encodeURIComponent(this.item.avatar)}` +
+          `&v=${this.thumbnailRevision}`);
     }
-    return `${this.backendUrl}/characters/${encodeURIComponent(this.item.avatar)}`;
+    return LocalAuth.withQueryToken(`${this.backendUrl}/characters/${encodeURIComponent(this.item.avatar)}`);
   }
 
   private formatBytes(bytes: number): string {
@@ -1293,7 +1295,7 @@ export struct CharacterBrowserDetail {
   }
 
   private avatarUrl(): string {
-    return `${this.backendUrl}/characters/${encodeURIComponent(this.currentAvatar())}`;
+    return LocalAuth.withQueryToken(`${this.backendUrl}/characters/${encodeURIComponent(this.currentAvatar())}`);
   }
 
   private fileStem(value: string): string {

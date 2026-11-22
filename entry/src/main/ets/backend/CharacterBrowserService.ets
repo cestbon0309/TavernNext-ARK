@@ -7,6 +7,7 @@ import { JsonArray, JsonRecord, emptyJsonRecord } from './HttpTypes';
 import { asArray, asBoolean, asNumber, asRecord, asString } from './JsonUtils';
 import { joinPath } from './PathUtils';
 import { RemoteHttpClient, RemoteHttpResult } from './RemoteHttpClient';
+import { LocalAuth } from './LocalAuth';
 
 const CHARACTER_BROWSER_CACHE_FILE = 'character-browser-cache.json';
 const CHARACTER_IMPORT_MAX_BYTES = 32 * 1024 * 1024;
@@ -207,7 +208,7 @@ export class CharacterBrowserService {
 
   async list(baseUrl: string): Promise<CharacterBrowserItem[]> {
     const body: JsonRecord = {};
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/all'), body);
+    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/all'), body, LocalAuth.headers());
     if (!this.isSuccess(result)) {
       throw new Error(`characters/all ${result.statusCode}`);
     }
@@ -218,7 +219,7 @@ export class CharacterBrowserService {
   async get(baseUrl: string, avatar: string): Promise<CharacterBrowserItem> {
     const body: JsonRecord = {};
     body['avatar_url'] = avatar;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/get'), body);
+    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/get'), body, LocalAuth.headers());
     if (!this.isSuccess(result)) {
       throw new Error(`characters/get ${result.statusCode}`);
     }
@@ -239,7 +240,7 @@ export class CharacterBrowserService {
     body['talkativeness'] = 0.5;
     body['depth_prompt_depth'] = 4;
     body['depth_prompt_role'] = 'system';
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/create'), body);
+    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/create'), body, LocalAuth.headers());
     return this.isSuccess(result);
   }
 
@@ -301,7 +302,7 @@ export class CharacterBrowserService {
     payload['talkativeness'] = item.talkativeness;
     payload['data'] = data;
 
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/merge-attributes'), payload);
+    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/merge-attributes'), payload, LocalAuth.headers());
     return this.isSuccess(result);
   }
 
@@ -309,7 +310,7 @@ export class CharacterBrowserService {
     const payload: JsonRecord = {};
     payload['avatar'] = avatar;
     payload['favorite'] = favorite;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/ohos/characters/favorite'), payload);
+    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/ohos/characters/favorite'), payload, LocalAuth.headers());
     return this.isSuccess(result);
   }
 
@@ -317,7 +318,7 @@ export class CharacterBrowserService {
     const body: JsonRecord = {};
     body['avatar_url'] = avatar;
     body['new_name'] = name;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/rename'), body);
+    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/rename'), body, LocalAuth.headers());
     if (!this.isSuccess(result)) {
       throw new Error(`characters/rename ${result.statusCode}`);
     }
@@ -327,7 +328,7 @@ export class CharacterBrowserService {
   async duplicate(baseUrl: string, avatar: string): Promise<string> {
     const body: JsonRecord = {};
     body['avatar_url'] = avatar;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/duplicate'), body);
+    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/duplicate'), body, LocalAuth.headers());
     if (!this.isSuccess(result)) {
       throw new Error(`characters/duplicate ${result.statusCode}`);
     }
@@ -338,14 +339,14 @@ export class CharacterBrowserService {
     const body: JsonRecord = {};
     body['avatar_url'] = avatar;
     body['delete_chats'] = deleteChats;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/delete'), body);
+    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/delete'), body, LocalAuth.headers());
     return this.isSuccess(result);
   }
 
   async chats(baseUrl: string, avatar: string): Promise<CharacterBrowserChatItem[]> {
     const body: JsonRecord = {};
     body['avatar_url'] = avatar;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/chats'), body);
+    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/chats'), body, LocalAuth.headers());
     if (!this.isSuccess(result)) {
       throw new Error(`characters/chats ${result.statusCode}`);
     }
@@ -367,7 +368,7 @@ export class CharacterBrowserService {
     const body: JsonRecord = {};
     body['avatar_url'] = avatar;
     body['format'] = format;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/export'), body);
+    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/export'), body, LocalAuth.headers());
     if (!this.isSuccess(result)) {
       return false;
     }
@@ -397,9 +398,8 @@ export class CharacterBrowserService {
     body.set(filePart, fieldPart.byteLength);
     body.set(bytes, fieldPart.byteLength + filePart.byteLength);
     body.set(suffix, fieldPart.byteLength + filePart.byteLength + bytes.byteLength);
-    const headers: Record<string, string> = {
-      'Content-Type': `multipart/form-data; boundary=${boundary}`
-    };
+    const headers = LocalAuth.headers();
+    headers['Content-Type'] = `multipart/form-data; boundary=${boundary}`;
     const result = await this.http.postBytes(this.http.joinUrl(baseUrl, '/api/characters/import'), body, headers);
     return this.isSuccess(result) && asString(this.parseRecord(result.text)['file_name']).length > 0;
   }

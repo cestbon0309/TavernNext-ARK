@@ -4,6 +4,7 @@ import { DiagnosticLogService as hilog } from './DiagnosticLogService';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { HttpRequest, HttpResponse, JsonArray, JsonRecord, jsonMessage, RouteHandler } from './HttpTypes';
 import { MultipartParser } from './MultipartParser';
+import { LocalAuth } from './LocalAuth';
 
 const DOMAIN = 0x5441;
 const TAG = 'TavernHttpServer';
@@ -207,8 +208,12 @@ export class HttpServer {
       path = request.path;
       hilog.info(DOMAIN, TAG, '%{public}s %{public}s', request.method, request.path);
       const handlerStartedAt = Date.now();
+      const rejection = request.method === 'OPTIONS' ? null : this.authorize(request);
       if (request.method === 'OPTIONS') {
+        // No CORS headers are sent, so cross-origin preflights fail in the browser.
         response = HttpResponse.empty(204);
+      } else if (rejection !== null) {
+        response = rejection;
       } else {
         const handler = this.routes.get(`${request.method} ${request.path}`);
         if (handler) {
@@ -250,6 +255,60 @@ export class HttpServer {
 
     const totalDurationMs = Date.now() - startedAt;
     this.recordRequestTiming(method, path, statusCode, handlerDurationMs, totalDurationMs);
+  }
+
+  // Returns null when the request may proceed, otherwise the response to send instead.
+  private authorize(request: HttpRequest): HttpResponse | null {
+    const host = (request.headers['host'] ?? '').toLowerCase();
+    if (host !== `127.0.0.1:${this.port}` && host !== `localhost:${this.port}`) {
+      return HttpResponse.json(jsonMessage('forbidden', 'unexpected host'), 403);
+    }
+    const origin = request.headers['origin'];
+    if (origin !== undefined && origin.toLowerCase() !== `http://${host}`) {
+      return HttpResponse.json(jsonMessage('forbidden', 'cross-origin request'), 403);
+    }
+    if (LocalAuth.matches(request.headers[LocalAuth.headerName] ?? '') ||
+      LocalAuth.matches(this.cookieValue(request.headers['cookie'] ?? '', LocalAuth.cookieName))) {
+      return null;
+    }
+    if (request.method === 'GET') {
+      if (LocalAuth.matches(request.query[LocalAuth.bootstrapQueryName] ?? '')) {
+        return this.bootstrapRedirect(request);
+      }
+      if (this.allowsQueryToken(request.path) && LocalAuth.matches(request.query[LocalAuth.queryName] ?? '')) {
+        return null;
+      }
+    }
+    return HttpResponse.json(jsonMessage('forbidden', 'missing local auth token'), 403);
+  }
+
+  // ArkUI Image() cannot send headers or cookies, so read-only image routes also accept the token in the query.
+  private allowsQueryToken(path: string): boolean {
+    return path.startsWith('/characters/') || path === '/api/ohos/characters/thumbnail';
+  }
+
+  // Fallback for when the cookie could not be written through WebCookieManager before the first page load.
+  private bootstrapRedirect(request: HttpRequest): HttpResponse {
+    const pairs: string[] = [];
+    Object.keys(request.query).forEach((name: string) => {
+      if (name !== LocalAuth.bootstrapQueryName) {
+        pairs.push(`${encodeURIComponent(name)}=${encodeURIComponent(request.query[name])}`);
+      }
+    });
+    const response = HttpResponse.empty(302);
+    response.headers['location'] = `${encodeURI(request.path)}${pairs.length > 0 ? `?${pairs.join('&')}` : ''}`;
+    response.headers['set-cookie'] = LocalAuth.cookie();
+    return response;
+  }
+
+  private cookieValue(cookieHeader: string, name: string): string {
+    for (const part of cookieHeader.split(';')) {
+      const index = part.indexOf('=');
+      if (index >= 0 && part.slice(0, index).trim() === name) {
+        return part.slice(index + 1).trim();
+      }
+    }
+    return '';
   }
 
   private recordRequestTiming(method: string, path: string, statusCode: number, handlerDurationMs: number,

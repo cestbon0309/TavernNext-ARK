@@ -11,6 +11,7 @@ import { Api26MaterialAdapter } from './Api26MaterialAdapter';
 import { CharacterBrowserPanel } from './CharacterBrowser';
 import { DataArchiveProgressService, DataArchiveProgressState } from '../backend/DataArchiveProgressService';
 import { DiagnosticLogService } from '../backend/DiagnosticLogService';
+import { LocalAuth } from '../backend/LocalAuth';
 import { ExportedFile } from '../backend/ShareExportService';
 import { ShellThemeService } from '../backend/ShellThemeService';
 import { WebDialogService, WebPromptDialogCancelAction, WebPromptDialogConfirmAction } from './WebDialogService';
@@ -284,7 +285,7 @@ struct ChatBrowserListCard {
   }
 
   private chatBrowserCoverUrl(): string {
-    return `${this.backendUrl}/characters/${encodeURIComponent(this.item.avatar)}`;
+    return LocalAuth.withQueryToken(`${this.backendUrl}/characters/${encodeURIComponent(this.item.avatar)}`);
   }
 
   private updateSwipeProgress(offset: number): void {
@@ -458,6 +459,7 @@ struct Index {
   private startupWatchdogTimer: number = -1;
   private startupWatchdogHandled: boolean = false;
   private startupProbeToken: number = 0;
+  private webAuthCookieReady: boolean = false;
   private chatBrowserRefreshListener: ChatBrowserRefreshListener = (items: ChatBrowserItem[]): void => {
     this.chatBrowserItems = items;
     this.chatBrowserDeletingIds = [];
@@ -529,18 +531,39 @@ struct Index {
   private applyStatus(status: BackendStatus): void {
     if (!this.running && status.running) {
       this.hideWebUntilReady();
+      this.webAuthCookieReady = this.configureWebAuthCookie(status.url);
     }
     this.running = status.running;
     this.url = status.url;
     this.message = status.message;
   }
 
+  // The backend rejects requests without this cookie; it must exist before the first page request.
+  private configureWebAuthCookie(backendUrl: string): boolean {
+    try {
+      webview.WebviewController.initializeWebEngine();
+      webview.WebCookieManager.putAcceptCookieEnabled(true);
+      webview.WebCookieManager.configCookieSync(backendUrl, LocalAuth.cookie(), false, true);
+      return true;
+    } catch (err) {
+      DiagnosticLogService.getInstance().appendWebLog('warn',
+        `Auth cookie setup failed, using redirect bootstrap: ${JSON.stringify(err)}`);
+      return false;
+    }
+  }
+
   private diagnosticWebUrl(): string {
-    if (!DiagnosticLogService.getInstance().isCapturing()) {
+    const params: string[] = [];
+    if (!this.webAuthCookieReady) {
+      params.push(`${LocalAuth.bootstrapQueryName}=${LocalAuth.token()}`);
+    }
+    if (DiagnosticLogService.getInstance().isCapturing()) {
+      params.push('tavernNextDiagnostics=1');
+    }
+    if (params.length === 0) {
       return this.url;
     }
-    const separator = this.url.includes('?') ? '&' : '?';
-    return `${this.url}${separator}tavernNextDiagnostics=1`;
+    return `${this.url}${this.url.includes('?') ? '&' : '?'}${params.join('&')}`;
   }
 
   private startDiagnosticWatchdog(): void {
