@@ -110,9 +110,10 @@ add_custom_command(
         "${TAVERN_TOKENIZER_FFI_DIR}/resources/tokenizers/qwen2.json.gz"
         "${TAVERN_TOKENIZER_FFI_DIR}/resources/tokenizers/yi.model.gz"
         "${REPO_ROOT}/third_party/miktik/Cargo.toml"
-        "${REPO_ROOT}/third_party/miktik/src/backend/sentencepiece.rs"
+        "${REPO_ROOT}/third_party/miktik/src/model.rs"
         "${REPO_ROOT}/third_party/miktik/src/registry.rs"
         "${REPO_ROOT}/third_party/miktik/src/tokenizer.rs"
+        "${REPO_ROOT}/third_party/miktik/src/source.rs"
     COMMENT "Building Rust MikTik tokenizer bridge for ${RUST_OHOS_TARGET}"
     VERBATIM
 )
