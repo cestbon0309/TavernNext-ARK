@@ -27,8 +27,13 @@ export class WebSchemeTransport {
         resourceHandler: webview.WebResourceHandler): boolean => this.onRequestStart(request, resourceHandler));
       this.configured = true;
     }
-    controller.setWebSchemeHandler('http', this.handler);
-    webview.WebviewController.setServiceWorkerWebSchemeHandler('http', this.handler);
+    try {
+      controller.setWebSchemeHandler('http', this.handler);
+      webview.WebviewController.setServiceWorkerWebSchemeHandler('http', this.handler);
+    } catch (err) {
+      // Without the handler the page cannot reach the backend at all, so make the cause visible in the log.
+      hilog.error(DOMAIN, TAG, 'Failed to register the web scheme handler: %{public}s', JSON.stringify(err));
+    }
   }
 
   private onRequestStart(request: webview.WebSchemeHandlerRequest, resourceHandler: webview.WebResourceHandler): boolean {
