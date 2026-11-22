@@ -134,8 +134,6 @@ export function statusTextFor(statusCode: number): string {
       return 'OK';
     case 204:
       return 'No Content';
-    case 302:
-      return 'Found';
     case 400:
       return 'Bad Request';
     case 403:

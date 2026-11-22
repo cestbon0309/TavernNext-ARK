@@ -206,31 +206,15 @@ git submodule update --init --recursive
 
 ## 后端调试
 
-把设备或模拟器里的本地后端端口映射到宿主机：
+后端不监听任何端口。WebView 发往 `http://127.0.0.1:8000` 的请求由 `WebSchemeTransport` 在进程内拦截并交给 `HttpRouter`，因此不能再用 `hdc fport` + `curl` 或桌面浏览器直接访问后端。
 
-```powershell
-& '<DevEco SDK path>\default\openharmony\toolchains\hdc.exe' fport tcp:8000 tcp:8000
-```
+调试接口请在 debug 包里通过 ArkWeb DevTools 连接 WebView，然后在控制台里请求：
 
-检查后端状态：
-
-```powershell
-curl.exe -i http://127.0.0.1:8000/health
-curl.exe -i -X POST http://127.0.0.1:8000/api/ping
-```
-
-也可以在桌面浏览器打开前端调试：
-
-```text
-http://127.0.0.1:8000/
-```
-
-常用调试接口：
-
-```powershell
-curl.exe -i http://127.0.0.1:8000/api/extensions/discover
-curl.exe -i http://127.0.0.1:8000/api/dev/llm-api-logs/settings
-curl.exe -N http://127.0.0.1:8000/api/dev/llm-api-logs/stream
+```js
+await (await fetch('/health')).text();
+await (await fetch('/api/ping', { method: 'POST' })).text();
+await (await fetch('/api/extensions/discover')).json();
+await (await fetch('/api/dev/llm-api-logs/settings')).json();
 ```
 
 ## 数据导出和恢复

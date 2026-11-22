@@ -2,7 +2,7 @@ import { common } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { BackendService } from '../backend/BackendService';
-import { LocalAuth } from '../backend/LocalAuth';
+import { LocalBackend } from '../backend/LocalBackend';
 import { CharacterBrowserChatItem, CharacterBrowserItem, CharacterBrowserRefreshListener,
   CharacterBrowserService } from '../backend/CharacterBrowserService';
 import { Api26MaterialAdapter } from './Api26MaterialAdapter';
@@ -126,7 +126,6 @@ class CharacterBrowserDataSource implements IDataSource {
 
 @Component
 export struct CharacterBrowserCard {
-  @Prop backendUrl: string = 'http://127.0.0.1:8000';
   @Prop item: CharacterBrowserItem = new CharacterBrowserItem();
   @Prop grid: boolean = false;
   @Prop thumbnailRevision: number = 0;
@@ -310,11 +309,14 @@ export struct CharacterBrowserCard {
           .fontWeight(FontWeight.Medium)
           .fontColor('#FFFFFF')
           .backgroundColor(this.avatarBadgeColor())
-        Image(this.avatarUrl())
-          .width('100%')
-          .aspectRatio(1)
-          .objectFit(ImageFit.Cover)
-          .backgroundColor(Color.Transparent)
+        // The thumbnail URI never changes, so key the Image on the revision to reload a regenerated file.
+        ForEach([this.thumbnailRevision], (_revision: number) => {
+          Image(this.avatarUrl())
+            .width('100%')
+            .aspectRatio(1)
+            .objectFit(ImageFit.Cover)
+            .backgroundColor(Color.Transparent)
+        }, (revision: number) => `${revision}`)
         Button({ type: ButtonType.Circle, stateEffect: true }) {
           Text(this.favorite ? '★' : '☆')
             .fontSize(19)
@@ -427,11 +429,9 @@ export struct CharacterBrowserCard {
       return '';
     }
     if (this.grid) {
-      return LocalAuth.withQueryToken(
-        `${this.backendUrl}/api/ohos/characters/thumbnail?file=${encodeURIComponent(this.item.avatar)}` +
-          `&v=${this.thumbnailRevision}`);
+      return LocalBackend.characterThumbnailUri(this.item.avatar);
     }
-    return LocalAuth.withQueryToken(`${this.backendUrl}/characters/${encodeURIComponent(this.item.avatar)}`);
+    return LocalBackend.characterAvatarUri(this.item.avatar);
   }
 
   private formatBytes(bytes: number): string {
@@ -484,7 +484,6 @@ export struct CharacterBrowserCard {
 @Component
 export struct CharacterBrowserDetail {
   @Prop item: CharacterBrowserItem = new CharacterBrowserItem();
-  @Prop backendUrl: string = 'http://127.0.0.1:8000';
   @State name: string = '';
   @State description: string = '';
   @State personality: string = '';
@@ -1172,7 +1171,7 @@ export struct CharacterBrowserDetail {
         this.savedAvatar = renamedAvatar;
         this.savedName = next.name;
       }
-      if (!await this.service.save(this.backendUrl, next)) {
+      if (!await this.service.save(next)) {
         throw new Error('save failed');
       }
       this.savedAvatar = next.avatar;
@@ -1239,13 +1238,13 @@ export struct CharacterBrowserDetail {
   }
 
   private exportCard(format: string): void {
-    this.service.export(this.backendUrl, this.currentAvatar(), format).then((success: boolean) => {
+    this.service.export(this.currentAvatar(), format).then((success: boolean) => {
       this.onToast(success ? '已打开分享面板。' : '导出角色失败。');
     }).catch((_err: Error) => this.onToast('导出角色失败。'));
   }
 
   private loadChats(): void {
-    this.service.chats(this.backendUrl, this.currentAvatar()).then((items: CharacterBrowserChatItem[]) => {
+    this.service.chats(this.currentAvatar()).then((items: CharacterBrowserChatItem[]) => {
       this.chats = items.sort((left: CharacterBrowserChatItem, right: CharacterBrowserChatItem): number => {
         return right.lastChatMs - left.lastChatMs;
       });
@@ -1295,7 +1294,7 @@ export struct CharacterBrowserDetail {
   }
 
   private avatarUrl(): string {
-    return LocalAuth.withQueryToken(`${this.backendUrl}/characters/${encodeURIComponent(this.currentAvatar())}`);
+    return LocalBackend.characterAvatarUri(this.currentAvatar());
   }
 
   private fileStem(value: string): string {
@@ -1452,7 +1451,6 @@ export struct CharacterBrowserDetail {
 
 @Component
 export struct CharacterBrowserPanel {
-  @Prop backendUrl: string = 'http://127.0.0.1:8000';
   @Watch('onDetailOpenChanged')
   @Prop detailOpen: boolean = false;
   @State items: CharacterBrowserItem[] = [];
@@ -1531,7 +1529,6 @@ export struct CharacterBrowserPanel {
   private detailDestination(item: CharacterBrowserItem) {
     CharacterBrowserDetail({
       item,
-      backendUrl: this.backendUrl,
       onBack: (): void => this.popDetail(),
       onOpenChat: this.onOpenChat,
       onWebMutation: this.onWebMutation,
@@ -1588,7 +1585,6 @@ export struct CharacterBrowserPanel {
                   GridItem() {
                       CharacterBrowserCard({
                         item,
-                        backendUrl: this.backendUrl,
                         grid: true,
                         thumbnailRevision: this.thumbnailRevision,
                         onOpen: (selected: CharacterBrowserItem): void => this.openDetail(selected),
@@ -1660,7 +1656,6 @@ export struct CharacterBrowserPanel {
                 LazyForEach(this.dataSource, (item: CharacterBrowserItem) => {
                   CharacterBrowserCard({
                     item,
-                    backendUrl: this.backendUrl,
                     grid: false,
                     onOpen: (selected: CharacterBrowserItem): void => this.openDetail(selected),
                     onDelete: (selected: CharacterBrowserItem): void => this.confirmDelete(selected),
@@ -2245,7 +2240,7 @@ export struct CharacterBrowserPanel {
   }
 
   private openDetail(item: CharacterBrowserItem): void {
-    this.service.get(this.backendUrl, item.avatar).then((full: CharacterBrowserItem) => {
+    this.service.get(item.avatar).then((full: CharacterBrowserItem) => {
       this.onDetailChange(true);
       this.navigationStack.pushPath(new NavPathInfo(CHARACTER_BROWSER_DETAIL_ROUTE, full), true);
     }).catch((_err: Error) => {
@@ -2292,7 +2287,7 @@ export struct CharacterBrowserPanel {
   }
 
   private persistFavorite(item: CharacterBrowserItem): void {
-    this.service.setFavorite(this.backendUrl, item.avatar, item.favorite).then((success: boolean) => {
+    this.service.setFavorite(item.avatar, item.favorite).then((success: boolean) => {
       if (success) {
         this.onWebMutation('favorite', item.avatar, item.favorite ? 'true' : 'false').catch((_err: Error) => {
         });
@@ -2338,7 +2333,7 @@ export struct CharacterBrowserPanel {
         value: '',
         onClose: close,
         onConfirm: (value: string): void => {
-          this.service.create(this.backendUrl, value.trim()).then((success: boolean) => {
+          this.service.create(value.trim()).then((success: boolean) => {
             if (success) {
               this.onToast('角色已创建。');
               this.onWebMutation('refresh', '').then((result: string) => {
@@ -2452,7 +2447,7 @@ export struct CharacterBrowserPanel {
 
   private importCharacterUri(uri: string): void {
     this.onToast('正在导入角色卡…');
-    this.service.importFromUri(this.backendUrl, uri).then((success: boolean) => {
+    this.service.importFromUri(uri).then((success: boolean) => {
       this.finishCharacterImport(success);
     }).catch((_err: Error) => this.onToast('导入角色卡失败。'));
   }
@@ -2464,7 +2459,7 @@ export struct CharacterBrowserPanel {
       return;
     }
     this.onToast('正在下载并导入角色卡…');
-    this.service.importFromUrl(this.backendUrl, url).then((success: boolean) => {
+    this.service.importFromUrl(url).then((success: boolean) => {
       this.finishCharacterImport(success);
     }).catch((_err: Error) => this.onToast('从 URL 导入角色卡失败。'));
   }

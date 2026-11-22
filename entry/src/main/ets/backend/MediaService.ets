@@ -168,7 +168,7 @@ export class MediaService {
     return generated;
   }
 
-  private characterBrowserThumbnailPath(file: string): string {
+  characterBrowserThumbnailPath(file: string): string {
     return joinPath(this.dirs.characterThumbnailRoot, `${sanitizeFileName(file)}.jpg`);
   }
 

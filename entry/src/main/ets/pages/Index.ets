@@ -11,7 +11,7 @@ import { Api26MaterialAdapter } from './Api26MaterialAdapter';
 import { CharacterBrowserPanel } from './CharacterBrowser';
 import { DataArchiveProgressService, DataArchiveProgressState } from '../backend/DataArchiveProgressService';
 import { DiagnosticLogService } from '../backend/DiagnosticLogService';
-import { LocalAuth } from '../backend/LocalAuth';
+import { LocalBackend } from '../backend/LocalBackend';
 import { ExportedFile } from '../backend/ShareExportService';
 import { ShellThemeService } from '../backend/ShellThemeService';
 import { WebDialogService, WebPromptDialogCancelAction, WebPromptDialogConfirmAction } from './WebDialogService';
@@ -135,7 +135,6 @@ struct WebPromptDialog {
 struct ChatBrowserListCard {
   @Prop item: ChatBrowserItem = new ChatBrowserItem();
   @Prop deleting: boolean = false;
-  @Prop backendUrl: string = 'http://127.0.0.1:8000';
   @State swipeProgress: number = 0;
   onOpen: ChatBrowserItemAction = (_item: ChatBrowserItem): void => {
   };
@@ -285,7 +284,7 @@ struct ChatBrowserListCard {
   }
 
   private chatBrowserCoverUrl(): string {
-    return LocalAuth.withQueryToken(`${this.backendUrl}/characters/${encodeURIComponent(this.item.avatar)}`);
+    return LocalBackend.characterAvatarUri(this.item.avatar);
   }
 
   private updateSwipeProgress(offset: number): void {
@@ -459,7 +458,6 @@ struct Index {
   private startupWatchdogTimer: number = -1;
   private startupWatchdogHandled: boolean = false;
   private startupProbeToken: number = 0;
-  private webAuthCookieReady: boolean = false;
   private chatBrowserRefreshListener: ChatBrowserRefreshListener = (items: ChatBrowserItem[]): void => {
     this.chatBrowserItems = items;
     this.chatBrowserDeletingIds = [];
@@ -531,39 +529,18 @@ struct Index {
   private applyStatus(status: BackendStatus): void {
     if (!this.running && status.running) {
       this.hideWebUntilReady();
-      this.webAuthCookieReady = this.configureWebAuthCookie(status.url);
     }
     this.running = status.running;
     this.url = status.url;
     this.message = status.message;
   }
 
-  // The backend rejects requests without this cookie; it must exist before the first page request.
-  private configureWebAuthCookie(backendUrl: string): boolean {
-    try {
-      webview.WebviewController.initializeWebEngine();
-      webview.WebCookieManager.putAcceptCookieEnabled(true);
-      webview.WebCookieManager.configCookieSync(backendUrl, LocalAuth.cookie(), false, true);
-      return true;
-    } catch (err) {
-      DiagnosticLogService.getInstance().appendWebLog('warn',
-        `Auth cookie setup failed, using redirect bootstrap: ${JSON.stringify(err)}`);
-      return false;
-    }
-  }
-
   private diagnosticWebUrl(): string {
-    const params: string[] = [];
-    if (!this.webAuthCookieReady) {
-      params.push(`${LocalAuth.bootstrapQueryName}=${LocalAuth.token()}`);
-    }
-    if (DiagnosticLogService.getInstance().isCapturing()) {
-      params.push('tavernNextDiagnostics=1');
-    }
-    if (params.length === 0) {
+    if (!DiagnosticLogService.getInstance().isCapturing()) {
       return this.url;
     }
-    return `${this.url}${this.url.includes('?') ? '&' : '?'}${params.join('&')}`;
+    const separator = this.url.includes('?') ? '&' : '?';
+    return `${this.url}${separator}tavernNextDiagnostics=1`;
   }
 
   private startDiagnosticWatchdog(): void {
@@ -855,6 +832,7 @@ struct Index {
           .backgroundColor(this.shellBackground)
           .opacity(this.webReady ? 1 : 0)
           .onControllerAttached(() => {
+            this.backendService?.attachWebView(this.controller);
             this.attachDiagnosticBridge();
             this.attachDownloadDelegate();
           })
@@ -1127,7 +1105,6 @@ struct Index {
   @Builder
   private characterBrowserView() {
     CharacterBrowserPanel({
-      backendUrl: this.url,
       detailOpen: this.characterBrowserDetailOpen,
       onClose: (): void => this.closeChatBrowser(),
       onOpenChat: (item: CharacterBrowserItem, fileName?: string): void => {
@@ -1206,7 +1183,6 @@ struct Index {
                 ChatBrowserListCard({
                   item,
                   deleting: this.isChatBrowserItemDeleting(item),
-                  backendUrl: this.url,
                   onOpen: (selected: ChatBrowserItem): void => this.openChatBrowserItem(selected),
                   onDelete: (selected: ChatBrowserItem): void => this.confirmDeleteChatBrowserItem(selected)
                 })
