@@ -274,6 +274,27 @@ fn backend_model(canonical: &str) -> &str {
     }
 }
 
+/// One string per token id. A character split across byte-fallback tokens (an emoji in a
+/// SentencePiece model) is attached to its last token; the tokens before it get an empty string.
+fn decode_pieces(tokenizer: &Tokenizer, ids: &[u32]) -> Vec<String> {
+    const MAX_UTF8_LEN: usize = 4;
+    let mut pieces = Vec::with_capacity(ids.len());
+    let mut start = 0;
+    for end in 1..=ids.len() {
+        if end - start > MAX_UTF8_LEN {
+            start = end - 1;
+        }
+        match tokenizer.decode(&ids[start..end]) {
+            Ok(piece) => {
+                pieces.push(piece);
+                start = end;
+            }
+            Err(_) => pieces.push(String::new()),
+        }
+    }
+    pieces
+}
+
 fn tokenizer_for(canonical: &str) -> Result<Arc<Tokenizer>, TokenizerError> {
     registry().get(backend_model(canonical))
 }
@@ -798,9 +819,7 @@ pub unsafe extern "C" fn tavern_tokenizer_encode_pieces(
 
     let pieces = match tokenizer_for(canonical).and_then(|tokenizer| {
         let ids = tokenizer.encode(input)?;
-        ids.into_iter()
-            .map(|id| tokenizer.decode(&[id]))
-            .collect::<Result<Vec<_>, _>>()
+        Ok(decode_pieces(&tokenizer, &ids))
     }) {
         Ok(value) => value,
         Err(error) => {
@@ -1029,5 +1048,15 @@ mod tests {
             "explicit unknown model should not be native unless ArkTS resolves openai routes first"
         );
         assert!(is_bundled_native_request(canonical, canonical));
+    }
+
+    #[test]
+    fn pieces_keep_characters_split_across_tokens() {
+        let canonical = ensure_model_ready("llama").expect("llama should load");
+        let tokenizer = tokenizer_for(canonical).expect("llama tokenizer");
+        let ids = tokenizer.encode("hi \u{1F600} there").expect("encode");
+        let pieces = decode_pieces(&tokenizer, &ids);
+        assert_eq!(pieces.len(), ids.len());
+        assert!(pieces.concat().contains('\u{1F600}'));
     }
 }
