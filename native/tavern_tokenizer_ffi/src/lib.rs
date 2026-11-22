@@ -274,16 +274,13 @@ fn backend_model(canonical: &str) -> &str {
     }
 }
 
-/// One string per token id. A character split across byte-fallback tokens (an emoji in a
-/// SentencePiece model) is attached to its last token; the tokens before it get an empty string.
+/// One string per token id. Tokens that end inside a character (byte-fallback tokens for an emoji,
+/// BPE tokens that cross character boundaries) get an empty string, and their text is attached to
+/// the next token that ends on a character boundary.
 fn decode_pieces(tokenizer: &Tokenizer, ids: &[u32]) -> Vec<String> {
-    const MAX_UTF8_LEN: usize = 4;
     let mut pieces = Vec::with_capacity(ids.len());
     let mut start = 0;
     for end in 1..=ids.len() {
-        if end - start > MAX_UTF8_LEN {
-            start = end - 1;
-        }
         match tokenizer.decode(&ids[start..end]) {
             Ok(piece) => {
                 pieces.push(piece);
@@ -1058,5 +1055,13 @@ mod tests {
         let pieces = decode_pieces(&tokenizer, &ids);
         assert_eq!(pieces.len(), ids.len());
         assert!(pieces.concat().contains('\u{1F600}'));
+
+        let text = "\u{6A76}".repeat(6);
+        let canonical = ensure_model_ready("gpt2").expect("gpt2 should load");
+        let tokenizer = tokenizer_for(canonical).expect("gpt2 tokenizer");
+        let ids = tokenizer.encode(&text).expect("encode");
+        let pieces = decode_pieces(&tokenizer, &ids);
+        assert_eq!(pieces.len(), ids.len());
+        assert_eq!(pieces.concat(), text);
     }
 }
