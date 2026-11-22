@@ -30,7 +30,9 @@
 代码入口：
 
 - `entry/src/main/ets/backend/BackendService.ets`：后端生命周期和路由注册。
-- `entry/src/main/ets/backend/HttpServer.ets`：轻量 HTTP/1.1 TCP 服务。
+- `entry/src/main/ets/backend/HttpRouter.ets`：进程内请求路由，不监听端口。
+- `entry/src/main/ets/backend/WebSchemeTransport.ets`：通过 ArkWeb `WebSchemeHandler` 把 WebView 的请求交给 `HttpRouter`。
+- `entry/src/main/ets/backend/LocalBackend.ets`：原生 ArkTS 页面在进程内调用后端路由、读取数据文件的入口。
 - `entry/src/main/ets/backend/SillyTavernCore.ets`：SillyTavern 兼容 API。
 - `entry/src/main/ets/backend/DataDirectories.ets`：运行时 `data/` 目录初始化。
 - `entry/src/main/ets/backend/PngCardStore.ets`：PNG 角色卡元数据读写。
@@ -38,7 +40,7 @@
 
 ## 1. 运行模型
 
-应用启动后，`Index.ets` 获取 `UIAbilityContext`，创建 `BackendService` 单例，并启动本地 HTTP 服务：
+应用启动后，`Index.ets` 获取 `UIAbilityContext`，创建 `BackendService` 单例。后端不监听端口；WebView 发往下面这个地址的请求由 `WebSchemeTransport` 在进程内拦截处理：
 
 ```text
 http://127.0.0.1:8000
@@ -52,7 +54,7 @@ http://127.0.0.1:8000
 - `SillyTavernCore` 的角色、聊天、设置等核心数据接口仍固定读写 `data/default-user/`
 - `/api/users/*` 已实现本地账号 CRUD、密码校验、头像记录和备份等兼容接口；多用户系统明确暂缓，当前不会建立真实 session、cookie-session、当前用户切换和权限中间件
 
-`HttpServer.start()` 已做单飞保护：Ability 和页面重复调用启动时会复用同一个 `startPromise`，避免监听竞态。
+`BackendService.start()` 可重复调用；`Index.ets` 在 `Web` 组件的 `onControllerAttached` 里调用 `attachWebView()` 注册拦截。
 
 ## 2. HTTP 通用约定
 
@@ -2550,7 +2552,7 @@ decode 响应：
 
 当前没有专门注册为 `501` 的模型/vector 主路径。`/api/vector/*`、`/api/backends/chat-completions/*`、`/api/openai/generate` 已有实际处理逻辑。
 
-仍会返回 `501 Not Implemented` 的情况是：请求路径没有命中任何已注册路由，也没有被静态资源或数据文件 fallback 处理。此时 `HttpServer` 返回：
+仍会返回 `501 Not Implemented` 的情况是：请求路径没有命中任何已注册路由，也没有被静态资源或数据文件 fallback 处理。此时 `HttpRouter` 返回：
 
 响应：
 

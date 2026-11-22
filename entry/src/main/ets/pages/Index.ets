@@ -11,6 +11,7 @@ import { Api26MaterialAdapter } from './Api26MaterialAdapter';
 import { CharacterBrowserPanel } from './CharacterBrowser';
 import { DataArchiveProgressService, DataArchiveProgressState } from '../backend/DataArchiveProgressService';
 import { DiagnosticLogService } from '../backend/DiagnosticLogService';
+import { LocalBackend } from '../backend/LocalBackend';
 import { ExportedFile } from '../backend/ShareExportService';
 import { ShellThemeService } from '../backend/ShellThemeService';
 import { WebDialogService, WebPromptDialogCancelAction, WebPromptDialogConfirmAction } from './WebDialogService';
@@ -134,7 +135,6 @@ struct WebPromptDialog {
 struct ChatBrowserListCard {
   @Prop item: ChatBrowserItem = new ChatBrowserItem();
   @Prop deleting: boolean = false;
-  @Prop backendUrl: string = 'http://127.0.0.1:8000';
   @State swipeProgress: number = 0;
   onOpen: ChatBrowserItemAction = (_item: ChatBrowserItem): void => {
   };
@@ -284,7 +284,7 @@ struct ChatBrowserListCard {
   }
 
   private chatBrowserCoverUrl(): string {
-    return `${this.backendUrl}/characters/${encodeURIComponent(this.item.avatar)}`;
+    return LocalBackend.characterAvatarUri(this.item.avatar);
   }
 
   private updateSwipeProgress(offset: number): void {
@@ -832,6 +832,7 @@ struct Index {
           .backgroundColor(this.shellBackground)
           .opacity(this.webReady ? 1 : 0)
           .onControllerAttached(() => {
+            this.backendService?.attachWebView(this.controller);
             this.attachDiagnosticBridge();
             this.attachDownloadDelegate();
           })
@@ -1104,7 +1105,6 @@ struct Index {
   @Builder
   private characterBrowserView() {
     CharacterBrowserPanel({
-      backendUrl: this.url,
       detailOpen: this.characterBrowserDetailOpen,
       onClose: (): void => this.closeChatBrowser(),
       onOpenChat: (item: CharacterBrowserItem, fileName?: string): void => {
@@ -1183,7 +1183,6 @@ struct Index {
                 ChatBrowserListCard({
                   item,
                   deleting: this.isChatBrowserItemDeleting(item),
-                  backendUrl: this.url,
                   onOpen: (selected: ChatBrowserItem): void => this.openChatBrowserItem(selected),
                   onDelete: (selected: ChatBrowserItem): void => this.confirmDeleteChatBrowserItem(selected)
                 })

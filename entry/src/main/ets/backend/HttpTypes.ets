@@ -63,9 +63,6 @@ export class HttpResponse {
   headers: HeaderMap = {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
-    'access-control-allow-origin': '*',
-    'access-control-allow-methods': 'GET, POST, OPTIONS',
-    'access-control-allow-headers': 'content-type, x-csrf-token',
   };
   body: string = '';
   bodyBytes: Uint8Array | null = null;

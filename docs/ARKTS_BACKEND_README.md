@@ -1,6 +1,6 @@
 # TavernNext OHOS ArkTS Backend
 
-这个 DevEco 示例工程内置了一个最小可用的 SillyTavern 兼容后端。应用启动后监听：
+这个 DevEco 示例工程内置了一个最小可用的 SillyTavern 兼容后端。后端不监听端口，WebView 加载下面的地址时请求在进程内被拦截处理：
 
 ```text
 http://127.0.0.1:8000

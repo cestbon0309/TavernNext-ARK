@@ -7,6 +7,7 @@ import { JsonArray, JsonRecord, emptyJsonRecord } from './HttpTypes';
 import { asArray, asBoolean, asNumber, asRecord, asString } from './JsonUtils';
 import { joinPath } from './PathUtils';
 import { RemoteHttpClient, RemoteHttpResult } from './RemoteHttpClient';
+import { LocalBackend } from './LocalBackend';
 
 const CHARACTER_BROWSER_CACHE_FILE = 'character-browser-cache.json';
 const CHARACTER_IMPORT_MAX_BYTES = 32 * 1024 * 1024;
@@ -205,9 +206,9 @@ export class CharacterBrowserService {
     }, 0);
   }
 
-  async list(baseUrl: string): Promise<CharacterBrowserItem[]> {
+  async list(): Promise<CharacterBrowserItem[]> {
     const body: JsonRecord = {};
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/all'), body);
+    const result = await LocalBackend.postJson('/api/characters/all', body);
     if (!this.isSuccess(result)) {
       throw new Error(`characters/all ${result.statusCode}`);
     }
@@ -215,17 +216,17 @@ export class CharacterBrowserService {
     return parsed.map((value: JsonRecord): CharacterBrowserItem => this.itemFromRecord(value, true));
   }
 
-  async get(baseUrl: string, avatar: string): Promise<CharacterBrowserItem> {
+  async get(avatar: string): Promise<CharacterBrowserItem> {
     const body: JsonRecord = {};
     body['avatar_url'] = avatar;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/get'), body);
+    const result = await LocalBackend.postJson('/api/characters/get', body);
     if (!this.isSuccess(result)) {
       throw new Error(`characters/get ${result.statusCode}`);
     }
     return this.itemFromRecord(this.parseRecord(result.text), false);
   }
 
-  async create(baseUrl: string, name: string): Promise<boolean> {
+  async create(name: string): Promise<boolean> {
     const body: JsonRecord = {};
     body['ch_name'] = name;
     body['description'] = '';
@@ -239,28 +240,28 @@ export class CharacterBrowserService {
     body['talkativeness'] = 0.5;
     body['depth_prompt_depth'] = 4;
     body['depth_prompt_role'] = 'system';
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/create'), body);
+    const result = await LocalBackend.postJson('/api/characters/create', body);
     return this.isSuccess(result);
   }
 
-  async importFromUri(baseUrl: string, uri: string): Promise<boolean> {
+  async importFromUri(uri: string): Promise<boolean> {
     const bytes = await this.readUriBytes(uri);
     if (bytes === null) {
       return false;
     }
-    return this.importBytes(baseUrl, bytes, this.fileNameFromUri(uri), '');
+    return this.importBytes(bytes, this.fileNameFromUri(uri), '');
   }
 
-  async importFromUrl(baseUrl: string, url: string): Promise<boolean> {
+  async importFromUrl(url: string): Promise<boolean> {
     const result = await this.http.getBytes(url, {}, 120000, CHARACTER_IMPORT_MAX_BYTES);
     if (!this.isSuccess(result) || result.bytes === null) {
       return false;
     }
     const contentType = result.headers['content-type'] ?? '';
-    return this.importBytes(baseUrl, result.bytes, this.fileNameFromUrl(url), contentType);
+    return this.importBytes(result.bytes, this.fileNameFromUrl(url), contentType);
   }
 
-  async save(baseUrl: string, item: CharacterBrowserItem): Promise<boolean> {
+  async save(item: CharacterBrowserItem): Promise<boolean> {
     const data = this.copyData(item.data);
     data['name'] = item.name;
     data['description'] = item.description;
@@ -301,51 +302,51 @@ export class CharacterBrowserService {
     payload['talkativeness'] = item.talkativeness;
     payload['data'] = data;
 
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/merge-attributes'), payload);
+    const result = await LocalBackend.postJson('/api/characters/merge-attributes', payload);
     return this.isSuccess(result);
   }
 
-  async setFavorite(baseUrl: string, avatar: string, favorite: boolean): Promise<boolean> {
+  async setFavorite(avatar: string, favorite: boolean): Promise<boolean> {
     const payload: JsonRecord = {};
     payload['avatar'] = avatar;
     payload['favorite'] = favorite;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/ohos/characters/favorite'), payload);
+    const result = await LocalBackend.postJson('/api/ohos/characters/favorite', payload);
     return this.isSuccess(result);
   }
 
-  async rename(baseUrl: string, avatar: string, name: string): Promise<string> {
+  async rename(avatar: string, name: string): Promise<string> {
     const body: JsonRecord = {};
     body['avatar_url'] = avatar;
     body['new_name'] = name;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/rename'), body);
+    const result = await LocalBackend.postJson('/api/characters/rename', body);
     if (!this.isSuccess(result)) {
       throw new Error(`characters/rename ${result.statusCode}`);
     }
     return asString(this.parseRecord(result.text)['avatar']);
   }
 
-  async duplicate(baseUrl: string, avatar: string): Promise<string> {
+  async duplicate(avatar: string): Promise<string> {
     const body: JsonRecord = {};
     body['avatar_url'] = avatar;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/duplicate'), body);
+    const result = await LocalBackend.postJson('/api/characters/duplicate', body);
     if (!this.isSuccess(result)) {
       throw new Error(`characters/duplicate ${result.statusCode}`);
     }
     return asString(this.parseRecord(result.text)['path']);
   }
 
-  async delete(baseUrl: string, avatar: string, deleteChats: boolean): Promise<boolean> {
+  async delete(avatar: string, deleteChats: boolean): Promise<boolean> {
     const body: JsonRecord = {};
     body['avatar_url'] = avatar;
     body['delete_chats'] = deleteChats;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/delete'), body);
+    const result = await LocalBackend.postJson('/api/characters/delete', body);
     return this.isSuccess(result);
   }
 
-  async chats(baseUrl: string, avatar: string): Promise<CharacterBrowserChatItem[]> {
+  async chats(avatar: string): Promise<CharacterBrowserChatItem[]> {
     const body: JsonRecord = {};
     body['avatar_url'] = avatar;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/chats'), body);
+    const result = await LocalBackend.postJson('/api/characters/chats', body);
     if (!this.isSuccess(result)) {
       throw new Error(`characters/chats ${result.statusCode}`);
     }
@@ -363,18 +364,18 @@ export class CharacterBrowserService {
     });
   }
 
-  async export(baseUrl: string, avatar: string, format: string): Promise<boolean> {
+  async export(avatar: string, format: string): Promise<boolean> {
     const body: JsonRecord = {};
     body['avatar_url'] = avatar;
     body['format'] = format;
-    const result = await this.http.postJson(this.http.joinUrl(baseUrl, '/api/characters/export'), body);
+    const result = await LocalBackend.postJson('/api/characters/export', body);
     if (!this.isSuccess(result)) {
       return false;
     }
     return asBoolean(this.parseRecord(result.text)['shared']);
   }
 
-  private async importBytes(baseUrl: string, bytes: Uint8Array, fileName: string,
+  private async importBytes(bytes: Uint8Array, fileName: string,
     contentType: string): Promise<boolean> {
     if (bytes.byteLength === 0 || bytes.byteLength > CHARACTER_IMPORT_MAX_BYTES) {
       return false;
@@ -397,10 +398,7 @@ export class CharacterBrowserService {
     body.set(filePart, fieldPart.byteLength);
     body.set(bytes, fieldPart.byteLength + filePart.byteLength);
     body.set(suffix, fieldPart.byteLength + filePart.byteLength + bytes.byteLength);
-    const headers: Record<string, string> = {
-      'Content-Type': `multipart/form-data; boundary=${boundary}`
-    };
-    const result = await this.http.postBytes(this.http.joinUrl(baseUrl, '/api/characters/import'), body, headers);
+    const result = await LocalBackend.post('/api/characters/import', body, `multipart/form-data; boundary=${boundary}`);
     return this.isSuccess(result) && asString(this.parseRecord(result.text)['file_name']).length > 0;
   }
 
