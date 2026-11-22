@@ -5,9 +5,9 @@ use std::io::{Cursor, Read};
 use std::ptr;
 use std::slice;
 use std::str;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
-use miktik::TokenizerRegistry;
+use miktik::{Tokenizer, TokenizerError, TokenizerRegistry};
 use serde_json::Value;
 
 static REGISTRY: OnceLock<TokenizerRegistry> = OnceLock::new();
@@ -176,8 +176,106 @@ fn into_json_bytes(value: &[String]) -> Result<(*mut u8, usize), String> {
         .map_err(|error| format!("failed to serialize tokenizer JSON result: {error}"))
 }
 
+const FALLBACK_MODEL: &str = "gpt-3.5-turbo";
+const SENTENCEPIECE_MODELS: &[&str] = &[
+    "llama",
+    "mistral",
+    "yi",
+    "gemma",
+    "jamba",
+    "nerdstash",
+    "nerdstash_v2",
+];
+const WEB_TOKENIZER_MODELS: &[&str] = &[
+    "claude",
+    "llama3",
+    "command-r",
+    "command-a",
+    "qwen2",
+    "nemo",
+    "deepseek",
+];
+/// Substring rules for the bundled tokenizer families, in priority order.
+const FAMILY_ALIASES: &[(&str, &str)] = &[
+    ("claude", "claude"),
+    ("llama3", "llama3"),
+    ("llama-3", "llama3"),
+    ("llama", "llama"),
+    ("mistral", "mistral"),
+    ("yi", "yi"),
+    ("gemma", "gemma"),
+    ("gemini", "gemma"),
+    ("learnlm", "gemma"),
+    ("jamba", "jamba"),
+    ("nerdstash_v2", "nerdstash_v2"),
+    ("nerdstash-v2", "nerdstash_v2"),
+    ("nerdstash", "nerdstash"),
+    ("command-r", "command-r"),
+    ("command-a", "command-a"),
+    ("qwen2", "qwen2"),
+    ("nemo", "nemo"),
+    ("deepseek", "deepseek"),
+];
+
+/// Maps a requested model name to one of this bridge's canonical names (`OPENAI_MODELS` and
+/// `BUNDLED_HF_MODELS`). The names are this bridge's contract with the ArkTS side and are kept
+/// independent of MikTik's model table; `backend_model` maps them onto it.
 fn canonical_model(requested: &str) -> &'static str {
-    TokenizerRegistry::resolve_model_ref(requested)
+    let name = requested.trim().to_ascii_lowercase();
+    if name == "gpt-2" {
+        return "gpt2";
+    }
+    if let Some(exact) = OPENAI_MODELS
+        .iter()
+        .chain(BUNDLED_HF_MODELS)
+        .find(|model| **model == name)
+    {
+        return exact;
+    }
+    if ["o1", "o3", "o4", "gpt-5"]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+    {
+        return "o1";
+    }
+    if name.contains("gpt-4") || name.contains("chatgpt-4o") {
+        if name.contains("32k") {
+            return "gpt-4-32k";
+        }
+        if ["4o", "4.1", "4.5"].iter().any(|part| name.contains(part)) {
+            return "gpt-4o";
+        }
+        return "gpt-4";
+    }
+    FAMILY_ALIASES
+        .iter()
+        .find(|(pattern, _)| name.contains(pattern))
+        .map_or(FALLBACK_MODEL, |(_, canonical)| *canonical)
+}
+
+/// The MikTik model whose tokenizer serves a canonical name.
+///
+/// MikTik ships o200k_base, cl100k_base and r50k_base. The p50k_base and p50k_edit models
+/// (text-davinci-002/003, code-* and the edit models) use r50k_base here: the vocabularies agree
+/// except for p50k's extra tokens for runs of spaces, so counts are exact for text without such
+/// runs and higher for text with them.
+fn backend_model(canonical: &str) -> &str {
+    match canonical {
+        "o1" | "gpt-4o" => "gpt-4o",
+        "gpt-4"
+        | "gpt-4-32k"
+        | "gpt-3.5-turbo"
+        | "gpt-3.5-turbo-0301"
+        | "gpt-3.5-turbo-instruct"
+        | "gpt-3.5-turbo-instruct-0914"
+        | "text-embedding-ada-002" => "gpt-4",
+        _ if OPENAI_MODELS.contains(&canonical) => "gpt2",
+        _ => canonical,
+    }
+}
+
+fn tokenizer_for(canonical: &str) -> Result<Arc<Tokenizer>, TokenizerError> {
+    registry().get(backend_model(canonical))
 }
 
 fn model_resource_spec(canonical: &str) -> Option<ModelResourceSpec> {
@@ -317,7 +415,7 @@ fn decode_model_payload(spec: ModelResourceSpec) -> Result<Vec<u8>, String> {
 }
 
 fn ensure_model_ready_canonical(canonical: &'static str) -> Result<(), String> {
-    if !TokenizerRegistry::is_huggingface_model(canonical) {
+    if !BUNDLED_HF_MODELS.contains(&canonical) {
         return Ok(());
     }
 
@@ -339,8 +437,7 @@ fn ensure_model_ready_canonical(canonical: &'static str) -> Result<(), String> {
         .map_err(|error| {
             format!("failed to register tokenizer resource for '{canonical}': {error}")
         })?;
-    registry()
-        .get_canonical(canonical)
+    tokenizer_for(canonical)
         .map_err(|error| format!("failed to load tokenizer for '{canonical}': {error}"))?;
 
     let mut ready = ready_models()
@@ -475,8 +572,7 @@ fn count_openai_messages(canonical: &'static str, messages: &[Value]) -> Result<
     let is_legacy = canonical == "gpt-3.5-turbo-0301";
     let tokens_per_message = if is_legacy { 4_i32 } else { 3_i32 };
     let tokens_per_name = if is_legacy { -1_i32 } else { 1_i32 };
-    let tokenizer = registry()
-        .get_canonical(canonical)
+    let tokenizer = tokenizer_for(canonical)
         .map_err(|error| format!("failed to load tokenizer for '{canonical}': {error}"))?;
     let mut total = 0_i32;
 
@@ -514,7 +610,7 @@ fn count_openai_messages(canonical: &'static str, messages: &[Value]) -> Result<
 
 #[unsafe(no_mangle)]
 pub extern "C" fn tavern_tokenizer_version() -> *mut c_char {
-    CString::new("MikTik 0.2.0 openai+huggingface+sentencepiece")
+    CString::new("MikTik 0.5.2 openai+huggingface+sentencepiece")
         .expect("static string is valid")
         .into_raw()
 }
@@ -522,7 +618,7 @@ pub extern "C" fn tavern_tokenizer_version() -> *mut c_char {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tavern_tokenizer_resolve_model(model: *const c_char) -> *mut c_char {
     let requested = unsafe { string_from_ptr(model, "") };
-    let resolved = TokenizerRegistry::resolve_model(&requested);
+    let resolved = canonical_model(&requested);
     CString::new(resolved)
         .expect("resolved tokenizer model never contains NUL")
         .into_raw()
@@ -561,8 +657,7 @@ pub unsafe extern "C" fn tavern_tokenizer_encode(
             };
         }
     };
-    match registry()
-        .get_canonical(canonical)
+    match tokenizer_for(canonical)
         .and_then(|tokenizer| tokenizer.encode(&input))
     {
         Ok(ids) => {
@@ -615,8 +710,7 @@ pub unsafe extern "C" fn tavern_tokenizer_decode(
         unsafe { std::slice::from_raw_parts(ids_ptr, ids_len) }
     };
 
-    match registry()
-        .get_canonical(canonical)
+    match tokenizer_for(canonical)
         .and_then(|tokenizer| tokenizer.decode(ids))
     {
         Ok(text) => {
@@ -660,8 +754,7 @@ pub unsafe extern "C" fn tavern_tokenizer_count(
             };
         }
     };
-    match registry()
-        .get_canonical(canonical)
+    match tokenizer_for(canonical)
         .and_then(|tokenizer| tokenizer.count_tokens(&input))
     {
         Ok(count) => TokenizerCountResult {
@@ -703,7 +796,7 @@ pub unsafe extern "C" fn tavern_tokenizer_encode_pieces(
         }
     };
 
-    let pieces = match registry().get_canonical(canonical).and_then(|tokenizer| {
+    let pieces = match tokenizer_for(canonical).and_then(|tokenizer| {
         let ids = tokenizer.encode(input)?;
         ids.into_iter()
             .map(|id| tokenizer.decode(&[id]))
@@ -769,17 +862,17 @@ pub unsafe extern "C" fn tavern_tokenizer_count_messages(
         }
     };
 
-    let count = if TokenizerRegistry::is_sentencepiece_model(canonical) {
+    let count = if SENTENCEPIECE_MODELS.contains(&canonical) {
         let text = to_sentencepiece_count_input(&messages);
-        registry()
-            .count_tokens_canonical(canonical, &text)
+        tokenizer_for(canonical)
+            .and_then(|tokenizer| tokenizer.count_tokens(&text))
             .map_err(|error| {
                 format!("failed to count sentencepiece messages for '{canonical}': {error}")
             })
-    } else if TokenizerRegistry::is_web_tokenizer_model(canonical) {
+    } else if WEB_TOKENIZER_MODELS.contains(&canonical) {
         let prompt = to_web_tokenizer_prompt(&messages);
-        registry()
-            .count_tokens_canonical(canonical, &prompt)
+        tokenizer_for(canonical)
+            .and_then(|tokenizer| tokenizer.count_tokens(&prompt))
             .map_err(|error| {
                 format!("failed to count web-tokenizer messages for '{canonical}': {error}")
             })
@@ -884,8 +977,7 @@ mod tests {
             "nemo",
         ] {
             let canonical = ensure_model_ready(model).expect("model should prepare");
-            let tokenizer = registry()
-                .get_canonical(canonical)
+            let tokenizer = tokenizer_for(canonical)
                 .expect("tokenizer should load");
             let ids = tokenizer
                 .encode("Hello world")
@@ -895,7 +987,7 @@ mod tests {
                 tokenizer.count_tokens("Hello world").expect("count") > 0,
                 "{model} should count tokens"
             );
-            if TokenizerRegistry::is_sentencepiece_model(canonical) {
+            if SENTENCEPIECE_MODELS.contains(&canonical) {
                 let pieces = ids
                     .iter()
                     .map(|id| tokenizer.decode(&[*id]))
@@ -919,8 +1011,7 @@ mod tests {
                 "{model} should be native"
             );
             let canonical = ensure_model_ready(model).expect("tiktoken model should prepare");
-            let ids = registry()
-                .get_canonical(canonical)
+            let ids = tokenizer_for(canonical)
                 .expect("tokenizer should load")
                 .encode("Hello world")
                 .expect("tokenizer should encode");
